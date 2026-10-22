@@ -26,7 +26,7 @@ agent/       Background process that executes OS actions for the backend
 common/      Shared Python: logging, paths, Windows DPAPI encryption
 ```
 
-Runtime data (settings, database, logs) lives in `%LOCALAPPDATA%\JARVIS`. API keys are stored encrypted with Windows DPAPI and is never written to this repository.
+Runtime data (settings, database, logs) lives in `%LOCALAPPDATA%\JARVIS`. API keys are stored encrypted with Windows DPAPI and are never written to this repository.
 
 ## Development
 
