@@ -130,6 +130,19 @@ class ProviderProtocolTests(unittest.TestCase):
         self.assertEqual(OpenAICompatProvider.pick_chat(models), "gpt-5-mini")
         self.assertEqual(OpenAICompatProvider.pick_embed(models), "text-embedding-3-small")
 
+    def test_gateway_auto_model_preferred(self):
+        models = [{"name": n, "kind": "chat"} for n in ("gpt-5-mini", "auto", "claude-x")]
+        self.assertEqual(OpenAICompatProvider.pick_chat(models), "auto")
+
+    def test_omniroute_preset_uses_local_gateway(self):
+        from jarvis_backend.providers import PRESETS, make_provider
+        p = make_provider("omniroute", "", "")
+        try:
+            self.assertEqual(p.base, "http://localhost:20128/v1")
+            self.assertFalse(PRESETS["omniroute"]["needs_key"])
+        finally:
+            asyncio.run(p.aclose())
+
     def test_openai_stream_maps_roles_and_auth(self):
         async def go():
             p = self.oa()
