@@ -17,7 +17,12 @@ from pydantic import BaseModel, Field
 
 from .db import DB
 from .extraction import EXTRACT_SCHEMA, extract_prompt
-from .llm import LLM, LLMError, LLMNotConfigured
+from .bridge import AgentBridge, AgentError, AgentUnavailable
+from .llm import LLM, AgentIncomplete, LLMError, LLMNotConfigured, ToolsUnsupported
+from .providers.base import ToolCall
+from .reminders import ReminderError, Reminders
+from .research import ResearchError, web_research
+from .tools import BY_NAME, TOOLS, ToolSpec, describe_call
 from .providers import PRESETS
 from .memory import TYPES, MemoryStore
 from .persona import build_system_prompt
@@ -38,6 +43,24 @@ class Services:
     llm: LLM
     db: DB
     memory: MemoryStore
+    bridge: AgentBridge
+    reminders: Reminders
+
+
+class ToolFailure(Exception):
+    pass
+
+
+TOOL_SCHEMAS = [t.schema() for t in TOOLS]
+audit = logging.getLogger("jarvis.automation")
+
+
+def _trim(value: Any, limit: int = 6000) -> Any:
+    """Keep tool results small enough for the model's context."""
+    text = json.dumps(value, ensure_ascii=False, default=str)
+    if len(text) <= limit:
+        return value
+    return {"truncated": True, "partial_json": text[:limit]}
 
 
 class SettingsIn(BaseModel):
@@ -48,6 +71,10 @@ class SettingsIn(BaseModel):
     base_url: str | None = Field(default=None, max_length=300)
     chat_model: str | None = None
     embed_model: str | None = None
+
+
+class ConfirmIn(BaseModel):
+    approve: bool
 
 
 class ChatIn(BaseModel):
@@ -204,6 +231,81 @@ def build_router(svc: Services, require_auth: Callable[..., None]) -> APIRouter:
 
     # ---------------- chat ----------------
 
+    pending_confirmations: dict[str, asyncio.Future] = {}
+
+    @r.post("/confirm/{call_id}")
+    async def confirm(call_id: str, body: ConfirmIn) -> dict[str, bool]:
+        fut = pending_confirmations.get(call_id)
+        if fut is None or fut.done():
+            raise HTTPException(status_code=404, detail="That request is no longer waiting for an answer.")
+        fut.set_result(body.approve)
+        return {"ok": True}
+
+    async def _run_tool(spec: ToolSpec, args: dict[str, Any]) -> Any:
+        if spec.agent_action:
+            return await svc.bridge.call(spec.agent_action, args, timeout=spec.timeout)
+        if spec.name == "web_research":
+            return await web_research(str(args.get("query", "")))
+        if spec.name == "look_at_screen":
+            shot = await svc.bridge.call("capture_screen", {}, timeout=20)
+            path = Path(shot["path"])
+            try:
+                image = path.read_bytes()
+            finally:
+                path.unlink(missing_ok=True)  # the screenshot never stays on disk
+            question = str(args.get("question") or "Describe what is on the screen.")
+            answer = await svc.llm.describe_image(
+                "You are looking at a screenshot of the user's Windows desktop. "
+                f"{question} Be specific and quote any error text exactly.",
+                image,
+            )
+            return {"answer": answer}
+        if spec.name == "set_reminder":
+            return svc.reminders.add(str(args.get("text", "")), str(args.get("due", "")))
+        if spec.name == "list_reminders":
+            return {"pending": svc.reminders.pending()}
+        if spec.name == "cancel_reminder":
+            return svc.reminders.cancel(str(args.get("id", "")))
+        raise ToolFailure(f"Tool '{spec.name}' has no implementation.")
+
+    async def _execute(call: ToolCall, queue: asyncio.Queue, actions: list[dict[str, Any]]) -> dict[str, Any]:
+        """Run one tool call for the AI, asking first for risky ones. Always returns the real outcome."""
+        spec = BY_NAME.get(call.name)
+        if spec is None:
+            return {"ok": False, "error": f"There is no tool named '{call.name}'."}
+        args = {k: v for k, v in call.args.items() if not k.startswith("_")}
+        cid = uuid.uuid4().hex[:10]
+        entry: dict[str, Any] = {"id": cid, "tool": spec.name, "label": describe_call(spec, args), "status": "running"}
+        actions.append(entry)
+
+        def emit(status: str, **extra: Any) -> None:
+            entry.update(status=status, **extra)
+            queue.put_nowait(("tool", dict(entry)))
+
+        if spec.risk == "confirm":
+            fut: asyncio.Future = asyncio.get_running_loop().create_future()
+            pending_confirmations[cid] = fut
+            emit("awaiting_confirmation", detail=json.dumps(args, ensure_ascii=False))
+            try:
+                approved = await asyncio.wait_for(fut, timeout=120)
+            except asyncio.TimeoutError:
+                approved = False
+            finally:
+                pending_confirmations.pop(cid, None)
+            if not approved:
+                emit("declined")
+                return {"ok": False, "error": "The user declined (or did not answer within 2 minutes), so nothing was done and nothing is scheduled. Do not retry unless asked."}
+        emit("running")
+        audit.info("tool call", extra={"fields": {"tool": spec.name, "args": args}})
+        try:
+            result = await _run_tool(spec, args)
+        except (AgentUnavailable, AgentError, ResearchError, ReminderError, ToolFailure, LLMError, LLMNotConfigured) as e:
+            emit("failed", error=str(e))
+            audit.warning("tool failed", extra={"fields": {"tool": spec.name, "error": str(e)}})
+            return {"ok": False, "error": str(e)}
+        emit("done")
+        return {"ok": True, "result": _trim(result)}
+
     async def _remember(user_text: str, reply: str, candidates: list[dict[str, Any]], conv_id: str) -> None:
         """Steps 6-7 of the memory pipeline; runs after the reply so it never delays the user."""
         if not ABOUT_USER.search(user_text):
@@ -248,9 +350,11 @@ def build_router(svc: Services, require_auth: Callable[..., None]) -> APIRouter:
         svc.db.run("UPDATE conversations SET updated_at=? WHERE id=?", [now, conv_id])
 
         async def events():
-            parts: list[str] = []
-            finished = False
+            reply = ""
+            actions: list[dict[str, Any]] = []
             reply_id = uuid.uuid4().hex
+            queue: asyncio.Queue[tuple[str, dict[str, Any]]] = asyncio.Queue()
+            agent_task: asyncio.Task | None = None
             yield _sse("meta", {"conversation_id": conv_id, "user_message_id": user_msg_id, "reply_id": reply_id})
             try:
                 core = svc.memory.core()
@@ -262,30 +366,66 @@ def build_router(svc: Services, require_auth: Callable[..., None]) -> APIRouter:
                     yield _sse("notice", {"message": f"Memory search unavailable for this reply: {e}"})
                 svc.memory.touch([m["id"] for m in core + relevant])
                 yield _sse("memory", {"core": len(core), "relevant": len(relevant)})
-                system = build_system_prompt(svc.settings.public(), core, relevant)
+                system = build_system_prompt(svc.settings.public(), core, relevant, tools_enabled=True)
                 history = [(m["role"], m["content"]) for m in prior] + [("user", text)]
-                notices: list[str] = []
-                async for chunk in svc.llm.stream_chat(system, history, on_notice=notices.append):
-                    if await request.is_disconnected():
-                        break
-                    while notices:
-                        yield _sse("notice", {"message": notices.pop(0)})
-                    parts.append(chunk)
-                    yield _sse("delta", {"text": chunk})
+
+                async def execute(call: ToolCall) -> dict[str, Any]:
+                    return await _execute(call, queue, actions)
+
+                agent_task = asyncio.create_task(
+                    svc.llm.run_agent(system, history, TOOL_SCHEMAS, execute,
+                                      on_notice=lambda m: queue.put_nowait(("notice", {"message": m})))
+                )
+                while True:
+                    getter = asyncio.create_task(queue.get())
+                    done, _ = await asyncio.wait({getter, agent_task}, return_when=asyncio.FIRST_COMPLETED)
+                    if getter in done:
+                        yield _sse(*getter.result())
+                        continue
+                    getter.cancel()
+                    while not queue.empty():
+                        yield _sse(*queue.get_nowait())
+                    break
+                try:
+                    reply = agent_task.result()
+                except AgentIncomplete as e:
+                    # The actions really happened; say exactly what was done instead of an empty reply.
+                    done = [a["label"] for a in actions if a["status"] == "done"]
+                    failed = [f'{a["label"]} ({a.get("error", "failed")})' for a in actions if a["status"] == "failed"]
+                    lines = []
+                    if done:
+                        lines.append("Done: " + "; ".join(done) + ".")
+                    if failed:
+                        lines.append("Failed: " + "; ".join(failed) + ".")
+                    lines.append(f"I couldn't compose my usual reply afterwards: {e}")
+                    reply = " ".join(lines)
+                    yield _sse("delta", {"text": reply})
+                except ToolsUnsupported:
+                    yield _sse("notice", {"message": "This model can't use tools, so I can only talk, not act. Choose another model in Settings for actions."})
+                    plain = build_system_prompt(svc.settings.public(), core, relevant, tools_enabled=False)
+                    parts: list[str] = []
+                    async for chunk in svc.llm.stream_chat(plain, history):
+                        parts.append(chunk)
+                        yield _sse("delta", {"text": chunk})
+                    reply = "".join(parts)
                 else:
-                    finished = True
-                if finished:
-                    yield _sse("done", {"reply_id": reply_id})
-                    spawn(_remember(text, "".join(parts), core + relevant, conv_id))
+                    if reply:
+                        yield _sse("delta", {"text": reply})
+                yield _sse("done", {"reply_id": reply_id})
+                if reply:
+                    spawn(_remember(text, reply, core + relevant, conv_id))
             except (LLMError, LLMNotConfigured) as e:
                 yield _sse("error", {"message": str(e)})
             finally:
-                # Keep what was generated even if the user pressed Stop.
-                reply = "".join(parts)
-                if reply:
+                if agent_task and not agent_task.done():
+                    agent_task.cancel()  # user pressed Stop or closed the window
+                for fut in list(pending_confirmations.values()):
+                    if not fut.done():
+                        fut.set_result(False)
+                if reply or actions:
                     svc.db.run(
-                        "INSERT INTO messages (id, conversation_id, role, content, created_at) VALUES (?,?,?,?,?)",
-                        [reply_id, conv_id, "model", reply, time.time()],
+                        "INSERT INTO messages (id, conversation_id, role, content, created_at, actions) VALUES (?,?,?,?,?,?)",
+                        [reply_id, conv_id, "model", reply or "(stopped)", time.time(), json.dumps(actions) if actions else None],
                     )
                     svc.db.run("UPDATE conversations SET updated_at=? WHERE id=?", [time.time(), conv_id])
 

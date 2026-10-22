@@ -1,12 +1,13 @@
 """Anthropic Claude via the Messages API (plain HTTP, no SDK needed)."""
 from __future__ import annotations
 
+import base64
 import json
 from typing import Any, AsyncIterator
 
 import httpx
 
-from .base import Provider, ProviderError, json_instruction, merge_turns, parse_json_loose
+from .base import Provider, ProviderError, Step, ToolCall, ToolSession, json_instruction, merge_turns, parse_json_loose
 from .openai_compat import _error_text, _retry_after
 
 API = "https://api.anthropic.com/v1"
@@ -98,3 +99,47 @@ class AnthropicProvider(Provider):
     @staticmethod
     def pick_embed(models: list[dict[str, Any]]) -> str:
         return ""
+
+    def tool_session(self, system: str, history: list[tuple[str, str]], tools: list[dict[str, Any]]) -> ToolSession:
+        return _AnthropicTools(self, system, history, tools)
+
+    async def describe_image(self, model: str, prompt: str, png: bytes) -> str:
+        payload = {"model": model, "max_tokens": 1024, "messages": [{"role": "user", "content": [
+            {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": base64.b64encode(png).decode()}},
+            {"type": "text", "text": prompt}]}]}
+        try:
+            r = await self.http.post(f"{API}/messages", json=payload)
+        except httpx.HTTPError as e:
+            raise ProviderError(f"Could not reach Anthropic: {e}") from e
+        if r.status_code >= 400:
+            raise ProviderError(_error_text(r), r.status_code, _retry_after(r))
+        return "".join(b.get("text", "") for b in r.json().get("content", []) if b.get("type") == "text")
+
+
+class _AnthropicTools(ToolSession):
+    def __init__(self, provider: AnthropicProvider, system: str, history: list[tuple[str, str]], tools: list[dict[str, Any]]) -> None:
+        self.p = provider
+        self.system = system
+        self.messages: list[dict[str, Any]] = provider._messages(history)
+        self.tools = [{"name": t["name"], "description": t["description"], "input_schema": t["parameters"]} for t in tools]
+
+    async def step(self, model: str) -> Step:
+        payload = {"model": model, "max_tokens": MAX_TOKENS, "system": self.system, "messages": self.messages, "tools": self.tools}
+        try:
+            r = await self.p.http.post(f"{API}/messages", json=payload)
+        except httpx.HTTPError as e:
+            raise ProviderError(f"Could not reach Anthropic: {e}") from e
+        if r.status_code >= 400:
+            raise ProviderError(_error_text(r), r.status_code, _retry_after(r))
+        blocks = r.json().get("content", [])
+        self.messages.append({"role": "assistant", "content": blocks})
+        calls = [ToolCall(id=b["id"], name=b["name"], args=b.get("input") or {}) for b in blocks if b.get("type") == "tool_use"]
+        text = "".join(b.get("text", "") for b in blocks if b.get("type") == "text")
+        return Step(text="" if calls else text, calls=calls)
+
+    def add_results(self, results: list[tuple[ToolCall, dict[str, Any]]]) -> None:
+        self.messages.append({"role": "user", "content": [
+            {"type": "tool_result", "tool_use_id": c.id, "content": json.dumps(res, ensure_ascii=False, default=str),
+             "is_error": not res.get("ok", True)}
+            for c, res in results
+        ]})

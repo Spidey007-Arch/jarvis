@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import re
 from abc import ABC, abstractmethod
+from dataclasses import dataclass, field
 from typing import Any, AsyncIterator
 
 TRANSIENT_STATUS = {408, 409, 429, 500, 502, 503, 504, 529}
@@ -57,6 +58,35 @@ def json_instruction(schema: dict[str, Any]) -> str:
     )
 
 
+@dataclass
+class ToolCall:
+    id: str
+    name: str
+    args: dict[str, Any]
+
+
+@dataclass
+class Step:
+    text: str = ""
+    calls: list[ToolCall] = field(default_factory=list)
+
+
+class ToolSession(ABC):
+    """One multi-step tool-using exchange. Keeps the provider's native message history,
+    so provider-specific details (tool ids, thought signatures) survive between steps."""
+
+    @abstractmethod
+    async def step(self, model: str) -> Step: ...
+
+    @abstractmethod
+    def add_results(self, results: list[tuple[ToolCall, dict[str, Any]]]) -> None: ...
+
+
+def tools_unsupported(e: ProviderError) -> bool:
+    msg = str(e).lower()
+    return e.status in (400, 404, 422) and ("tool" in msg or "function" in msg)
+
+
 class Provider(ABC):
     id: str = ""
     supports_embeddings = True
@@ -74,6 +104,12 @@ class Provider(ABC):
 
     async def embed(self, model: str, texts: list[str], task: str) -> list[list[float]]:
         raise ProviderError(f"{self.id} does not provide embeddings.")
+
+    def tool_session(self, system: str, history: list[tuple[str, str]], tools: list[dict[str, Any]]) -> ToolSession:
+        raise ProviderError(f"{self.id} does not support tool calling.", 400)
+
+    async def describe_image(self, model: str, prompt: str, png: bytes) -> str:
+        raise ProviderError("This provider cannot look at images.", 400)
 
     # Model choice heuristics; users can override every pick in Settings.
     @staticmethod

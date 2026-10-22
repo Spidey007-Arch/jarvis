@@ -10,10 +10,13 @@ import time
 from typing import Any, AsyncIterator, Awaitable, Callable, TypeVar
 
 from .providers import PRESETS, Provider, ProviderError, make_provider, provider_class
+from .providers.base import Step, ToolCall, tools_unsupported
 from .settings import SettingsStore
 
 T = TypeVar("T")
 _COOLDOWN_S = 120.0
+_MAX_COOLDOWN_S = 1800.0
+FIRST_RESPONSE_TIMEOUT_S = 30.0  # overloaded models can hang for minutes before admitting it
 
 
 class LLMNotConfigured(Exception):
@@ -22,6 +25,21 @@ class LLMNotConfigured(Exception):
 
 class LLMError(Exception):
     """The provider returned an error; the message is the real reason."""
+
+
+class ToolsUnsupported(LLMError):
+    """The selected model cannot call tools; chat still works without actions."""
+
+
+class AgentIncomplete(LLMError):
+    """Tools ran, but the model could not produce its final reply afterwards."""
+
+
+async def _timed(aw: Awaitable[T], seconds: float = FIRST_RESPONSE_TIMEOUT_S) -> T:
+    try:
+        return await asyncio.wait_for(aw, seconds)
+    except asyncio.TimeoutError as e:
+        raise ProviderError(f"No response within {seconds:.0f}s", 504) from e
 
 
 def describe(e: ProviderError, provider: str, model: str | None) -> LLMError:
@@ -44,6 +62,7 @@ class LLM:
         self._signature: tuple[str, str, str] | None = None
         self._models_cache: list[dict[str, Any]] | None = None
         self._cooldown: dict[str, float] = {}
+        self._failures: dict[str, int] = {}
 
     # ---------- configuration ----------
 
@@ -138,10 +157,18 @@ class LLM:
     def _available(self, names: list[str]) -> list[str]:
         now = time.monotonic()
         ready = [n for n in names if self._cooldown.get(n, 0) <= now]
-        return ready or names[:1]
+        cooling = sorted((n for n in names if n not in ready), key=lambda n: self._cooldown.get(n, 0))
+        return ready + cooling  # still try busy models last, soonest-available first
 
     def _cool(self, model: str, e: ProviderError) -> None:
-        self._cooldown[model] = time.monotonic() + max(e.retry_after or 0, _COOLDOWN_S if not e.retry_after else 0, 5.0)
+        """Back off from a busy model; models that keep failing are avoided for longer."""
+        n = self._failures.get(model, 0) + 1
+        self._failures[model] = n
+        backoff = min(_COOLDOWN_S * 2 ** (n - 1), _MAX_COOLDOWN_S)
+        self._cooldown[model] = time.monotonic() + max(e.retry_after or 0, backoff if not e.retry_after else 0, 5.0)
+
+    def _ok(self, model: str) -> None:
+        self._failures.pop(model, None)
 
     async def _chat_candidates(self) -> list[str]:
         primary = self.chat_model
@@ -155,12 +182,14 @@ class LLM:
         names = [utility] + p.fallbacks(models, primary) + [primary]
         return self._available(list(dict.fromkeys(n for n in names if n)))
 
-    async def _first_success(self, candidates: list[str], call: Callable[[str], Awaitable[T]]) -> T:
+    async def _first_success(self, candidates: list[str], call: Callable[[str], Awaitable[T]], timeout: float = FIRST_RESPONSE_TIMEOUT_S) -> T:
         last: ProviderError | None = None
         last_model = candidates[0] if candidates else None
         for model in candidates:
             try:
-                return await call(model)
+                result = await _timed(call(model), timeout)
+                self._ok(model)
+                return result
             except ProviderError as e:
                 if not e.transient:
                     raise describe(e, self.provider_id, model) from e
@@ -181,13 +210,19 @@ class LLM:
         for model in candidates:
             started = False
             try:
-                async for text in p.stream_chat(model, system, history):
+                stream = p.stream_chat(model, system, history).__aiter__()
+                while True:
+                    try:
+                        text = await (stream.__anext__() if started else _timed(stream.__anext__()))
+                    except StopAsyncIteration:
+                        break
                     if not text:
                         continue
                     if not started and model != preferred and on_notice:
                         on_notice(f"{preferred} is busy right now; this reply came from {model}.")
                     started = True
                     yield text
+                self._ok(model)
                 return
             except ProviderError as e:
                 if started or not e.transient:
@@ -216,3 +251,64 @@ class LLM:
         if len(out) != len(texts):
             raise LLMError(f"The provider returned {len(out)} embeddings for {len(texts)} inputs.")
         return out
+
+    async def run_agent(
+        self,
+        system: str,
+        history: list[tuple[str, str]],
+        tools: list[dict[str, Any]],
+        execute: Callable[[ToolCall], Awaitable[dict[str, Any]]],
+        on_notice: Callable[[str], None] | None = None,
+        max_rounds: int = 8,
+    ) -> str:
+        """Let the model call tools until it produces a final answer. Returns that answer.
+
+        Falls back to another model only on the first step (before any tool ran), because
+        some providers tie in-progress tool state to the model that produced it."""
+        p = self.provider()
+        preferred = self.chat_model
+        session = p.tool_session(system, history, tools)
+        model = None
+        step: Step | None = None
+        last: ProviderError | None = None
+        last_model = preferred
+        for candidate in await self._chat_candidates():
+            try:
+                step = await _timed(session.step(candidate))
+                model = candidate
+                self._ok(candidate)
+                break
+            except ProviderError as e:
+                if tools_unsupported(e):
+                    raise ToolsUnsupported(str(e)) from e
+                if not e.transient:
+                    raise describe(e, self.provider_id, candidate) from e
+                self._cool(candidate, e)
+                last, last_model = e, candidate
+        if step is None or model is None:
+            if last is not None and last.status == 429:
+                raise LLMError(f"Every available {PRESETS[self.provider_id]['name']} model is out of quota right now. {last} "
+                               "Try again later, or connect a key with more quota in Settings.")
+            raise describe(last, self.provider_id, last_model) if last else LLMError("No model is available.")
+        if model != preferred and on_notice:
+            on_notice(f"{preferred} is busy right now; this reply came from {model}.")
+
+        for _ in range(max_rounds):
+            if not step.calls:
+                return step.text
+            results = [(call, await execute(call)) for call in step.calls]
+            session.add_results(results)
+            for attempt in range(2):
+                try:
+                    step = await _timed(session.step(model), 60.0)
+                    break
+                except ProviderError as e:
+                    if attempt == 1 or not e.transient:
+                        # Actions already ran; the caller reports them even though the model can't finish.
+                        raise AgentIncomplete(str(describe(e, self.provider_id, model))) from e
+                    await asyncio.sleep(min(e.retry_after or 3.0, 20.0))
+        return step.text or "I stopped after several steps without finishing; tell me if you want me to keep going."
+
+    async def describe_image(self, prompt: str, image: bytes) -> str:
+        p = self.provider()
+        return await self._first_success(await self._chat_candidates(), lambda m: p.describe_image(m, prompt, image), timeout=60.0)
