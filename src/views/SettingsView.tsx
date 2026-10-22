@@ -89,11 +89,15 @@ export default function SettingsView({ conn, onChanged }: { conn: Connection | n
               key={p.id}
               role="radio"
               aria-checked={p.id === s.provider}
-              className={`prov ${p.id === s.provider ? "on" : ""}`}
+              className={`prov ${p.id === s.provider ? "on" : ""} ${p.featured ? "featured" : ""}`}
               disabled={busy}
               onClick={() => p.id !== s.provider && save("provider", { provider: p.id }, `Switched to ${p.name}.`, true)}
             >
-              <span>{p.name}</span>
+              <span>
+                {p.featured && <b className="star">★</b>}
+                {p.name}
+                {p.badge && <em className="badge">{p.badge}</em>}
+              </span>
               {s.providers_with_keys.includes(p.id) && <i title="Key saved">●</i>}
             </button>
           ))}

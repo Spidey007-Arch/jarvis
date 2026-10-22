@@ -42,6 +42,8 @@ export interface ProviderPreset {
   base_url: string;
   key_hint: string;
   embeddings: boolean;
+  featured?: boolean;
+  badge?: string;
 }
 
 export interface ModelInfo {
