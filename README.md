@@ -2,14 +2,14 @@
 
 A personal AI desktop assistant for Windows, modeled on JARVIS from the Iron Man films.
 
-**Stack:** Tauri 2 (Rust) shell · React + TypeScript UI · Python FastAPI backend · Python desktop agent · Google Gemini
+**Stack:** Tauri 2 (Rust) shell · React + TypeScript UI · Python FastAPI backend · Python desktop agent · cloud LLM
 
 ## Status
 
 | Milestone | State |
 |---|---|
 | 1. Startup & reliability: hidden backend + agent, health checks, auto-restart, single instance, clean shutdown | Done |
-| 2. Memory: encrypted settings, Gemini chat with streaming, long-term semantic memory (extract / update / forget / summarize / expire) | Done |
+| 2. Memory: encrypted settings, streaming AI chat, long-term semantic memory (extract / update / forget / summarize / expire) | Done |
 | 3. Desktop automation (apps, files, volume, media, screenshots, reminders) | Not started |
 | 4. Persona tuning | Basic persona only |
 | 5. Voice (wake word, speech-to-text, text-to-speech) | Not started |
@@ -26,7 +26,7 @@ agent/       Background process that executes OS actions for the backend
 common/      Shared Python: logging, paths, Windows DPAPI encryption
 ```
 
-Runtime data (settings, database, logs) lives in `%LOCALAPPDATA%\JARVIS`. The Gemini API key is stored encrypted with Windows DPAPI and is never written to this repository.
+Runtime data (settings, database, logs) lives in `%LOCALAPPDATA%\JARVIS`. API keys are stored encrypted with Windows DPAPI and is never written to this repository.
 
 ## Development
 
@@ -38,7 +38,7 @@ npm install
 npx tauri dev
 ```
 
-Then open **Settings** in the app and paste your Gemini API key.
+Then open **Settings** in the app and paste your API key.
 
 Tests:
 
