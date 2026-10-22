@@ -11,11 +11,11 @@ It remembers you across conversations, speaks in a composed, dryly witty voice, 
 
 | Provider | Key needed | Memory search | Tested |
 |---|---|---|---|
+| **★ OmniRoute (recommended: free, self-hosted gateway to hundreds of models)** | Gateway key if you created one ([OmniRoute](https://github.com/cheaper-inference/OmniRoute)) | Semantic or keyword | Protocol tests |
 | Google Gemini | Yes ([AI Studio](https://aistudio.google.com), free tier available) | Semantic (embeddings) | Live |
 | OpenAI | Yes ([platform.openai.com](https://platform.openai.com/api-keys)) | Semantic (embeddings) | Protocol tests |
 | Anthropic Claude | Yes ([console.anthropic.com](https://console.anthropic.com)) | Keyword (Claude has no embeddings API) | Protocol tests |
 | OpenRouter (hundreds of models) | Yes ([openrouter.ai/keys](https://openrouter.ai/keys)) | Semantic or keyword | Protocol tests |
-| OmniRoute (self-hosted gateway to many providers) | Gateway key if you created one ([OmniRoute](https://github.com/diegosouzapw/OmniRoute)) | Semantic or keyword | Protocol tests |
 | Ollama (local, free) | No ([ollama.com](https://ollama.com)) | Semantic with e.g. `nomic-embed-text` | Protocol tests |
 | Any OpenAI-compatible API (Groq, DeepSeek, Together, Mistral, LM Studio, ...) | Depends | Semantic or keyword | Protocol tests |
 
