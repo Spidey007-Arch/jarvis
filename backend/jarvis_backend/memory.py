@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import math
+import re
 import time
 import uuid
 from array import array
@@ -25,6 +26,8 @@ log = logging.getLogger("jarvis.memory")
 TYPES = ("identity", "preference", "goal", "project", "relationship", "event", "behavior")
 CORE_TYPES = ("identity", "behavior")  # always in context: they shape how JARVIS addresses the user
 SIM_MIN = 0.55          # minimum cosine similarity for a memory to be considered relevant
+LEX_MIN = 0.2           # same, for keyword matching when the provider has no embeddings
+DEDUP_LEX = 0.8
 DEDUP_SIM = 0.92        # a "new" memory this close to an existing one of the same type is an update
 SUMMARIZE_AT = 10       # consolidate once one subject has this many active memories
 RETENTION_DAYS = 90     # how long superseded / retracted / summarized history is kept
@@ -35,6 +38,7 @@ DAY = 86400.0
 
 class Embedder(Protocol):
     embed_model: str
+    can_embed: bool
 
     async def embed(self, texts: list[str], task: str) -> list[list[float]]: ...
     async def generate_json(self, prompt: str, schema: dict[str, Any]) -> Any: ...
@@ -61,6 +65,22 @@ def _dot(a: Any, b: Any) -> float:
 
 def _text(subject: str, content: str) -> str:
     return f"{subject}: {content}"
+
+
+_STOP = set(
+    "a an the and or but if of to in on at for with by from as is are was were be been being it its this that "
+    "these those i me my mine you your he she they them we us our do does did have has had not no so than then "
+    "what which who whom how when where why can could would should will just about into over very user user's "
+    "prefers likes is".split()
+)
+
+
+def _tokens(text: str) -> set[str]:
+    return {w for w in re.findall(r"[a-z0-9][a-z0-9'+#.-]*", text.lower()) if w not in _STOP and len(w) > 1}
+
+
+def _lex_sim(a: set[str], b: set[str]) -> float:
+    return len(a & b) / math.sqrt(len(a) * len(b)) if a and b else 0.0
 
 
 def _public(row: dict[str, Any]) -> dict[str, Any]:
@@ -117,6 +137,8 @@ class MemoryStore:
 
     async def embed_missing(self) -> int:
         """Embed active memories that have no vector yet (imports, manual edits, model change)."""
+        if not self.llm.can_embed:
+            return 0
         model = self.llm.embed_model
         rows = self.db.all(
             "SELECT id, subject, content FROM memories WHERE status='active' AND (embedding IS NULL OR embedding_model IS NOT ?)",
@@ -133,15 +155,30 @@ class MemoryStore:
     async def search(self, query: str, k: int = 8, now: float | None = None) -> list[dict[str, Any]]:
         """Relevant non-core memories, ranked by similarity, importance and recency."""
         now = now or time.time()
-        await self.embed_missing()
-        qv = _normalize((await self.llm.embed([query], "RETRIEVAL_QUERY"))[0])
-        rows = self.db.all(
-            "SELECT * FROM memories WHERE status='active' AND embedding IS NOT NULL AND type NOT IN (?, ?)", CORE_TYPES
-        )
+        if self.llm.can_embed:
+            await self.embed_missing()
+            qv = _normalize((await self.llm.embed([query], "RETRIEVAL_QUERY"))[0])
+            rows = self.db.all(
+                "SELECT * FROM memories WHERE status='active' AND embedding IS NOT NULL AND type NOT IN (?, ?)", CORE_TYPES
+            )
+
+            def similarity(r: dict[str, Any]) -> float:
+                return _dot(qv, _unpack(r["embedding"]))
+
+            threshold = SIM_MIN
+        else:
+            # Keyword fallback for providers without an embeddings API.
+            qt = _tokens(query)
+            rows = self.db.all("SELECT * FROM memories WHERE status='active' AND type NOT IN (?, ?)", CORE_TYPES)
+
+            def similarity(r: dict[str, Any]) -> float:
+                return _lex_sim(qt, _tokens(_text(r["subject"], r["content"])))
+
+            threshold = LEX_MIN
         ranked = []
         for r in rows:
-            sim = _dot(qv, _unpack(r["embedding"]))
-            if sim < SIM_MIN:
+            sim = similarity(r)
+            if sim < threshold:
                 continue
             age_days = (now - max(r["updated_at"], r["last_accessed_at"] or 0)) / DAY
             recency = 0.5 ** (age_days / RECENCY_HALF_LIFE_DAYS)
@@ -155,14 +192,22 @@ class MemoryStore:
         for i in ids:
             self.db.run("UPDATE memories SET last_accessed_at=?, access_count=access_count+1 WHERE id=?", [now, i])
 
-    async def _nearest_same_type(self, type_: str, vec: list[float]) -> tuple[dict[str, Any] | None, float]:
+    def _near_duplicate(self, type_: str, subject: str, content: str, vec: list[float] | None) -> dict[str, Any] | None:
+        """An existing active memory of the same type that says essentially the same thing."""
         best, best_sim = None, -1.0
-        nv = _normalize(vec)
-        for r in self.db.all("SELECT * FROM memories WHERE status='active' AND type=? AND embedding IS NOT NULL", [type_]):
-            s = _dot(nv, _unpack(r["embedding"]))
+        if vec is not None:
+            nv = _normalize(vec)
+            for r in self.db.all("SELECT * FROM memories WHERE status='active' AND type=? AND embedding IS NOT NULL", [type_]):
+                s = _dot(nv, _unpack(r["embedding"]))
+                if s > best_sim:
+                    best, best_sim = r, s
+            return best if best_sim >= DEDUP_SIM else None
+        toks = _tokens(_text(subject, content))
+        for r in self.db.all("SELECT * FROM memories WHERE status='active' AND type=?", [type_]):
+            s = _lex_sim(toks, _tokens(_text(r["subject"], r["content"])))
             if s > best_sim:
                 best, best_sim = r, s
-        return best, best_sim
+        return best if best_sim >= DEDUP_LEX else None
 
     # ---------- writes ----------
 
@@ -208,12 +253,10 @@ class MemoryStore:
                     result["skipped"] += 1
                     continue
                 importance = _clamp(op.get("importance"))
-                vec = (await self.llm.embed([_text(subject, content)], "RETRIEVAL_DOCUMENT"))[0]
+                vec = (await self.llm.embed([_text(subject, content)], "RETRIEVAL_DOCUMENT"))[0] if self.llm.can_embed else None
 
                 if not target_row:
-                    near, sim = await self._nearest_same_type(type_, vec)
-                    if near is not None and sim >= DEDUP_SIM:
-                        target_row = near
+                    target_row = self._near_duplicate(type_, subject, content, vec)
                 if target_row and target_row["content"].strip() == content and target_row["subject"] == subject:
                     self.db.run(
                         "UPDATE memories SET importance=MAX(importance, ?), updated_at=? WHERE id=?",
@@ -249,7 +292,8 @@ class MemoryStore:
             if not items or len(items) >= len(rows):
                 continue
             async with self.write_lock:
-                vecs = await self.llm.embed([_text(g["subject"], m["content"]) for m in items], "RETRIEVAL_DOCUMENT")
+                texts = [_text(g["subject"], m["content"]) for m in items]
+                vecs = await self.llm.embed(texts, "RETRIEVAL_DOCUMENT") if self.llm.can_embed else [None] * len(items)
                 new_ids = [
                     self._insert(g["type"], g["subject"], m["content"].strip()[:600], _clamp(m.get("importance")), "summary", v)
                     for m, v in zip(items, vecs)

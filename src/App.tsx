@@ -100,7 +100,7 @@ export default function App() {
     if (!conn) return setConfigured(false);
     getSettings(conn)
       .then((s) => {
-        setConfigured(s.has_gemini_key && !!s.chat_model && !!s.embed_model);
+        setConfigured((s.has_api_key || s.provider === "ollama" || s.provider === "custom") && !!s.chat_model);
         setAddress(s.address || "sir");
       })
       .catch(() => setConfigured(false));

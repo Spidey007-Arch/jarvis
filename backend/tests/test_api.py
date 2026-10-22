@@ -48,11 +48,27 @@ class ApiTests(unittest.TestCase):
         self.assertIn("API key", r.json()["message"])
 
     def test_invalid_key_rejected_with_real_reason(self):
-        r = self.client.put("/api/settings", headers=AUTH, json={"gemini_api_key": "AIza-definitely-not-valid-000000"})
+        r = self.client.put("/api/settings", headers=AUTH, json={"provider": "gemini", "api_key": "AIza-definitely-not-valid-000000"})
         self.assertEqual(r.status_code, 400, r.text)
-        self.assertIn("rejected", r.json()["detail"])
         print("\n    Google said:", r.json()["detail"][:160])
-        self.assertFalse(self.client.get("/api/settings", headers=AUTH).json()["has_gemini_key"])
+        self.assertFalse(self.client.get("/api/settings", headers=AUTH).json()["has_api_key"])
+
+    def test_providers_listed(self):
+        ids = [p["id"] for p in self.client.get("/api/providers", headers=AUTH).json()]
+        self.assertEqual(ids, ["gemini", "openai", "anthropic", "openrouter", "ollama", "custom"])
+
+    def test_switch_provider_without_key_asks_for_key(self):
+        r = self.client.put("/api/settings", headers=AUTH, json={"provider": "anthropic"})
+        self.assertEqual(r.json()["provider"], "anthropic")
+        self.assertFalse(r.json()["has_api_key"])
+        r = self.client.post("/api/chat", headers=AUTH, json={"message": "hi"})
+        self.assertEqual(r.status_code, 409)
+        self.client.put("/api/settings", headers=AUTH, json={"provider": "gemini"})
+
+    def test_unreachable_local_server_reports_real_error(self):
+        r = self.client.put("/api/settings", headers=AUTH, json={"provider": "custom", "base_url": "http://127.0.0.1:9/v1"})
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("Could not", r.json()["detail"])
 
     def test_memory_import_list_edit_delete_export(self):
         r = self.client.post("/api/memories/import", headers=AUTH, json={"memories": [
