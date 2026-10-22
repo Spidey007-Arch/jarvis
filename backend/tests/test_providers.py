@@ -133,6 +133,8 @@ class ProviderProtocolTests(unittest.TestCase):
     def test_gateway_auto_model_preferred(self):
         models = [{"name": n, "kind": "chat"} for n in ("gpt-5-mini", "auto", "claude-x")]
         self.assertEqual(OpenAICompatProvider.pick_chat(models), "auto")
+        omni = [{"name": n, "kind": "chat"} for n in ("auto/best-chaos", "auto/best-chat", "auto/fast", "ddgw/gpt-5.4-mini")]
+        self.assertEqual(OpenAICompatProvider.pick_chat(omni), "auto/best-chat")
 
     def test_omniroute_preset_uses_local_gateway(self):
         from jarvis_backend.providers import PRESETS, make_provider

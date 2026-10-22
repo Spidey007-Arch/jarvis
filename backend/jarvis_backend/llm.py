@@ -50,8 +50,10 @@ def describe(e: ProviderError, provider: str, model: str | None) -> LLMError:
         return LLMError(f"{where}: {e}{wait}")
     if e.status in (500, 502, 503, 504, 529):
         return LLMError(f"{where} is overloaded right now (error {e.status}). Try again in a moment.")
-    if e.status in (401, 403):
-        return LLMError(f"{where} rejected the API key ({e.status}): {e}")
+    if e.status == 401:
+        return LLMError(f"{where} rejected the API key: {e}")
+    if e.status == 403:
+        return LLMError(f"{where} refused the request (403): {e}")
     return LLMError(f"{where}: {e}" + (f" (HTTP {e.status})" if e.status else ""))
 
 
