@@ -140,9 +140,10 @@ class OpenAICompatProvider(Provider):
         chat = [m["name"] for m in models if m["kind"] == "chat"]
         if not chat:
             return ""
-        auto = [n for n in chat if n == "auto" or n.endswith("/auto")]
-        if auto:  # gateways (OpenRouter, OmniRoute) route "auto" to the best available model
-            return auto[0]
+        # Gateways (OpenRouter, OmniRoute) expose routing models that pick the best available upstream.
+        for routed in ("auto", "auto/best-chat", "auto/chat", "auto/best-fast", "openrouter/auto"):
+            if routed in chat:
+                return routed
         gpt = [n for n in chat if re.match(r"(openai/)?gpt-\d", n)]
         if gpt:
             def ver(n: str) -> tuple[float, int]:
