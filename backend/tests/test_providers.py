@@ -56,6 +56,18 @@ class Fake(BaseHTTPRequestHandler):
     def do_POST(self):
         body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
         SEEN.append({"path": self.path, "body": body, "headers": dict(self.headers)})
+        if self.path == "/oa/chat/completions" and body.get("tools"):
+            if not any(m["role"] == "tool" for m in body["messages"]):
+                return self._json(200, {"choices": [{"message": {"role": "assistant", "content": None, "tool_calls": [
+                    {"id": "call_1", "type": "function", "function": {"name": "volume", "arguments": '{"action": "set", "level": 30}'}}]}}]})
+            tool_msg = next(m for m in body["messages"] if m["role"] == "tool")
+            return self._json(200, {"choices": [{"message": {"role": "assistant", "content": f"Volume set. ({tool_msg['tool_call_id']})"}}]})
+        if self.path == "/an/messages" and body.get("tools"):
+            last = body["messages"][-1]
+            if isinstance(last["content"], list) and last["content"][0].get("type") == "tool_result":
+                return self._json(200, {"content": [{"type": "text", "text": f"Done ({last['content'][0]['tool_use_id']})."}]})
+            return self._json(200, {"content": [{"type": "text", "text": "Checking."},
+                                                {"type": "tool_use", "id": "toolu_1", "name": "system_status", "input": {}}]})
         if self.path == "/oa/chat/completions":
             if body["model"] == "busy-model":
                 return self._json(429, {"error": {"message": "Rate limit reached"}}, {"retry-after": "7"})
@@ -246,6 +258,45 @@ class ProviderProtocolTests(unittest.TestCase):
             finally:
                 await p.aclose()
         self.assertEqual(self.run_async(go()), {"operations": [{"op": "create"}]})
+
+
+    # ---------- tool calling ----------
+
+    TOOLS = [{"name": "volume", "description": "v", "parameters": {"type": "object", "properties": {}}},
+             {"name": "system_status", "description": "s", "parameters": {"type": "object", "properties": {}}}]
+
+    def test_openai_tool_round_trip(self):
+        async def go():
+            p = self.oa()
+            try:
+                s = p.tool_session("sys", [("user", "set volume to 30")], self.TOOLS)
+                first = await s.step("gpt-5-mini")
+                s.add_results([(first.calls[0], {"ok": True, "result": {"volume_now": 30}})])
+                return first, await s.step("gpt-5-mini")
+            finally:
+                await p.aclose()
+        first, final = self.run_async(go())
+        self.assertEqual((first.calls[0].name, first.calls[0].args), ("volume", {"action": "set", "level": 30}))
+        self.assertEqual(final.text, "Volume set. (call_1)")
+        self.assertEqual(SEEN[0]["body"]["tools"][0]["type"], "function")
+        self.assertEqual([m["role"] for m in SEEN[1]["body"]["messages"]], ["system", "user", "assistant", "tool"])
+
+    def test_anthropic_tool_round_trip(self):
+        async def go():
+            p = self.an()
+            try:
+                s = p.tool_session("sys", [("user", "how's the system?")], self.TOOLS)
+                first = await s.step("claude-new-sonnet")
+                s.add_results([(first.calls[0], {"ok": False, "error": "agent offline"})])
+                return first, await s.step("claude-new-sonnet")
+            finally:
+                await p.aclose()
+        first, final = self.run_async(go())
+        self.assertEqual((first.calls[0].id, first.calls[0].name), ("toolu_1", "system_status"))
+        self.assertEqual(final.text, "Done (toolu_1).")
+        result_block = SEEN[1]["body"]["messages"][-1]["content"][0]
+        self.assertTrue(result_block["is_error"])
+        self.assertIn("input_schema", SEEN[0]["body"]["tools"][0])
 
 
 if __name__ == "__main__":

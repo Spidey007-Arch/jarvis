@@ -333,3 +333,35 @@ label { display: flex; flex-direction: column; gap: 5px; font-size: 11px; letter
 .drawer .prov i { color: var(--ok); font-style: normal; font-size: 9px; }
 .drawer .prov.on { border-color: var(--core); background: color-mix(in srgb, var(--core) 16%, transparent); box-shadow: 0 0 16px color-mix(in srgb, var(--core) 30%, transparent); }
 .settings label { margin-top: 8px; }
+
+/* actions JARVIS takes on the PC */
+.acts { list-style: none; margin: 2px 0 8px; padding: 0; display: flex; flex-direction: column; gap: 5px; }
+.act {
+  display: flex; align-items: center; gap: 8px; font-size: 12.5px; width: fit-content; max-width: 100%;
+  padding: 5px 11px 5px 7px; border-radius: 999px; animation: rise 0.25s ease both;
+  background: color-mix(in srgb, var(--core) 9%, transparent); border: 1px solid color-mix(in srgb, var(--core) 22%, transparent);
+}
+.act-icon { width: 18px; height: 18px; border-radius: 50%; display: grid; place-items: center; font-size: 11px; flex: none; }
+.act.done .act-icon { background: color-mix(in srgb, var(--ok) 25%, transparent); color: var(--ok); }
+.act.failed { border-color: rgba(255, 107, 107, 0.45); }
+.act.failed .act-icon { background: rgba(255, 107, 107, 0.2); color: var(--bad); }
+.act.declined { opacity: 0.7; }
+.act.declined .act-icon { color: var(--dim); }
+.act-err { color: var(--dim); font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 380px; }
+.act.failed .act-err { color: #ffb3b3; }
+.spin-dot { width: 12px; height: 12px; border-radius: 50%; border: 2px solid color-mix(in srgb, var(--core) 30%, transparent); border-top-color: var(--core); animation: spinx 0.8s linear infinite; }
+@keyframes spinx { to { transform: rotate(360deg); } }
+
+.confirm-card {
+  flex-direction: column; align-items: stretch; gap: 8px; border-radius: 16px; padding: 12px 14px; width: min(460px, 100%);
+  background: rgba(30, 18, 4, 0.55); border: 1px solid rgba(255, 184, 77, 0.55); backdrop-filter: blur(14px);
+  box-shadow: 0 0 24px rgba(255, 184, 77, 0.18);
+}
+.confirm-title { font-size: 13.5px; }
+.confirm-badge { font-size: 9px; letter-spacing: 0.24em; color: var(--warn); margin-right: 6px; }
+.confirm-detail { font: 11px/1.4 Consolas, monospace; color: var(--dim); white-space: pre-wrap; word-break: break-all; }
+.confirm-buttons { display: flex; gap: 8px; }
+.confirm-buttons button { flex: 1; border-radius: 10px; padding: 7px 0; font-size: 12.5px; letter-spacing: 0.08em; border: 1px solid; background: transparent; }
+.confirm-buttons .allow { border-color: var(--warn); color: #241400; background: var(--warn); }
+.confirm-buttons .deny { border-color: color-mix(in srgb, var(--core) 30%, transparent); color: var(--text); }
+.confirm-buttons button:disabled { opacity: 0.4; }

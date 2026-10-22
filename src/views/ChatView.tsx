@@ -1,9 +1,45 @@
 import { KeyboardEvent, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { Message, getMessages, streamChat } from "../api";
+import { ActionEvent, Message, answerConfirmation, getMessages, streamChat } from "../api";
 import { Activity, emitPulse, emitSend } from "../fx/activity";
 import type { Connection } from "../shell";
 
 type Line = Message & { pending?: boolean };
+
+const ICON: Record<ActionEvent["status"], string> = {
+  running: "",
+  awaiting_confirmation: "?",
+  done: "✓",
+  failed: "✕",
+  declined: "⊘",
+};
+
+/** One action JARVIS took. Risky ones become an Allow/Deny card until answered. */
+function ActionRow({ a, live, onAnswer }: { a: ActionEvent; live: boolean; onAnswer: (ok: boolean) => void }) {
+  const [answered, setAnswered] = useState(false);
+  if (a.status === "awaiting_confirmation" && live) {
+    return (
+      <li className="act confirm-card">
+        <div className="confirm-title">
+          <span className="confirm-badge">PERMISSION</span> {a.label}
+        </div>
+        {a.detail && a.detail !== "{}" && <code className="confirm-detail">{a.detail}</code>}
+        <div className="confirm-buttons">
+          <button className="allow" disabled={answered} onClick={() => { setAnswered(true); onAnswer(true); }}>Allow</button>
+          <button className="deny" disabled={answered} onClick={() => { setAnswered(true); onAnswer(false); }}>Deny</button>
+        </div>
+      </li>
+    );
+  }
+  const status = a.status === "awaiting_confirmation" ? "declined" : a.status;
+  return (
+    <li className={`act ${status}`} title={a.error || undefined}>
+      <span className="act-icon">{status === "running" ? <i className="spin-dot" /> : ICON[status]}</span>
+      <span className="act-label">{a.label}</span>
+      {status === "failed" && a.error && <span className="act-err">{a.error}</span>}
+      {status === "declined" && <span className="act-err">not done</span>}
+    </li>
+  );
+}
 type Notice = { tone: "warn" | "bad" | "dim"; text: string };
 
 function greeting(address: string) {
@@ -99,6 +135,17 @@ export default function ChatView({
           failed = true;
           setNotice({ tone: "bad", text: d.message });
         },
+        tool: (d) => {
+          onActivity(d.status === "awaiting_confirmation" ? "idle" : "thinking");
+          setLines((l) =>
+            l.map((x) => {
+              if (x.id !== tempReply) return x;
+              const acts = x.actions ?? [];
+              const i = acts.findIndex((a) => a.id === d.id);
+              return { ...x, actions: i < 0 ? [...acts, d] : acts.map((a, j) => (j === i ? d : a)) };
+            }),
+          );
+        },
       });
     } catch (e) {
       if ((e as Error).name === "AbortError") setNotice({ tone: "dim", text: "Stopped." });
@@ -107,7 +154,7 @@ export default function ChatView({
         setNotice({ tone: "bad", text: (e as Error).message });
       }
     } finally {
-      setLines((l) => l.filter((x) => !(x.id === tempReply && !x.content)).map((x) => ({ ...x, pending: false })));
+      setLines((l) => l.filter((x) => !(x.id === tempReply && !x.content && !x.actions?.length)).map((x) => ({ ...x, pending: false })));
       setStreaming(false);
       abort.current = null;
       onActivity(failed ? "error" : "idle");
@@ -137,6 +184,13 @@ export default function ChatView({
         {lines.map((m) => (
           <div key={m.id} className={`msg ${m.role}`}>
             {m.role === "model" && <div className="who">JARVIS</div>}
+            {!!m.actions?.length && (
+              <ul className="acts">
+                {m.actions.map((a) => (
+                  <ActionRow key={a.id} a={a} live={!!m.pending} onAnswer={(ok) => conn && answerConfirmation(conn, a.id, ok).catch((e) => setNotice({ tone: "bad", text: (e as Error).message }))} />
+                ))}
+              </ul>
+            )}
             <div className="text">
               {m.content}
               {m.pending && !m.content && (

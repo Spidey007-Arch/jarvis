@@ -69,15 +69,33 @@ export interface Conversation {
   pinned: number;
 }
 
+export type ActionStatus = "running" | "awaiting_confirmation" | "done" | "failed" | "declined";
+
+/** One thing JARVIS did (or asked to do) on the PC while answering. */
+export interface ActionEvent {
+  id: string;
+  tool: string;
+  label: string;
+  status: ActionStatus;
+  error?: string;
+  detail?: string;
+}
+
 export interface Message {
   id: string;
   role: "user" | "model";
   content: string;
+  actions?: ActionEvent[];
 }
 
 export const listConversations = (c: Connection, q?: string) =>
   call<Conversation[]>(c, `/api/conversations${q ? `?q=${encodeURIComponent(q)}` : ""}`);
-export const getMessages = (c: Connection, id: string) => call<Message[]>(c, `/api/conversations/${id}/messages`);
+export const getMessages = async (c: Connection, id: string): Promise<Message[]> => {
+  const rows = await call<(Omit<Message, "actions"> & { actions: string | null })[]>(c, `/api/conversations/${id}/messages`);
+  return rows.map((r) => ({ ...r, actions: r.actions ? (JSON.parse(r.actions) as ActionEvent[]) : undefined }));
+};
+export const answerConfirmation = (c: Connection, id: string, approve: boolean) =>
+  call<{ ok: boolean }>(c, `/api/confirm/${id}`, { method: "POST", body: JSON.stringify({ approve }) });
 export const patchConversation = (c: Connection, id: string, body: { title?: string; pinned?: boolean }) =>
   call<Conversation>(c, `/api/conversations/${id}`, { method: "PATCH", body: JSON.stringify(body) });
 export const deleteConversation = (c: Connection, id: string) =>
@@ -90,6 +108,7 @@ export interface ChatHandlers {
   delta?: (d: { text: string }) => void;
   done?: (d: { reply_id: string }) => void;
   error?: (d: { message: string }) => void;
+  tool?: (d: ActionEvent) => void;
 }
 
 /** Streams a reply over server-sent events. Abort the signal to stop generation. */

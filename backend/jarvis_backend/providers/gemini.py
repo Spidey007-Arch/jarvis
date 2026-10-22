@@ -8,7 +8,7 @@ from typing import Any, AsyncIterator
 from google import genai
 from google.genai import errors, types
 
-from .base import Provider, ProviderError, merge_turns, parse_json_loose
+from .base import Provider, ProviderError, Step, ToolCall, ToolSession, merge_turns, parse_json_loose
 
 EMBED_DIM = 256
 _BATCH = 100
@@ -32,9 +32,12 @@ def _err(e: Exception) -> ProviderError:
     if isinstance(e, errors.APIError):
         msg = str(e.message or e.status or "")
         if e.code == 429:
-            limit = re.search(r"limit: (\d+)", msg)
-            per = f" ({limit.group(1)} requests/minute on the free tier)" if limit else ""
-            return ProviderError(f"Rate limit reached{per}.", 429, _retry_after(msg))
+            everything = f"{msg} {e.details}"
+            limit = re.search(r"limit: (\d+)", everything)
+            period = "per day" if "PerDay" in everything else "per minute" if "PerMinute" in everything else ""
+            quota = f" (limit {limit.group(1)} requests{' ' + period if period else ''})" if limit else ""
+            daily = " The daily free quota resets at midnight Pacific time." if period == "per day" else ""
+            return ProviderError(f"Quota reached{quota}.{daily}", 429, _retry_after(everything))
         return ProviderError(msg or f"error {e.code}", e.code)
     return ProviderError(f"{type(e).__name__}: {e}")
 
@@ -123,3 +126,56 @@ class GeminiProvider(Provider):
         ]
         pool.sort(key=lambda n: ("lite" in n, tuple(-x for x in _version_key(n))))
         return pool[:3]
+
+    def tool_session(self, system: str, history: list[tuple[str, str]], tools: list[dict[str, Any]]) -> ToolSession:
+        return _GeminiTools(self.client, system, history, tools)
+
+    async def describe_image(self, model: str, prompt: str, png: bytes) -> str:
+        try:
+            r = await self.client.aio.models.generate_content(
+                model=model, contents=[types.Part.from_bytes(data=png, mime_type="image/jpeg"), prompt]
+            )
+        except Exception as e:  # noqa: BLE001
+            raise _err(e) from e
+        return r.text or ""
+
+
+class _GeminiTools(ToolSession):
+    def __init__(self, client: genai.Client, system: str, history: list[tuple[str, str]], tools: list[dict[str, Any]]) -> None:
+        self.client = client
+        self.contents = [types.Content(role=r, parts=[types.Part(text=t)]) for r, t in merge_turns(history)]
+        self.config = types.GenerateContentConfig(
+            system_instruction=system,
+            temperature=0.4,
+            tools=[types.Tool(function_declarations=[
+                types.FunctionDeclaration(name=t["name"], description=t["description"], parameters_json_schema=t["parameters"])
+                for t in tools
+            ])],
+            automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
+        )
+
+    async def step(self, model: str) -> Step:
+        try:
+            r = await self.client.aio.models.generate_content(model=model, contents=self.contents, config=self.config)
+        except Exception as e:  # noqa: BLE001
+            raise _err(e) from e
+        if not r.candidates or r.candidates[0].content is None:
+            reason = getattr(r.prompt_feedback, "block_reason", None) if r.prompt_feedback else None
+            raise ProviderError(f"The model returned no answer{f' (blocked: {reason})' if reason else ''}.")
+        content = r.candidates[0].content
+        self.contents.append(content)  # as-is, so thought signatures are preserved
+        calls = [
+            ToolCall(id=fc.id or f"call{i}", name=fc.name or "", args=dict(fc.args or {}))
+            for i, fc in enumerate(r.function_calls or [])
+        ]
+        text = "" if calls else "".join(p.text for p in (content.parts or []) if p.text and not getattr(p, "thought", False))
+        return Step(text=text, calls=calls)
+
+    def add_results(self, results: list[tuple[ToolCall, dict[str, Any]]]) -> None:
+        parts = []
+        for call, result in results:
+            part = types.Part.from_function_response(name=call.name, response=result)
+            if part.function_response is not None and not call.id.startswith("call"):
+                part.function_response.id = call.id
+            parts.append(part)
+        self.contents.append(types.Content(role="user", parts=parts))

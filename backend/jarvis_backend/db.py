@@ -43,6 +43,16 @@ CREATE TABLE IF NOT EXISTS messages (
 );
 CREATE INDEX IF NOT EXISTS idx_msg_conv ON messages(conversation_id, created_at);
 
+CREATE TABLE IF NOT EXISTS reminders (
+    id         TEXT PRIMARY KEY,
+    text       TEXT NOT NULL,
+    due_at     REAL NOT NULL,
+    created_at REAL NOT NULL,
+    status     TEXT NOT NULL,                          -- pending | done | cancelled
+    fired_at   REAL
+);
+CREATE INDEX IF NOT EXISTS idx_rem_due ON reminders(status, due_at);
+
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
 """
 
@@ -58,6 +68,9 @@ class DB:
             self._conn.execute("PRAGMA journal_mode=WAL")
             self._conn.execute("PRAGMA foreign_keys=ON")
             self._conn.executescript(SCHEMA)
+            cols = {r[1] for r in self._conn.execute("PRAGMA table_info(messages)")}
+            if "actions" not in cols:  # added in milestone 3: what JARVIS did while answering
+                self._conn.execute("ALTER TABLE messages ADD COLUMN actions TEXT")
 
     def all(self, sql: str, params: Iterable[Any] = ()) -> list[dict[str, Any]]:
         with self._lock:

@@ -1,13 +1,14 @@
 """Any OpenAI-compatible Chat Completions API: OpenAI, OpenRouter, Ollama, Groq, DeepSeek, LM Studio, ..."""
 from __future__ import annotations
 
+import base64
 import json
 import re
 from typing import Any, AsyncIterator
 
 import httpx
 
-from .base import Provider, ProviderError, json_instruction, merge_turns, parse_json_loose
+from .base import Provider, ProviderError, Step, ToolCall, ToolSession, json_instruction, merge_turns, parse_json_loose
 
 _NOT_CHAT = re.compile(
     r"whisper|tts|dall-e|davinci|babbage|moderation|image|audio|realtime|transcribe|embed|search|computer-use|sora|codex-mini"
@@ -157,3 +158,43 @@ class OpenAICompatProvider(Provider):
             if hit:
                 return hit[0]
         return emb[0] if emb else ""
+
+    def tool_session(self, system: str, history: list[tuple[str, str]], tools: list[dict[str, Any]]) -> ToolSession:
+        return _OpenAITools(self, system, history, tools)
+
+    async def describe_image(self, model: str, prompt: str, png: bytes) -> str:
+        url = "data:image/jpeg;base64," + base64.b64encode(png).decode()
+        j = await self._post("/chat/completions", {"model": model, "messages": [{"role": "user", "content": [
+            {"type": "text", "text": prompt}, {"type": "image_url", "image_url": {"url": url}}]}]})
+        return j["choices"][0]["message"].get("content") or ""
+
+
+class _OpenAITools(ToolSession):
+    def __init__(self, provider: OpenAICompatProvider, system: str, history: list[tuple[str, str]], tools: list[dict[str, Any]]) -> None:
+        self.p = provider
+        self.messages: list[dict[str, Any]] = provider._messages(system, history)
+        self.tools = [{"type": "function", "function": t} for t in tools]
+
+    async def step(self, model: str) -> Step:
+        j = await self.p._post("/chat/completions", {"model": model, "messages": self.messages, "tools": self.tools, "temperature": 0.4})
+        try:
+            msg = j["choices"][0]["message"]
+        except (KeyError, IndexError) as e:
+            raise ProviderError(f"Unexpected response from {self.p.base}: {str(j)[:200]}") from e
+        entry: dict[str, Any] = {"role": "assistant", "content": msg.get("content") or ""}
+        if msg.get("tool_calls"):
+            entry["tool_calls"] = msg["tool_calls"]
+        self.messages.append(entry)
+        calls = []
+        for i, tc in enumerate(msg.get("tool_calls") or []):
+            fn = tc.get("function", {})
+            try:
+                args = json.loads(fn.get("arguments") or "{}")
+            except ValueError:
+                args = {"_invalid_arguments": fn.get("arguments")}
+            calls.append(ToolCall(id=tc.get("id") or f"call{i}", name=fn.get("name", ""), args=args if isinstance(args, dict) else {}))
+        return Step(text="" if calls else (msg.get("content") or ""), calls=calls)
+
+    def add_results(self, results: list[tuple[ToolCall, dict[str, Any]]]) -> None:
+        for call, result in results:
+            self.messages.append({"role": "tool", "tool_call_id": call.id, "content": json.dumps(result, ensure_ascii=False, default=str)})
