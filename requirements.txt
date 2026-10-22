@@ -1,8 +1,8 @@
-fastapi
-uvicorn
-psutil
-websockets
-pydantic
-httpx
 cryptography
+fastapi
 google-genai
+httpx
+psutil
+pydantic
+uvicorn
+websockets

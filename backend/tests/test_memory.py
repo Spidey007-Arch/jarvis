@@ -27,6 +27,7 @@ from jarvis_common import dpapi  # noqa: E402
 
 class FakeLLM:
     embed_model = "fake-embed"
+    can_embed = True
 
     def __init__(self) -> None:
         self.json_replies: list[dict] = []
@@ -58,16 +59,31 @@ class DpapiTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             p = Path(d) / "settings.dat"
             s = SettingsStore(p)
-            s.set_secret("gemini_api_key", "AIzaTESTKEY123456")
-            s.update({"user_name": "Parth", "address": "sir"})
+            s.set_api_key("openai", "sk-TESTKEY123456")
+            s.set_provider("openai")
+            s.update_profile({"user_name": "Tester", "address": "sir"})
             raw = p.read_bytes()
-            self.assertNotIn(b"AIzaTESTKEY", raw)
-            self.assertNotIn(b"Parth", raw)
+            self.assertNotIn(b"sk-TESTKEY", raw)
+            self.assertNotIn(b"Tester", raw)
             again = SettingsStore(p)
-            self.assertEqual(again.secret("gemini_api_key"), "AIzaTESTKEY123456")
-            self.assertEqual(again.public()["user_name"], "Parth")
-            self.assertEqual(again.public()["gemini_key_hint"], "…3456")
-            self.assertNotIn("AIzaTESTKEY123456", str(again.public()))
+            self.assertEqual(again.api_key("openai"), "sk-TESTKEY123456")
+            pub = again.public()
+            self.assertEqual((pub["provider"], pub["user_name"], pub["api_key_hint"]), ("openai", "Tester", "…3456"))
+            self.assertEqual(pub["base_url"], "https://api.openai.com/v1")
+            self.assertNotIn("sk-TESTKEY123456", str(pub))
+
+    def test_v1_settings_migrate_to_per_provider(self):
+        import json
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d) / "settings.dat"
+            v1 = {"version": 1, "user_name": "", "address": "sir", "chat_model": "gemini-x-flash",
+                  "embed_model": "gemini-embedding-2", "secrets": {"gemini_api_key": "AIzaOLDKEY99999"}}
+            p.write_bytes(dpapi.protect(json.dumps(v1).encode()))
+            s = SettingsStore(p)
+            self.assertEqual(s.provider, "gemini")
+            self.assertEqual(s.api_key("gemini"), "AIzaOLDKEY99999")
+            self.assertEqual(s.provider_cfg()["chat_model"], "gemini-x-flash")
+            self.assertEqual(s.provider_cfg()["embed_model"], "gemini-embedding-2")
 
     def test_corrupt_settings_reported_not_silently_reset(self):
         with tempfile.TemporaryDirectory() as d:
@@ -170,6 +186,18 @@ class MemoryTests(unittest.TestCase):
         self.assertEqual(run(other.embed_missing()), 1)
         self.assertTrue(other.list()[0]["has_embedding"])
         other.db.close()
+
+    def test_keyword_search_without_embeddings(self):
+        self.llm.can_embed = False
+        run(self.store.apply_ops([
+            self.op(type="project", subject="project: jarvis", content="Building a desktop assistant called JARVIS in Rust."),
+            self.op(type="preference", subject="food", content="Loves spicy paneer tikka."),
+            self.op(type="preference", subject="food", content="Loves spicy paneer tikka."),
+        ], "c1"))
+        self.assertEqual(len(self.store.list()), 2)  # duplicate merged without embeddings
+        self.assertFalse(any(m["has_embedding"] for m in self.store.list()))
+        hits = run(self.store.search("any progress on the JARVIS desktop assistant?"))
+        self.assertEqual([h["subject"] for h in hits], ["project: jarvis"])
 
     def test_manual_delete_is_permanent(self):
         run(self.store.apply_ops([self.op(content="Likes tea.")], "c1"))

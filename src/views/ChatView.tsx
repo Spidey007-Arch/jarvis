@@ -131,7 +131,7 @@ export default function ChatView({
         {empty && (
           <div className="hello">
             <div className="hello-line">{greeting(address)}</div>
-            <div className="hello-sub">{configured ? "Systems ready. What do you need?" : "Connect Gemini in Settings to bring me online."}</div>
+            <div className="hello-sub">{configured ? "Systems ready. What do you need?" : "Connect an AI provider in Settings to bring me online."}</div>
           </div>
         )}
         {lines.map((m) => (
@@ -157,14 +157,14 @@ export default function ChatView({
         {notice && <div className={`notice ${notice.tone}`}>{notice.text}</div>}
         {!configured && conn && (
           <button className="connect" onClick={goSettings}>
-            Connect Gemini to start →
+            Connect an AI provider to start →
           </button>
         )}
         <div className={`composer ${streaming ? "busy" : ""}`}>
           <textarea
             ref={box}
             rows={1}
-            placeholder={configured ? "Ask JARVIS…" : "Gemini not connected"}
+            placeholder={configured ? "Ask JARVIS…" : "No AI provider connected"}
             value={input}
             disabled={!configured || !conn}
             onChange={(e) => setInput(e.target.value)}

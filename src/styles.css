@@ -322,3 +322,14 @@ label { display: flex; flex-direction: column; gap: 5px; font-size: 11px; letter
   .gauges { display: none; }
   .grid3 { grid-template-columns: 1fr; }
 }
+
+/* provider picker */
+.providers { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 6px; margin: 10px 0 4px; }
+.drawer .prov {
+  display: flex; justify-content: space-between; align-items: center; text-align: left;
+  background: rgba(0, 10, 18, 0.45); border: 1px solid color-mix(in srgb, var(--core) 16%, transparent);
+  border-radius: 12px; padding: 10px 12px; font-size: 12.5px; letter-spacing: 0.02em; color: var(--text);
+}
+.drawer .prov i { color: var(--ok); font-style: normal; font-size: 9px; }
+.drawer .prov.on { border-color: var(--core); background: color-mix(in srgb, var(--core) 16%, transparent); box-shadow: 0 0 16px color-mix(in srgb, var(--core) 30%, transparent); }
+.settings label { margin-top: 8px; }

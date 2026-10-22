@@ -17,7 +17,8 @@ from pydantic import BaseModel, Field
 
 from .db import DB
 from .extraction import EXTRACT_SCHEMA, extract_prompt
-from .llm import LLM, LLMError, LLMNotConfigured, pick_chat_model, pick_embed_model
+from .llm import LLM, LLMError, LLMNotConfigured
+from .providers import PRESETS
 from .memory import TYPES, MemoryStore
 from .persona import build_system_prompt
 from .settings import SettingsStore
@@ -42,9 +43,11 @@ class Services:
 class SettingsIn(BaseModel):
     user_name: str | None = Field(default=None, max_length=80)
     address: str | None = Field(default=None, max_length=40)
+    provider: str | None = None
+    api_key: str | None = Field(default=None, max_length=300)
+    base_url: str | None = Field(default=None, max_length=300)
     chat_model: str | None = None
     embed_model: str | None = None
-    gemini_api_key: str | None = Field(default=None, max_length=200)
 
 
 class ChatIn(BaseModel):
@@ -87,36 +90,68 @@ def build_router(svc: Services, require_auth: Callable[..., None]) -> APIRouter:
     async def get_settings() -> dict[str, Any]:
         return svc.settings.public()
 
+    @r.get("/providers")
+    async def providers() -> list[dict[str, Any]]:
+        return [{"id": pid, **preset} for pid, preset in PRESETS.items()]
+
     @r.put("/settings")
     async def put_settings(body: SettingsIn) -> dict[str, Any]:
         changes = body.model_dump(exclude_unset=True)
-        key = changes.pop("gemini_api_key", None)
-        if key is not None:
-            key = key.strip()
-            if key:
-                try:
-                    models = await svc.llm.list_models(api_key=key)
-                except LLMError as e:
-                    raise HTTPException(status_code=400, detail=f"That API key was rejected. {e}") from e
-                svc.settings.set_secret("gemini_api_key", key)
-                names = {m["name"] for m in models}
-                if svc.settings.get("chat_model") not in names and "chat_model" not in changes:
-                    changes["chat_model"] = pick_chat_model(models)
-                if svc.settings.get("embed_model") not in names and "embed_model" not in changes:
-                    changes["embed_model"] = pick_embed_model(models)
-                svc.llm._models_cache = models
-            else:
-                svc.settings.set_secret("gemini_api_key", "")
-        if changes.get("chat_model") or changes.get("embed_model"):
+        profile = {k: changes.pop(k) for k in ("user_name", "address") if k in changes}
+        if profile:
+            svc.settings.update_profile(profile)
+
+        pid = changes.pop("provider", None) or svc.settings.provider
+        if pid not in PRESETS:
+            raise HTTPException(status_code=400, detail=f"Unknown provider '{pid}'.")
+        key = changes.pop("api_key", None)
+        base_url = changes.pop("base_url", None)
+        models: list[dict[str, Any]] | None = None
+
+        if key is not None and not key.strip():
+            svc.settings.set_api_key(pid, "")
+        elif pid != svc.settings.provider or key is not None or base_url is not None:
+            cand_key = key.strip() if key is not None else svc.settings.api_key(pid)
+            cand_base = base_url.strip() if base_url is not None else svc.settings.provider_cfg(pid)["base_url"]
+            if PRESETS[pid]["needs_key"] and not cand_key:
+                # Switch now; the UI then asks for this provider's key.
+                if base_url is not None:
+                    svc.settings.set_provider_cfg(pid, base_url=cand_base)
+                svc.settings.set_provider(pid)
+                return svc.settings.public()
             try:
-                names = {m["name"] for m in await svc.llm.list_models()}
-            except (LLMError, LLMNotConfigured) as e:
-                raise HTTPException(status_code=400, detail=str(e)) from e
-            for field in ("chat_model", "embed_model"):
-                if changes.get(field) and changes[field] not in names:
-                    raise HTTPException(status_code=400, detail=f"Model '{changes[field]}' is not available to this API key.")
-        if changes:
-            svc.settings.update(changes)
+                models = await svc.llm.list_models(provider_id=pid, api_key=cand_key, base_url=cand_base)
+            except LLMError as e:
+                raise HTTPException(status_code=400, detail=f"Could not connect. {e}") from e
+            if key is not None:
+                svc.settings.set_api_key(pid, cand_key)
+            if base_url is not None:
+                svc.settings.set_provider_cfg(pid, base_url=cand_base)
+            svc.settings.set_provider(pid)
+            cfg = svc.settings.provider_cfg(pid)
+            defaults = svc.llm.default_models(pid, models)
+            chat_names = {m["name"] for m in models if m["kind"] == "chat"}
+            embed_names = {m["name"] for m in models if m["kind"] == "embed"}
+            if cfg["chat_model"] not in chat_names and "chat_model" not in changes:
+                changes["chat_model"] = defaults["chat_model"]
+            if cfg["embed_model"] and cfg["embed_model"] not in embed_names and "embed_model" not in changes:
+                changes["embed_model"] = defaults["embed_model"]
+            if not cfg["embed_model"] and "embed_model" not in changes:
+                changes["embed_model"] = defaults["embed_model"]
+
+        if "chat_model" in changes or "embed_model" in changes:
+            if models is None:
+                try:
+                    models = await svc.llm.list_models()
+                except (LLMError, LLMNotConfigured) as e:
+                    raise HTTPException(status_code=400, detail=str(e)) from e
+            chat_names = {m["name"] for m in models if m["kind"] == "chat"}
+            embed_names = {m["name"] for m in models if m["kind"] == "embed"}
+            if changes.get("chat_model") and changes["chat_model"] not in chat_names:
+                raise HTTPException(status_code=400, detail=f"Model '{changes['chat_model']}' is not available from this provider.")
+            if changes.get("embed_model") and changes["embed_model"] not in embed_names:
+                raise HTTPException(status_code=400, detail=f"Embedding model '{changes['embed_model']}' is not available.")
+            svc.settings.set_provider_cfg(pid, **{k: changes[k] or "" for k in ("chat_model", "embed_model") if k in changes})
         return svc.settings.public()
 
     @r.get("/models")
@@ -127,10 +162,7 @@ def build_router(svc: Services, require_auth: Callable[..., None]) -> APIRouter:
             raise HTTPException(status_code=409, detail=str(e)) from e
         except LLMError as e:
             raise HTTPException(status_code=502, detail=str(e)) from e
-        return {
-            "chat": [m for m in ms if "generateContent" in m["actions"]],
-            "embed": [m for m in ms if "embedContent" in m["actions"]],
-        }
+        return {"chat": [m for m in ms if m["kind"] == "chat"], "embed": [m for m in ms if m["kind"] == "embed"]}
 
     # ---------------- conversations ----------------
 
@@ -193,7 +225,7 @@ def build_router(svc: Services, require_auth: Callable[..., None]) -> APIRouter:
         if not svc.llm.ready:
             return JSONResponse(
                 status_code=409,
-                content={"error": "not_configured", "message": "Gemini is not set up yet. Add your API key in Settings."},
+                content={"error": "not_configured", "message": "No AI provider is connected yet. Choose one and add your API key in Settings."},
             )
         now = time.time()
         if body.conversation_id:
