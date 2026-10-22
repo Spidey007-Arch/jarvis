@@ -1,0 +1,10 @@
+node_modules/
+dist/
+.venv/
+__pycache__/
+*.pyc
+src-tauri/target/
+src-tauri/gen/
+*.log
+.env
+*.dat
