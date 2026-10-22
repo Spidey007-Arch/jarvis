@@ -71,8 +71,8 @@ export default function SettingsView({ conn, onChanged }: { conn: Connection | n
   if (!conn) return <div className="view-msg">Waiting for the backend to come online…</div>;
   if (!s || !preset) return <div className="view-msg">Loading settings…</div>;
 
-  const showBaseUrl = preset.id === "ollama" || preset.id === "custom";
-  const showKey = preset.needs_key || preset.id === "custom";
+  const showBaseUrl = ["ollama", "custom", "omniroute"].includes(preset.id);
+  const showKey = preset.needs_key || ["custom", "omniroute"].includes(preset.id);
   const canConnect = !busy && (preset.needs_key ? !!key.trim() || (s.has_api_key && baseUrl !== s.base_url) : !!baseUrl.trim());
   const Note = ({ k }: { k: Section }) => (notes[k] ? <p className={notes[k]!.tone}>{notes[k]!.text}</p> : null);
 

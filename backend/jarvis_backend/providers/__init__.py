@@ -34,6 +34,13 @@ PRESETS: dict[str, dict[str, Any]] = {
         "key_hint": "One key for hundreds of models. Create it at openrouter.ai/keys.",
         "embeddings": True,
     },
+    "omniroute": {
+        "name": "OmniRoute (gateway)",
+        "needs_key": False,
+        "base_url": "http://localhost:20128/v1",
+        "key_hint": "Start OmniRoute (run `omniroute`, or its Docker image), then paste a gateway key from its dashboard's API Keys page if you created one. Hosted instance? Set the base URL to https://your-domain/v1.",
+        "embeddings": True,
+    },
     "ollama": {
         "name": "Ollama (local, free)",
         "needs_key": False,
