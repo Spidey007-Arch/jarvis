@@ -164,7 +164,6 @@ export default function App() {
   return (
     <div className={`app ${overall} act-${coreActivity}`} style={{ ["--core" as string]: COLOR[overall] }}>
       <Particles color={COLOR[overall]} activity={coreActivity} />
-      <div className="scan" aria-hidden="true" />
       <Reactor activity={coreActivity} label={LABEL[overall]} />
 
       <header className="topbar">
