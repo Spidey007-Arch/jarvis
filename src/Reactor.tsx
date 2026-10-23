@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 import type { Activity } from "./fx/activity";
+import { frameDue } from "./fx/pacer";
 
 // radius, stroke width, dash pattern, opacity, base speed (deg/s; negative = counter-clockwise)
 const RINGS: [number, number, string, number, number][] = [
@@ -14,12 +15,14 @@ const RINGS: [number, number, string, number, number][] = [
 const SPEED: Record<Activity, number> = { idle: 1, typing: 1.8, thinking: 5, speaking: 2.6, error: 0.25, offline: 0 };
 
 /** The core. Rings are driven frame by frame so speed changes are smooth; it leans toward
- *  the cursor, swells with each streamed chunk and fires a shockwave when a message is sent. */
+ *  the cursor, swells with each streamed chunk and fires a shockwave when a message is sent.
+ *  Every moving part is its own layer moved by CSS transform/opacity, so the glow filter is
+ *  painted once instead of on every frame. */
 export default function Reactor({ activity, label }: { activity: Activity; label: string }) {
   const wrap = useRef<HTMLDivElement>(null);
-  const rings = useRef<(SVGGElement | null)[]>([]);
-  const core = useRef<SVGCircleElement>(null);
-  const halo = useRef<SVGCircleElement>(null);
+  const rings = useRef<(SVGSVGElement | null)[]>([]);
+  const core = useRef<SVGSVGElement>(null);
+  const halo = useRef<SVGSVGElement>(null);
   const waves = useRef<SVGGElement>(null);
   const activityRef = useRef(activity);
   activityRef.current = activity;
@@ -35,8 +38,13 @@ export default function Reactor({ activity, label }: { activity: Activity; label
     let targetY = 0;
     let last = performance.now();
     let raf = 0;
+    const slot = { v: -1 };
 
     const frame = (now: number) => {
+      if (!frameDue(now, slot)) {
+        if (!document.hidden) raf = requestAnimationFrame(frame);
+        return;
+      }
       const dt = Math.min((now - last) / 1000, 0.05);
       last = now;
       const act = activityRef.current;
@@ -44,12 +52,13 @@ export default function Reactor({ activity, label }: { activity: Activity; label
       energy = Math.max(0, energy - dt * 1.6);
       RINGS.forEach((r, i) => {
         angles[i] = (angles[i] + r[4] * speed * dt) % 360;
-        rings.current[i]?.setAttribute("transform", `rotate(${angles[i].toFixed(2)} 200 200)`);
+        const el = rings.current[i];
+        if (el) el.style.transform = `rotate(${angles[i].toFixed(2)}deg)`;
       });
       const breathe = act === "thinking" ? Math.sin(now / 140) * 0.18 : Math.sin(now / 900) * 0.08;
       const s = 1 + breathe + energy * 0.6;
-      core.current?.setAttribute("r", (16 * s).toFixed(2));
-      halo.current?.setAttribute("opacity", (0.55 + energy * 0.45 + (act === "thinking" ? 0.2 : 0)).toFixed(2));
+      if (core.current) core.current.style.transform = `scale(${s.toFixed(3)})`;
+      if (halo.current) halo.current.style.opacity = Math.min(1, 0.55 + energy * 0.45 + (act === "thinking" ? 0.2 : 0)).toFixed(2);
       tiltX += (targetX - tiltX) * Math.min(dt * 4, 1);
       tiltY += (targetY - tiltY) * Math.min(dt * 4, 1);
       if (wrap.current) {
@@ -99,8 +108,8 @@ export default function Reactor({ activity, label }: { activity: Activity; label
   }, []);
 
   return (
-    <div ref={wrap} className={`reactor ${activity}`}>
-      <svg viewBox="0 0 400 400" role="img" aria-label={`JARVIS core: ${label}`}>
+    <div ref={wrap} className={`reactor ${activity}`} role="img" aria-label={`JARVIS core: ${label}`}>
+      <svg ref={halo} className="layer" viewBox="0 0 400 400" style={{ opacity: 0.55 }}>
         <defs>
           <filter id="glow" x="-30%" y="-30%" width="160%" height="160%">
             <feGaussianBlur stdDeviation="3.5" result="b" />
@@ -115,20 +124,26 @@ export default function Reactor({ activity, label }: { activity: Activity; label
             <stop offset="100%" stopColor="var(--core)" stopOpacity="0" />
           </radialGradient>
         </defs>
-        <circle ref={halo} cx="200" cy="200" r="198" fill="url(#halo)" />
+        <circle cx="200" cy="200" r="198" fill="url(#halo)" />
+      </svg>
+      <svg className="layer" viewBox="0 0 400 400">
         <g filter="url(#glow)" fill="none" stroke="var(--core)">
           <circle cx="200" cy="200" r="176" strokeWidth="1" opacity="0.5" />
           <circle cx="200" cy="200" r="122" strokeWidth="1.5" opacity="0.6" />
           <circle cx="200" cy="200" r="66" strokeWidth="1.5" opacity="0.8" />
           <circle cx="200" cy="200" r="34" strokeWidth="2" opacity="0.9" />
-          {RINGS.map(([r, w, dash, op], i) => (
-            <g key={r} ref={(el) => (rings.current[i] = el)}>
-              <circle cx="200" cy="200" r={r} strokeWidth={w} strokeDasharray={dash} opacity={op} />
-            </g>
-          ))}
-          <g ref={waves} />
-          <circle ref={core} className="core" cx="200" cy="200" r="16" fill="var(--core)" stroke="none" />
         </g>
+      </svg>
+      {RINGS.map(([r, w, dash, op], i) => (
+        <svg key={r} ref={(el) => (rings.current[i] = el)} className="layer spin" viewBox="0 0 400 400">
+          <circle filter="url(#glow)" fill="none" stroke="var(--core)" cx="200" cy="200" r={r} strokeWidth={w} strokeDasharray={dash} opacity={op} />
+        </svg>
+      ))}
+      <svg className="layer" viewBox="0 0 400 400">
+        <g ref={waves} filter="url(#glow)" />
+      </svg>
+      <svg ref={core} className="layer spin" viewBox="0 0 400 400">
+        <circle className="core" filter="url(#glow)" cx="200" cy="200" r="16" fill="var(--core)" />
       </svg>
     </div>
   );

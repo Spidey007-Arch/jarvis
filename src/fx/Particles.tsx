@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 import type { Activity } from "./activity";
+import { frameDue } from "./pacer";
 
 interface P {
   x: number;
@@ -9,8 +10,12 @@ interface P {
   r: number;
 }
 
+const LINK = 110;
+const LINK_LEVELS = 10; // links are batched into this many opacity steps: one stroke per step
+
 /** Full-window particle field. Particles drift, link up near each other and the cursor,
- *  scatter from clicks, and get pulled toward the core while JARVIS is working. */
+ *  scatter from clicks, and get pulled toward the core while JARVIS is working.
+ *  Also draws the slow scan sweep, so the whole background is one paint. */
 export default function Particles({ color, activity }: { color: string; activity: Activity }) {
   const canvas = useRef<HTMLCanvasElement>(null);
   const activityRef = useRef(activity);
@@ -29,6 +34,8 @@ export default function Particles({ color, activity }: { color: string; activity
     const mouse = { x: -9999, y: -9999 };
     let raf = 0;
     let last = performance.now();
+    const slot = { v: -1 };
+    const links: number[][] = Array.from({ length: LINK_LEVELS }, () => []);
 
     const seed = () => {
       dpr = Math.min(window.devicePixelRatio || 1, 2);
@@ -61,6 +68,10 @@ export default function Particles({ color, activity }: { color: string; activity
     };
 
     const frame = (now: number) => {
+      if (!frameDue(now, slot)) {
+        if (!reduced && !document.hidden) raf = requestAnimationFrame(frame);
+        return;
+      }
       const dt = Math.min((now - last) / 16.67, 3);
       last = now;
       const act = activityRef.current;
@@ -69,6 +80,16 @@ export default function Particles({ color, activity }: { color: string; activity
       const cy = h / 2;
       ctx.clearRect(0, 0, w, h);
       const col = colorRef.current;
+
+      // scan sweep: a 260px band crossing the window every 9s
+      const sy = -260 + ((now % 9000) / 9000) * (h + 520);
+      const band = ctx.createLinearGradient(0, sy, 0, sy + 260);
+      band.addColorStop(0, "transparent");
+      band.addColorStop(0.5, col);
+      band.addColorStop(1, "transparent");
+      ctx.globalAlpha = 0.035;
+      ctx.fillStyle = band;
+      ctx.fillRect(0, sy, w, 260);
 
       for (const p of parts) {
         if (pull) {
@@ -108,6 +129,8 @@ export default function Particles({ color, activity }: { color: string; activity
       }
 
       ctx.lineWidth = 0.6;
+      ctx.strokeStyle = col;
+      for (const l of links) l.length = 0;
       for (let i = 0; i < parts.length; i++) {
         const a = parts[i];
         for (let j = i + 1; j < parts.length; j++) {
@@ -115,19 +138,26 @@ export default function Particles({ color, activity }: { color: string; activity
           const dx = a.x - b.x;
           const dy = a.y - b.y;
           const d2 = dx * dx + dy * dy;
-          if (d2 < 110 * 110) {
-            ctx.globalAlpha = (1 - Math.sqrt(d2) / 110) * 0.22;
-            ctx.strokeStyle = col;
-            ctx.beginPath();
-            ctx.moveTo(a.x, a.y);
-            ctx.lineTo(b.x, b.y);
-            ctx.stroke();
+          if (d2 < LINK * LINK) {
+            const k = Math.min(LINK_LEVELS - 1, Math.floor((1 - Math.sqrt(d2) / LINK) * LINK_LEVELS));
+            links[k].push(a.x, a.y, b.x, b.y);
           }
         }
+      }
+      links.forEach((l, k) => {
+        if (!l.length) return;
+        ctx.globalAlpha = ((k + 0.5) / LINK_LEVELS) * 0.22;
+        ctx.beginPath();
+        for (let n = 0; n < l.length; n += 4) {
+          ctx.moveTo(l[n], l[n + 1]);
+          ctx.lineTo(l[n + 2], l[n + 3]);
+        }
+        ctx.stroke();
+      });
+      for (const a of parts) {
         const md = Math.hypot(a.x - mouse.x, a.y - mouse.y);
         if (md < 170) {
           ctx.globalAlpha = (1 - md / 170) * 0.5;
-          ctx.strokeStyle = col;
           ctx.beginPath();
           ctx.moveTo(a.x, a.y);
           ctx.lineTo(mouse.x, mouse.y);
@@ -135,12 +165,13 @@ export default function Particles({ color, activity }: { color: string; activity
         }
       }
       ctx.fillStyle = col;
+      ctx.globalAlpha = 0.75;
+      ctx.beginPath();
       for (const p of parts) {
-        ctx.globalAlpha = 0.75;
-        ctx.beginPath();
+        ctx.moveTo(p.x + p.r, p.y);
         ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
-        ctx.fill();
       }
+      ctx.fill();
       ctx.globalAlpha = 1;
       if (!reduced && !document.hidden) raf = requestAnimationFrame(frame);
     };

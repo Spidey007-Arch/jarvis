@@ -45,13 +45,6 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
   background: radial-gradient(ellipse at center, transparent 55%, rgba(0, 0, 0, 0.55) 100%);
 }
 .particles { position: absolute; inset: 0; width: 100%; height: 100%; }
-.scan {
-  position: absolute; inset: 0; pointer-events: none; opacity: 0.5;
-  background: linear-gradient(180deg, transparent 0%, color-mix(in srgb, var(--core) 7%, transparent) 50%, transparent 100%);
-  background-size: 100% 260px; background-repeat: no-repeat;
-  animation: sweep 9s linear infinite;
-}
-@keyframes sweep { from { background-position: 0 -260px; } to { background-position: 0 calc(100vh + 260px); } }
 
 /* ---------- core ---------- */
 .reactor {
@@ -62,7 +55,8 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
   transition: opacity 0.8s ease, width 0.8s ease, filter 0.6s;
   filter: drop-shadow(0 0 30px color-mix(in srgb, var(--core) 25%, transparent));
 }
-.reactor svg { width: 100%; height: 100%; overflow: visible; }
+.reactor .layer { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
+.reactor .spin { will-change: transform; }
 .app:has(.stage:not(.is-empty)) .reactor { opacity: 0.22; width: min(90vh, 80vw); }
 .app.act-thinking .reactor { filter: drop-shadow(0 0 50px color-mix(in srgb, var(--core) 55%, transparent)); }
 .app.act-offline .reactor { filter: grayscale(0.6) drop-shadow(0 0 10px rgba(255, 107, 107, 0.3)); }
@@ -171,6 +165,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
   -webkit-mask-composite: xor; mask-composite: exclude;
   opacity: 0; transition: opacity 0.3s; animation: orbit 3s linear infinite;
 }
+.composer:not(:focus-within):not(.busy)::before { animation-play-state: paused; }
 .composer:focus-within::before, .composer.busy::before { opacity: 1; }
 .composer.busy::before { animation-duration: 1s; }
 .composer:focus-within { box-shadow: 0 0 30px color-mix(in srgb, var(--core) 22%, transparent), 0 10px 40px rgba(0, 0, 0, 0.35); }
