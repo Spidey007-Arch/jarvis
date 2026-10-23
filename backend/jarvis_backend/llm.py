@@ -166,6 +166,9 @@ class LLM:
 
     def _cool(self, model: str, e: ProviderError) -> None:
         """Back off from a busy model; models that keep failing are avoided for longer."""
+        if e.status == NETWORK_ERROR:  # the model is fine; the connection was not
+            self._cooldown[model] = time.monotonic() + 10.0
+            return
         n = self._failures.get(model, 0) + 1
         self._failures[model] = n
         backoff = min(_COOLDOWN_S * 2 ** (n - 1), _MAX_COOLDOWN_S)
@@ -189,7 +192,9 @@ class LLM:
     async def _first_success(self, candidates: list[str], call: Callable[[str], Awaitable[T]], timeout: float = FIRST_RESPONSE_TIMEOUT_S) -> T:
         last: ProviderError | None = None
         last_model = candidates[0] if candidates else None
-        for model in candidates:
+        queue, retried = list(candidates), set()
+        while queue:
+            model = queue.pop(0)
             try:
                 result = await _timed(call(model), timeout)
                 self._ok(model)
@@ -197,6 +202,11 @@ class LLM:
             except ProviderError as e:
                 if not e.transient:
                     raise describe(e, self.provider_id, model) from e
+                if e.status == NETWORK_ERROR and model not in retried:
+                    retried.add(model)
+                    queue.insert(0, model)
+                    await asyncio.sleep(0.3)
+                    continue
                 self._cool(model, e)
                 last, last_model = e, model
         raise describe(last, self.provider_id, last_model) if last else LLMError("No model is available.")
@@ -211,7 +221,9 @@ class LLM:
         candidates = await self._chat_candidates()
         last: ProviderError | None = None
         last_model = candidates[0]
-        for model in candidates:
+        queue, retried = list(candidates), set()
+        while queue:
+            model = queue.pop(0)
             started = False
             try:
                 stream = p.stream_chat(model, system, history).__aiter__()
@@ -231,6 +243,11 @@ class LLM:
             except ProviderError as e:
                 if started or not e.transient:
                     raise describe(e, self.provider_id, model) from e
+                if e.status == NETWORK_ERROR and model not in retried:
+                    retried.add(model)
+                    queue.insert(0, model)
+                    await asyncio.sleep(0.3)
+                    continue
                 self._cool(model, e)
                 last, last_model = e, model
         raise describe(last, self.provider_id, last_model) if last else LLMError("No model is available.")
@@ -276,7 +293,9 @@ class LLM:
         step: Step | None = None
         last: ProviderError | None = None
         last_model = preferred
-        for candidate in await self._chat_candidates():
+        queue, retried = await self._chat_candidates(), set()
+        while queue:
+            candidate = queue.pop(0)
             try:
                 step = await _timed(session.step(candidate))
                 model = candidate
@@ -287,6 +306,11 @@ class LLM:
                     raise ToolsUnsupported(str(e)) from e
                 if not e.transient:
                     raise describe(e, self.provider_id, candidate) from e
+                if e.status == NETWORK_ERROR and candidate not in retried:
+                    retried.add(candidate)
+                    queue.insert(0, candidate)
+                    await asyncio.sleep(0.3)
+                    continue
                 self._cool(candidate, e)
                 last, last_model = e, candidate
         if step is None or model is None:

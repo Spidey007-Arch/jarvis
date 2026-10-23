@@ -1,5 +1,5 @@
 import { ReactNode, useCallback, useEffect, useState } from "react";
-import Reactor, { ORB_COLOR } from "./Reactor";
+import Reactor from "./Reactor";
 import Particles from "./fx/Particles";
 import type { Activity } from "./fx/activity";
 import { useTelemetry } from "./telemetry";
@@ -158,17 +158,14 @@ export default function App() {
   }
 
   const overall: Overall = status?.overall ?? "starting";
-  const coreActivity: Activity = overall === "failed" ? "offline" : activity;
-  // While services are starting or reconnecting the orb glows amber whatever JARVIS is doing.
-  const orbOverride: [number, number, number] | undefined = overall === "online" || overall === "failed" ? undefined : [255, 184, 77];
-  const orbRgb = `rgb(${(orbOverride ?? ORB_COLOR[coreActivity]).join(",")})`;
+  const coreActivity: Activity = overall === "failed" ? "offline" : overall !== "online" && activity === "idle" ? "thinking" : activity;
   const s = tel.agent?.stats ?? {};
 
   return (
     <div className={`app ${overall} act-${coreActivity}`} style={{ ["--core" as string]: COLOR[overall] }}>
-      <Particles color={orbRgb} activity={coreActivity} />
+      <Particles color={COLOR[overall]} activity={coreActivity} />
       <div className="scan" aria-hidden="true" />
-      <Reactor activity={coreActivity} label={LABEL[overall]} override={orbOverride} />
+      <Reactor activity={coreActivity} label={LABEL[overall]} />
 
       <header className="topbar">
         <button className="status-chip" onClick={() => setDrawer(drawer === "system" ? null : "system")} title="System details">

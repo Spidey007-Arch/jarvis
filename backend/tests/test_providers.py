@@ -216,11 +216,15 @@ class ProviderProtocolTests(unittest.TestCase):
         self.assertTrue(cm.exception.transient, str(cm.exception))
 
     def test_gemini_network_error_is_retryable(self):
+        import httpcore
         import httpx
         from jarvis_backend.providers.gemini import _err
-        e = _err(httpx.RemoteProtocolError("Server disconnected without sending a response."))
-        self.assertTrue(e.transient)
-        self.assertIn("connection problem", str(e))
+        # The SDK raises either the httpx or the raw httpcore flavour of this error.
+        for exc in (httpx.RemoteProtocolError("Server disconnected without sending a response."),
+                    httpcore.RemoteProtocolError("Server disconnected without sending a response.")):
+            e = _err(exc)
+            self.assertTrue(e.transient, type(exc))
+            self.assertIn("connection problem", str(e))
 
     def test_unreachable_server_error_is_clear(self):
         async def go():

@@ -1,6 +1,7 @@
 """Common interface every AI provider implements."""
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 from abc import ABC, abstractmethod
@@ -9,6 +10,22 @@ from typing import Any, AsyncIterator
 
 NETWORK_ERROR = 599  # our own code: the connection dropped or could not be made (no HTTP status)
 TRANSIENT_STATUS = {408, 409, 429, 500, 502, 503, 504, 529, NETWORK_ERROR}
+
+
+def _network_exceptions() -> tuple[type[BaseException], ...]:
+    import httpcore
+    import httpx
+
+    # SDKs sometimes leak httpcore's errors without wrapping them in httpx's.
+    return (httpx.TransportError, httpcore.NetworkError, httpcore.ProtocolError, httpcore.TimeoutException,
+            ConnectionError, TimeoutError, asyncio.TimeoutError)
+
+
+NETWORK_EXCEPTIONS = _network_exceptions()
+
+
+def is_network_error(e: BaseException) -> bool:
+    return isinstance(e, NETWORK_EXCEPTIONS)
 
 
 class ProviderError(Exception):

@@ -7,7 +7,7 @@ from typing import Any, AsyncIterator
 
 import httpx
 
-from .base import NETWORK_ERROR, Provider, ProviderError, Step, ToolCall, ToolSession, json_instruction, merge_turns, parse_json_loose
+from .base import NETWORK_ERROR, NETWORK_EXCEPTIONS, Provider, ProviderError, Step, ToolCall, ToolSession, json_instruction, merge_turns, parse_json_loose
 from .openai_compat import _error_text, _retry_after
 
 API = "https://api.anthropic.com/v1"
@@ -31,7 +31,7 @@ class AnthropicProvider(Provider):
     async def list_models(self) -> list[dict[str, Any]]:
         try:
             r = await self.http.get(f"{API}/models", params={"limit": 100})
-        except httpx.HTTPError as e:
+        except (httpx.HTTPError, *NETWORK_EXCEPTIONS) as e:
             raise ProviderError(f"Could not reach Anthropic: {e}", NETWORK_ERROR) from e
         if r.status_code >= 400:
             raise ProviderError(_error_text(r), r.status_code)
@@ -66,7 +66,7 @@ class AnthropicProvider(Provider):
                         raise ProviderError(err.get("message", "Anthropic stream error."), status)
                     elif kind == "message_stop":
                         return
-        except httpx.HTTPError as e:
+        except (httpx.HTTPError, *NETWORK_EXCEPTIONS) as e:
             raise ProviderError(f"Connection to Anthropic failed: {e}", NETWORK_ERROR) from e
 
     async def generate_json(self, model: str, prompt: str, schema: dict[str, Any]) -> Any:
@@ -78,7 +78,7 @@ class AnthropicProvider(Provider):
         }
         try:
             r = await self.http.post(f"{API}/messages", json=payload)
-        except httpx.HTTPError as e:
+        except (httpx.HTTPError, *NETWORK_EXCEPTIONS) as e:
             raise ProviderError(f"Could not reach Anthropic: {e}", NETWORK_ERROR) from e
         if r.status_code >= 400:
             raise ProviderError(_error_text(r), r.status_code, _retry_after(r))
@@ -109,7 +109,7 @@ class AnthropicProvider(Provider):
             {"type": "text", "text": prompt}]}]}
         try:
             r = await self.http.post(f"{API}/messages", json=payload)
-        except httpx.HTTPError as e:
+        except (httpx.HTTPError, *NETWORK_EXCEPTIONS) as e:
             raise ProviderError(f"Could not reach Anthropic: {e}", NETWORK_ERROR) from e
         if r.status_code >= 400:
             raise ProviderError(_error_text(r), r.status_code, _retry_after(r))
@@ -127,7 +127,7 @@ class _AnthropicTools(ToolSession):
         payload = {"model": model, "max_tokens": MAX_TOKENS, "system": self.system, "messages": self.messages, "tools": self.tools}
         try:
             r = await self.p.http.post(f"{API}/messages", json=payload)
-        except httpx.HTTPError as e:
+        except (httpx.HTTPError, *NETWORK_EXCEPTIONS) as e:
             raise ProviderError(f"Could not reach Anthropic: {e}", NETWORK_ERROR) from e
         if r.status_code >= 400:
             raise ProviderError(_error_text(r), r.status_code, _retry_after(r))
