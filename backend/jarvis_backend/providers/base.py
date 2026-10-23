@@ -7,7 +7,8 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any, AsyncIterator
 
-TRANSIENT_STATUS = {408, 409, 429, 500, 502, 503, 504, 529}
+NETWORK_ERROR = 599  # our own code: the connection dropped or could not be made (no HTTP status)
+TRANSIENT_STATUS = {408, 409, 429, 500, 502, 503, 504, 529, NETWORK_ERROR}
 
 
 class ProviderError(Exception):

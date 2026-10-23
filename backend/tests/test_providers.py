@@ -56,6 +56,10 @@ class Fake(BaseHTTPRequestHandler):
     def do_POST(self):
         body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
         SEEN.append({"path": self.path, "body": body, "headers": dict(self.headers)})
+        if body.get("model") == "hangs-up":
+            self.close_connection = True
+            self.connection.close()  # disconnect without sending any response
+            return
         if self.path == "/oa/chat/completions" and body.get("tools"):
             if not any(m["role"] == "tool" for m in body["messages"]):
                 return self._json(200, {"choices": [{"message": {"role": "assistant", "content": None, "tool_calls": [
@@ -199,6 +203,24 @@ class ProviderProtocolTests(unittest.TestCase):
                 await p.aclose()
         self.run_async(go())
         self.assertNotIn("Authorization", SEEN[0]["headers"])
+
+    def test_dropped_connection_is_retryable(self):
+        async def go():
+            p = self.oa()
+            try:
+                return [t async for t in p.stream_chat("hangs-up", "", [("user", "hi")])]
+            finally:
+                await p.aclose()
+        with self.assertRaises(ProviderError) as cm:
+            self.run_async(go())
+        self.assertTrue(cm.exception.transient, str(cm.exception))
+
+    def test_gemini_network_error_is_retryable(self):
+        import httpx
+        from jarvis_backend.providers.gemini import _err
+        e = _err(httpx.RemoteProtocolError("Server disconnected without sending a response."))
+        self.assertTrue(e.transient)
+        self.assertIn("connection problem", str(e))
 
     def test_unreachable_server_error_is_clear(self):
         async def go():

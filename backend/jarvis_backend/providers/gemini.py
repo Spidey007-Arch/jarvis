@@ -5,10 +5,11 @@ import asyncio
 import re
 from typing import Any, AsyncIterator
 
+import httpx
 from google import genai
 from google.genai import errors, types
 
-from .base import Provider, ProviderError, Step, ToolCall, ToolSession, merge_turns, parse_json_loose
+from .base import NETWORK_ERROR, Provider, ProviderError, Step, ToolCall, ToolSession, merge_turns, parse_json_loose
 
 EMBED_DIM = 256
 _BATCH = 100
@@ -39,6 +40,8 @@ def _err(e: Exception) -> ProviderError:
             daily = " The daily free quota resets at midnight Pacific time." if period == "per day" else ""
             return ProviderError(f"Quota reached{quota}.{daily}", 429, _retry_after(everything))
         return ProviderError(msg or f"error {e.code}", e.code)
+    if isinstance(e, httpx.TransportError):  # dropped connection, timeout, DNS: worth retrying
+        return ProviderError(f"connection problem ({type(e).__name__}: {e})", NETWORK_ERROR)
     return ProviderError(f"{type(e).__name__}: {e}")
 
 
