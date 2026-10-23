@@ -85,6 +85,11 @@ TOOLS: list[ToolSpec] = [
     ToolSpec("cancel_reminder", "Cancel a pending reminder by its id.", obj({"id": S}, ["id"]), label="Cancelling a reminder"),
 ]
 
+# Repeating these is normal (another key press, the next track), never a loop.
+STEPWISE_TOOLS = frozenset({"press_keys", "type_text", "volume", "media", "brightness"})
+# Read-only looks whose answer can change after other actions.
+OBSERVE_TOOLS = frozenset({"look_at_screen", "system_status", "clipboard_get", "list_folder", "find_files", "list_reminders"})
+
 BY_NAME = {t.name: t for t in TOOLS}
 
 

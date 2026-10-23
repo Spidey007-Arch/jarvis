@@ -14,7 +14,7 @@ import websockets
 from jarvis_common import logs
 
 from . import __version__
-from .actions import ActionError, run
+from .actions import ActionError, run, warm_app_index
 
 HEARTBEAT_INTERVAL_S = 5.0
 MAX_BACKOFF_S = 10.0
@@ -130,6 +130,12 @@ async def amain() -> int:
     if parent:
         asyncio.create_task(_watch_parent(parent, log))
 
+    try:
+        # Small and mostly idle, but it must answer promptly when a heavy app pins every core.
+        psutil.Process().nice(psutil.ABOVE_NORMAL_PRIORITY_CLASS)
+    except psutil.Error as e:
+        log.warning("could not raise agent priority: %s", e)
+    asyncio.get_running_loop().run_in_executor(None, warm_app_index)
     psutil.cpu_percent(interval=None)  # prime the counter so the first reading is meaningful
     url = f"ws://127.0.0.1:{port}/ws/agent"
     backoff = 1.0
