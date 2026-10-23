@@ -89,5 +89,45 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(self.client.get("/api/conversations/nope/messages", headers=AUTH).status_code, 404)
 
 
+class RepeatGuardTests(unittest.TestCase):
+    def setUp(self) -> None:
+        from jarvis_backend.api import call_key, repeat_of
+        from jarvis_backend.providers.base import ToolCall
+
+        self.repeat_of, self.call_key, self.Call = repeat_of, call_key, ToolCall
+
+    def record(self, done, call, step, out, runs=1):
+        done[self.call_key(call)] = (step, runs, out)
+
+    def test_identical_action_is_not_run_twice(self) -> None:
+        done: dict = {}
+        c = self.Call("1", "open_url", {"url": "https://mail.google.com"})
+        self.record(done, c, 1, {"ok": True, "result": {"opened": "x"}})
+        again = self.repeat_of(self.Call("2", "open_url", {"url": "https://mail.google.com"}), done, 3)
+        self.assertTrue(again and again["repeated"] and again["ok"])
+        self.assertIsNone(self.repeat_of(self.Call("3", "open_url", {"url": "https://example.com"}), done, 3))
+
+    def test_failed_action_gets_one_retry(self) -> None:
+        done: dict = {}
+        c = self.Call("1", "open_app", {"name": "outlook"})
+        self.record(done, c, 1, {"ok": False, "error": "timeout"})
+        self.assertIsNone(self.repeat_of(c, done, 1))
+        self.record(done, c, 2, {"ok": False, "error": "timeout"}, runs=2)
+        self.assertTrue(self.repeat_of(c, done, 2)["repeated"])
+
+    def test_observation_repeats_only_after_something_changed(self) -> None:
+        done: dict = {}
+        c = self.Call("1", "look_at_screen", {"question": "what is open?"})
+        self.record(done, c, 1, {"ok": True, "result": "a browser"})
+        self.assertTrue(self.repeat_of(c, done, 1)["repeated"])  # nothing happened in between
+        self.assertIsNone(self.repeat_of(c, done, 2))  # another tool ran since
+
+    def test_keystrokes_always_run(self) -> None:
+        done: dict = {}
+        c = self.Call("1", "press_keys", {"keys": ["down"]})
+        self.record(done, c, 1, {"ok": True})
+        self.assertIsNone(self.repeat_of(c, done, 1))
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -24,7 +24,7 @@ from .providers.base import ToolCall
 from .monitor import Monitor
 from .reminders import ReminderError, Reminders
 from .research import ResearchError, web_research
-from .tools import BY_NAME, TOOLS, ToolSpec, describe_call
+from .tools import BY_NAME, OBSERVE_TOOLS, STEPWISE_TOOLS, TOOLS, ToolSpec, describe_call
 from .providers import PRESETS
 from .memory import TYPES, MemoryStore
 from .persona import build_system_prompt
@@ -64,6 +64,29 @@ def _trim(value: Any, limit: int = 6000) -> Any:
     if len(text) <= limit:
         return value
     return {"truncated": True, "partial_json": text[:limit]}
+
+
+def call_key(call: ToolCall) -> str:
+    return call.name + json.dumps({k: v for k, v in call.args.items() if not k.startswith("_")}, sort_keys=True, default=str)
+
+
+def repeat_of(call: ToolCall, done: dict[str, tuple[int, int, dict[str, Any]]], step: int) -> dict[str, Any] | None:
+    """Within one request, an exact repeat of a call is a loop, not progress: answer it from the
+    first run instead of acting again. Observations may repeat once something else has happened,
+    and a failed action may be retried once."""
+    if call.name in STEPWISE_TOOLS:
+        return None
+    key = call_key(call)
+    if key not in done:
+        return None
+    at, runs, out = done[key]
+    if not out.get("ok") and runs < 2:
+        return None
+    if call.name in OBSERVE_TOOLS and step > at:
+        return None
+    return {**out, "repeated": True,
+            "note": "You already made this exact call in this request, so it was not run again; the earlier outcome is above. "
+                    "Use it, try a different approach, or tell the user what is blocking you."}
 
 
 class SettingsIn(BaseModel):
@@ -400,8 +423,17 @@ def build_router(svc: Services, require_auth: Callable[..., None]) -> APIRouter:
                 system = build_system_prompt(svc.settings.public(), core, relevant, tools_enabled=True, context=context)
                 history = [(m["role"], m["content"]) for m in prior] + [("user", text)]
 
+                done_calls: dict[str, tuple[int, int, dict[str, Any]]] = {}
+
                 async def execute(call: ToolCall) -> dict[str, Any]:
-                    return await _execute(call, queue, actions)
+                    step = len(actions)
+                    if (cached := repeat_of(call, done_calls, step)) is not None:
+                        audit.info("repeated call skipped", extra={"fields": {"tool": call.name}})
+                        return cached
+                    out = await _execute(call, queue, actions)
+                    key = call_key(call)
+                    done_calls[key] = (len(actions), done_calls.get(key, (0, 0, {}))[1] + 1, out)
+                    return out
 
                 agent_task = asyncio.create_task(
                     svc.llm.run_agent(system, history, TOOL_SCHEMAS, execute,

@@ -332,11 +332,25 @@ def screenshots_dir() -> Path:
     return d
 
 
-@action
-def screenshot(_: dict[str, Any]) -> dict[str, Any]:
+def _grab():
+    """The screen as the user sees it behind JARVIS: JARVIS's own window would otherwise cover what was asked about."""
     from PIL import ImageGrab
 
-    img = ImageGrab.grab(all_screens=True)
+    with win.windows_hidden(int(os.environ.get("JARVIS_PARENT_PID", "0") or 0)):
+        return ImageGrab.grab(all_screens=True)
+
+
+def warm_app_index() -> None:
+    """Build the installed-apps list ahead of the first 'open X' request; Get-StartApps is slow."""
+    try:
+        _apps()
+    except Exception:  # noqa: BLE001 - the first real request will retry and report the error
+        pass
+
+
+@action
+def screenshot(_: dict[str, Any]) -> dict[str, Any]:
+    img = _grab()
     path = screenshots_dir() / f"Screenshot {dt.datetime.now():%Y-%m-%d %H%M%S}.png"
     img.save(path)
     return {"saved_to": str(path), "width": img.width, "height": img.height}
@@ -347,9 +361,7 @@ def capture_screen(_: dict[str, Any]) -> dict[str, Any]:
     """Temporary, downscaled capture for the AI to look at; the backend deletes it after use."""
     import tempfile
 
-    from PIL import ImageGrab
-
-    img = ImageGrab.grab(all_screens=True).convert("RGB")
+    img = _grab().convert("RGB")
     img.thumbnail((1600, 1600))
     fd, path = tempfile.mkstemp(prefix="jarvis-screen-", suffix=".jpg")
     os.close(fd)

@@ -3,14 +3,18 @@ from __future__ import annotations
 
 import ctypes
 import subprocess
+import time
 import uuid
+from contextlib import contextmanager
 from ctypes import wintypes
+from typing import Iterator
 
 user32 = ctypes.WinDLL("user32", use_last_error=True)
 ole32 = ctypes.WinDLL("ole32", use_last_error=True)
 shell32 = ctypes.WinDLL("shell32", use_last_error=True)
 
 CREATE_NO_WINDOW = 0x08000000
+ABOVE_NORMAL_PRIORITY_CLASS = 0x00008000
 
 
 class WinError(Exception):
@@ -21,12 +25,55 @@ def powershell(script: str, timeout: float = 20.0) -> str:
     """Run a PowerShell snippet hidden. Raises WinError with PowerShell's own error text."""
     r = subprocess.run(
         ["powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", script],
-        capture_output=True, text=True, timeout=timeout, creationflags=CREATE_NO_WINDOW,
+        # Above normal so lookups still finish when something else pins the CPU.
+        capture_output=True, text=True, timeout=timeout, creationflags=CREATE_NO_WINDOW | ABOVE_NORMAL_PRIORITY_CLASS,
     )
     if r.returncode != 0:
         msg = (r.stderr or r.stdout).strip().splitlines()
         raise WinError(msg[0] if msg else f"PowerShell exited with code {r.returncode}")
     return r.stdout.strip()
+
+
+# ---------------- windows ----------------
+
+SW_HIDE = 0
+SW_SHOWNA = 8
+_WNDENUMPROC = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+user32.EnumWindows.argtypes = [_WNDENUMPROC, wintypes.LPARAM]
+user32.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]
+user32.IsWindowVisible.argtypes = [wintypes.HWND]
+user32.IsIconic.argtypes = [wintypes.HWND]
+user32.ShowWindow.argtypes = [wintypes.HWND, ctypes.c_int]
+
+
+def visible_windows_of(pid: int) -> list[int]:
+    """Visible top-level windows owned by a process."""
+    found: list[int] = []
+
+    def cb(hwnd: int, _: int) -> bool:
+        owner = wintypes.DWORD()
+        user32.GetWindowThreadProcessId(hwnd, ctypes.byref(owner))
+        if owner.value == pid and user32.IsWindowVisible(hwnd) and not user32.IsIconic(hwnd):
+            found.append(hwnd)
+        return True
+
+    user32.EnumWindows(_WNDENUMPROC(cb), 0)
+    return found
+
+
+@contextmanager
+def windows_hidden(pid: int, settle: float = 0.25) -> Iterator[None]:
+    """Hide a process's windows (e.g. JARVIS itself) for a moment, then show them again unchanged."""
+    hidden = visible_windows_of(pid) if pid else []
+    for h in hidden:
+        user32.ShowWindow(h, SW_HIDE)
+    if hidden:
+        time.sleep(settle)  # let the compositor draw what was behind them
+    try:
+        yield
+    finally:
+        for h in hidden:
+            user32.ShowWindow(h, SW_SHOWNA)  # same size and maximized state, without stealing focus
 
 
 # ---------------- keyboard ----------------
