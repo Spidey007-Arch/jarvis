@@ -31,6 +31,7 @@ export interface Settings {
   chat_model: string;
   embed_model: string;
   has_api_key: boolean;
+  ready: boolean;
   api_key_hint: string;
   providers_with_keys: string[];
   load_error: string | null;

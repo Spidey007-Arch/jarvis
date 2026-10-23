@@ -125,7 +125,7 @@ export default function App() {
     if (!conn) return setConfigured(false);
     getSettings(conn)
       .then((s) => {
-        setConfigured((s.has_api_key || s.provider === "ollama" || s.provider === "custom") && !!s.chat_model);
+        setConfigured(s.ready);
         setAddress(s.address || "sir");
       })
       .catch(() => setConfigured(false));
@@ -218,7 +218,7 @@ export default function App() {
       </main>
 
       {drawer && <div className="scrim" onClick={() => setDrawer(null)} />}
-      <aside className={`glass drawer ${drawer ? "open" : ""} ${drawer === "history" ? "left" : "right"} ${drawer === "memory" ? "wide" : ""}`} aria-hidden={!drawer}>
+      <aside className={`glass drawer ${drawer ? "open" : ""} ${drawer === "history" ? "left" : "right"} ${drawer === "memory" ? "wide" : ""} ${drawer === "settings" ? "xwide" : ""}`} aria-hidden={!drawer}>
         {drawer && (
           <>
             <header className="drawer-head">
