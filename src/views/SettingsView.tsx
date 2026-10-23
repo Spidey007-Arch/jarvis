@@ -204,6 +204,18 @@ export default function SettingsView({ conn, onChanged }: { conn: Connection | n
             <input value={address} maxLength={40} placeholder="sir" onChange={(e) => setAddress(e.target.value)} />
           </label>
         </div>
+        <label className="switch">
+          <input
+            type="checkbox"
+            checked={s.proactive_alerts}
+            disabled={busy}
+            onChange={(e) =>
+              save("profile", { proactive_alerts: e.target.checked },
+                e.target.checked ? "JARVIS will speak up about low battery, a full drive or sustained overload." : "Proactive alerts are off.")
+            }
+          />
+          <span>Speak up proactively (low battery, full drive, sustained CPU or memory overload)</span>
+        </label>
         <div className="field-row">
           <button
             disabled={busy || (name === s.user_name && address === s.address)}

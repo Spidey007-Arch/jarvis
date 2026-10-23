@@ -8,6 +8,7 @@ import re
 import time
 import uuid
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
 
@@ -20,6 +21,7 @@ from .extraction import EXTRACT_SCHEMA, extract_prompt
 from .bridge import AgentBridge, AgentError, AgentUnavailable
 from .llm import LLM, AgentIncomplete, LLMError, LLMNotConfigured, ToolsUnsupported
 from .providers.base import ToolCall
+from .monitor import Monitor
 from .reminders import ReminderError, Reminders
 from .research import ResearchError, web_research
 from .tools import BY_NAME, TOOLS, ToolSpec, describe_call
@@ -45,6 +47,7 @@ class Services:
     memory: MemoryStore
     bridge: AgentBridge
     reminders: Reminders
+    monitor: Monitor
 
 
 class ToolFailure(Exception):
@@ -66,6 +69,7 @@ def _trim(value: Any, limit: int = 6000) -> Any:
 class SettingsIn(BaseModel):
     user_name: str | None = Field(default=None, max_length=80)
     address: str | None = Field(default=None, max_length=40)
+    proactive_alerts: bool | None = None
     provider: str | None = None
     api_key: str | None = Field(default=None, max_length=300)
     base_url: str | None = Field(default=None, max_length=300)
@@ -124,7 +128,7 @@ def build_router(svc: Services, require_auth: Callable[..., None]) -> APIRouter:
     @r.put("/settings")
     async def put_settings(body: SettingsIn) -> dict[str, Any]:
         changes = body.model_dump(exclude_unset=True)
-        profile = {k: changes.pop(k) for k in ("user_name", "address") if k in changes}
+        profile = {k: changes.pop(k) for k in ("user_name", "address", "proactive_alerts") if k in changes}
         if profile:
             svc.settings.update_profile(profile)
 
@@ -231,6 +235,31 @@ def build_router(svc: Services, require_auth: Callable[..., None]) -> APIRouter:
 
     # ---------------- chat ----------------
 
+    def _situation(current_conv: str) -> dict[str, Any]:
+        """Live context so JARVIS can be proactive and pick up earlier threads."""
+        recent = []
+        rows = svc.db.all(
+            "SELECT id, title, updated_at FROM conversations WHERE id != ? AND updated_at > ? ORDER BY updated_at DESC LIMIT 3",
+            [current_conv, time.time() - 14 * 86400],
+        )
+        for c in rows:
+            last = svc.db.one(
+                "SELECT content FROM messages WHERE conversation_id=? AND role='model' ORDER BY created_at DESC LIMIT 1", [c["id"]]
+            )
+            when = datetime.fromtimestamp(c["updated_at"])
+            label = "today" if when.date() == datetime.now().date() else when.strftime("%A %d %B")
+            snippet = (last["content"][:160] + ("…" if len(last["content"]) > 160 else "")) if last else ""
+            recent.append({"title": c["title"], "when": f"{label} {when:%H:%M}", "last": snippet.replace("\n", " ")})
+        return {
+            "pc": svc.bridge.stats if svc.bridge.connected else None,
+            "reminders": svc.reminders.pending(),
+            "recent": recent,
+        }
+
+    @r.get("/alerts")
+    async def alerts(since: float = 0.0) -> list[dict[str, Any]]:
+        return svc.monitor.recent(since)
+
     pending_confirmations: dict[str, asyncio.Future] = {}
 
     @r.post("/confirm/{call_id}")
@@ -282,7 +311,8 @@ def build_router(svc: Services, require_auth: Callable[..., None]) -> APIRouter:
             entry.update(status=status, **extra)
             queue.put_nowait(("tool", dict(entry)))
 
-        if spec.risk == "confirm":
+        previewing = spec.name == "organize_folder" and args.get("dry_run", True) is not False
+        if spec.risk == "confirm" and not previewing:  # a dry run only reports a plan, so it needs no permission
             fut: asyncio.Future = asyncio.get_running_loop().create_future()
             pending_confirmations[cid] = fut
             emit("awaiting_confirmation", detail=json.dumps(args, ensure_ascii=False))
@@ -366,7 +396,8 @@ def build_router(svc: Services, require_auth: Callable[..., None]) -> APIRouter:
                     yield _sse("notice", {"message": f"Memory search unavailable for this reply: {e}"})
                 svc.memory.touch([m["id"] for m in core + relevant])
                 yield _sse("memory", {"core": len(core), "relevant": len(relevant)})
-                system = build_system_prompt(svc.settings.public(), core, relevant, tools_enabled=True)
+                context = _situation(conv_id)
+                system = build_system_prompt(svc.settings.public(), core, relevant, tools_enabled=True, context=context)
                 history = [(m["role"], m["content"]) for m in prior] + [("user", text)]
 
                 async def execute(call: ToolCall) -> dict[str, Any]:
@@ -402,7 +433,7 @@ def build_router(svc: Services, require_auth: Callable[..., None]) -> APIRouter:
                     yield _sse("delta", {"text": reply})
                 except ToolsUnsupported:
                     yield _sse("notice", {"message": "This model can't use tools, so I can only talk, not act. Choose another model in Settings for actions."})
-                    plain = build_system_prompt(svc.settings.public(), core, relevant, tools_enabled=False)
+                    plain = build_system_prompt(svc.settings.public(), core, relevant, tools_enabled=False, context=context)
                     parts: list[str] = []
                     async for chunk in svc.llm.stream_chat(plain, history):
                         parts.append(chunk)

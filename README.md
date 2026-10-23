@@ -26,6 +26,7 @@ If a model is overloaded or rate-limited, JARVIS automatically tries another mod
 ## Features
 
 - **Acts on your PC.** Open apps and sites, search or research the web with sources, report system health, control volume, media and brightness, read what's on screen, manage files, lock/sleep/restart, open Windows settings, and set reminders. Risky actions (delete, move, close apps, power) need your Allow in the chat first, and every action reports its real result.
+- **Behaves like JARVIS.** Composed, dryly witty, infers what you mean, warns before sweeping or risky actions, stays calm when you're under pressure, and picks up earlier threads. It also speaks up on its own about low battery, a nearly full drive or sustained overload (can be turned off).
 - **Long-term memory.** After each message, durable facts about you (name, preferences, goals, projects, people, events, how you like answers) are extracted, updated when they change, and forgotten on request. Small talk is ignored. Review, edit, delete, export and import everything in the Memory panel.
 - **Living interface.** An interactive particle field and an animated core that reacts to what JARVIS is doing (idle, listening, thinking, speaking), with the chat floating in front.
 - **Reliable by design.** The desktop shell launches the backend and agent invisibly, health-checks them, restarts them if they crash, and shuts everything down cleanly.
@@ -38,7 +39,7 @@ If a model is overloaded or rate-limited, JARVIS automatically tries another mod
 | 1. Startup & reliability | Done |
 | 2. Memory + multi-provider chat | Done |
 | 3. Desktop automation: apps, web search & research, system status, volume, media, brightness, screen reading, clipboard, keyboard, files, power, settings, reminders | Done |
-| 4. Persona tuning | Basic persona only (next) |
+| 4. Persona: Section 2 behaviours, situational awareness, proactive alerts, scored evaluation | Done |
 | 5. Voice (wake word, speech-to-text, text-to-speech, all free and local) | Planned |
 | 6. UI polish (markdown, code highlighting, regenerate/edit) | Partial |
 | 7. Packaging (installer, portable, standalone .exe) | Planned |
@@ -58,7 +59,7 @@ Then open **Settings** (gear icon), choose a provider, and connect.
 Tests:
 
 ```powershell
-.venv\Scripts\python.exe -m unittest backend.tests.test_memory backend.tests.test_api backend.tests.test_providers -v
+.venv\Scripts\python.exe -m unittest backend.tests.test_memory backend.tests.test_api backend.tests.test_providers backend.tests.test_monitor -v
 ```
 
 ## Layout

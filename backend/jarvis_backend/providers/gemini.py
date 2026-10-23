@@ -88,11 +88,20 @@ class GeminiProvider(Provider):
         out: list[list[float]] = []
         config = types.EmbedContentConfig(task_type=task, output_dimensionality=EMBED_DIM)
         for i in range(0, len(texts), _BATCH):
+            batch = texts[i : i + _BATCH]
             try:
-                r = await self.client.aio.models.embed_content(model=model, contents=texts[i : i + _BATCH], config=config)
+                r = await self.client.aio.models.embed_content(model=model, contents=batch, config=config)
+                vectors = [list(x.values or []) for x in (r.embeddings or [])]
+                if len(vectors) != len(batch):
+                    # Some models (e.g. gemini-embedding-2) treat a list as one multi-part input and
+                    # return a single vector, so embed each text on its own.
+                    vectors = []
+                    for text in batch:
+                        one = await self.client.aio.models.embed_content(model=model, contents=text, config=config)
+                        vectors.append(list((one.embeddings or [None])[0].values or []))
             except Exception as e:  # noqa: BLE001
                 raise _err(e) from e
-            out.extend(list(x.values or []) for x in (r.embeddings or []))
+            out.extend(vectors)
         return out
 
     @staticmethod

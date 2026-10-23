@@ -25,6 +25,7 @@ async function call<T>(conn: Connection, path: string, init: RequestInit = {}): 
 export interface Settings {
   user_name: string;
   address: string;
+  proactive_alerts: boolean;
   provider: string;
   base_url: string;
   chat_model: string;
@@ -52,7 +53,7 @@ export interface ModelInfo {
   kind: "chat" | "embed";
 }
 
-export type SettingsUpdate = Partial<Pick<Settings, "user_name" | "address" | "provider" | "base_url" | "chat_model" | "embed_model">> & {
+export type SettingsUpdate = Partial<Pick<Settings, "user_name" | "address" | "proactive_alerts" | "provider" | "base_url" | "chat_model" | "embed_model">> & {
   api_key?: string;
 };
 
@@ -60,6 +61,14 @@ export const getSettings = (c: Connection) => call<Settings>(c, "/api/settings")
 export const getProviders = (c: Connection) => call<ProviderPreset[]>(c, "/api/providers");
 export const putSettings = (c: Connection, body: SettingsUpdate) =>
   call<Settings>(c, "/api/settings", { method: "PUT", body: JSON.stringify(body) });
+export interface Alert {
+  at: number;
+  kind: string;
+  message: string;
+}
+
+export const getAlerts = (c: Connection, since: number) => call<Alert[]>(c, `/api/alerts?since=${since}`);
+
 export const getModels = (c: Connection) => call<{ chat: ModelInfo[]; embed: ModelInfo[] }>(c, "/api/models");
 
 // ---------- conversations ----------
