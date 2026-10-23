@@ -10,7 +10,7 @@ import time
 from typing import Any, AsyncIterator, Awaitable, Callable, TypeVar
 
 from .providers import PRESETS, Provider, ProviderError, make_provider, provider_class
-from .providers.base import Step, ToolCall, tools_unsupported
+from .providers.base import NETWORK_ERROR, Step, ToolCall, tools_unsupported
 from .settings import SettingsStore
 
 T = TypeVar("T")
@@ -48,6 +48,8 @@ def describe(e: ProviderError, provider: str, model: str | None) -> LLMError:
     if e.status == 429:
         wait = f" Try again in about {max(1, round(e.retry_after))}s." if e.retry_after else " Try again shortly."
         return LLMError(f"{where}: {e}{wait}")
+    if e.status == NETWORK_ERROR:
+        return LLMError(f"{where}: the connection dropped before an answer arrived ({e}). Please try again; your internet connection may be unstable.")
     if e.status in (500, 502, 503, 504, 529):
         return LLMError(f"{where} is overloaded right now (error {e.status}). Try again in a moment.")
     if e.status == 401:

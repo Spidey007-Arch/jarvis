@@ -8,7 +8,7 @@ from typing import Any, AsyncIterator
 
 import httpx
 
-from .base import Provider, ProviderError, Step, ToolCall, ToolSession, json_instruction, merge_turns, parse_json_loose
+from .base import NETWORK_ERROR, Provider, ProviderError, Step, ToolCall, ToolSession, json_instruction, merge_turns, parse_json_loose
 
 _NOT_CHAT = re.compile(
     r"whisper|tts|dall-e|davinci|babbage|moderation|image|audio|realtime|transcribe|embed|search|computer-use|sora|codex-mini"
@@ -50,7 +50,7 @@ class OpenAICompatProvider(Provider):
         try:
             r = await self.http.post(f"{self.base}{path}", json=payload)
         except httpx.HTTPError as e:
-            raise ProviderError(f"Could not reach {self.base}: {e}") from e
+            raise ProviderError(f"Could not reach {self.base}: {e}", NETWORK_ERROR) from e
         if r.status_code >= 400:
             raise ProviderError(_error_text(r), r.status_code, _retry_after(r))
         return r.json()
@@ -59,7 +59,7 @@ class OpenAICompatProvider(Provider):
         try:
             r = await self.http.get(f"{self.base}/models")
         except httpx.HTTPError as e:
-            raise ProviderError(f"Could not reach {self.base}: {e}") from e
+            raise ProviderError(f"Could not reach {self.base}: {e}", NETWORK_ERROR) from e
         if r.status_code >= 400:
             raise ProviderError(_error_text(r), r.status_code)
         out = []
@@ -103,7 +103,7 @@ class OpenAICompatProvider(Provider):
                         if text:
                             yield text
         except httpx.HTTPError as e:
-            raise ProviderError(f"Connection to {self.base} failed: {e}") from e
+            raise ProviderError(f"Connection to {self.base} failed: {e}", NETWORK_ERROR) from e
 
     async def generate_json(self, model: str, prompt: str, schema: dict[str, Any]) -> Any:
         base = {"model": model, "temperature": 0.1}
