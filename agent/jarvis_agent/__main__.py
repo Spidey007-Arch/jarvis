@@ -14,7 +14,7 @@ import websockets
 from jarvis_common import logs
 
 from . import __version__
-from .actions import ActionError, run, warm_app_index
+from .actions import SCREENSHOT_TTL_S, ActionError, purge_old_screenshots, run, warm_app_index
 
 HEARTBEAT_INTERVAL_S = 5.0
 MAX_BACKOFF_S = 10.0
@@ -107,6 +107,17 @@ async def _session(url: str, token: str, log: logging.Logger) -> None:
                 t.cancel()
 
 
+async def _purge_screenshots(log: logging.Logger) -> None:
+    while True:
+        try:
+            n = await asyncio.to_thread(purge_old_screenshots)
+            if n:
+                log.info("deleted %d screenshot(s) older than %ds", n, SCREENSHOT_TTL_S)
+        except Exception:  # noqa: BLE001 - a failed sweep must not stop the agent
+            log.exception("screenshot cleanup failed")
+        await asyncio.sleep(30)
+
+
 async def _watch_parent(parent_pid: int, log: logging.Logger) -> None:
     while True:
         await asyncio.sleep(2)
@@ -136,6 +147,7 @@ async def amain() -> int:
     except psutil.Error as e:
         log.warning("could not raise agent priority: %s", e)
     asyncio.get_running_loop().run_in_executor(None, warm_app_index)
+    asyncio.create_task(_purge_screenshots(log))
     psutil.cpu_percent(interval=None)  # prime the counter so the first reading is meaningful
     url = f"ws://127.0.0.1:{port}/ws/agent"
     backoff = 1.0

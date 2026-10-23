@@ -55,7 +55,7 @@ TOOLS: list[ToolSpec] = [
              obj({"level": I}), agent_action="brightness", label="Adjusting brightness"),
     ToolSpec("look_at_screen", "Take a screenshot and look at it to answer a question about what is currently on screen (errors, windows, content).",
              obj({"question": S}, ["question"]), timeout=90, label="Looking at the screen"),
-    ToolSpec("screenshot", "Save a screenshot to Pictures\\JARVIS and return its path.", obj(), agent_action="screenshot", label="Taking a screenshot"),
+    ToolSpec("screenshot", "Save a screenshot to Pictures\\JARVIS and return its path. It is deleted automatically after 3 minutes; tell the user.", obj(), agent_action="screenshot", label="Taking a screenshot"),
     ToolSpec("clipboard_get", "Read the text currently on the clipboard.", obj(), agent_action="clipboard_get", label="Reading the clipboard"),
     ToolSpec("clipboard_set", "Put text on the clipboard.", obj({"text": S}, ["text"]), agent_action="clipboard_set", label="Copying to clipboard"),
     ToolSpec("press_keys", "Press a keyboard shortcut in the focused window, e.g. [\"ctrl\",\"s\"], [\"win\",\"d\"], [\"alt\",\"tab\"].",

@@ -340,6 +340,28 @@ def _grab():
         return ImageGrab.grab(all_screens=True)
 
 
+SCREENSHOT_TTL_S = 180  # the user's rule: no screenshot JARVIS takes outlives three minutes
+
+
+def purge_old_screenshots(now: float | None = None) -> int:
+    """Permanently delete screenshots JARVIS made that are older than SCREENSHOT_TTL_S: saved ones in
+    Pictures/JARVIS and any look_at_screen capture the backend did not get to delete (e.g. after a crash).
+    Only JARVIS's own file names are touched."""
+    import tempfile
+
+    now = now or time.time()
+    candidates = list(screenshots_dir().glob("Screenshot *.png")) + list(Path(tempfile.gettempdir()).glob("jarvis-screen-*.jpg"))
+    removed = 0
+    for p in candidates:
+        try:
+            if now - p.stat().st_mtime > SCREENSHOT_TTL_S:
+                p.unlink()
+                removed += 1
+        except OSError:
+            pass  # in use or already gone; the next sweep retries
+    return removed
+
+
 def warm_app_index() -> None:
     """Build the installed-apps list ahead of the first 'open X' request; Get-StartApps is slow."""
     try:
@@ -353,7 +375,7 @@ def screenshot(_: dict[str, Any]) -> dict[str, Any]:
     img = _grab()
     path = screenshots_dir() / f"Screenshot {dt.datetime.now():%Y-%m-%d %H%M%S}.png"
     img.save(path)
-    return {"saved_to": str(path), "width": img.width, "height": img.height}
+    return {"saved_to": str(path), "width": img.width, "height": img.height, "deleted_after_seconds": SCREENSHOT_TTL_S}
 
 
 @action
