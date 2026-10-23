@@ -34,6 +34,16 @@ def _error_text(r: httpx.Response, body: bytes | None = None) -> str:
         return raw.decode("utf-8", "replace")[:300] or f"HTTP {r.status_code}"
 
 
+def _gateway_gemini(models: list[dict[str, Any]]) -> tuple[str, list[dict[str, Any]]] | None:
+    """Gateways (OmniRoute, OpenRouter) list upstream models as 'provider/model'. When Gemini models are
+    among them, return their prefix and the list without it, so the native Gemini rules can choose."""
+    prefixes = {n.split("/", 1)[0] for n in (m["name"] for m in models) if n.count("/") == 1 and n.split("/", 1)[1].startswith("gemini-")}
+    if not prefixes:
+        return None
+    prefix = "gemini" if "gemini" in prefixes else min(prefixes)
+    return prefix, [{**m, "name": m["name"][len(prefix) + 1:]} for m in models if m["name"].startswith(prefix + "/")]
+
+
 class OpenAICompatProvider(Provider):
     def __init__(self, provider_id: str, base_url: str, api_key: str = "", extra_headers: dict[str, str] | None = None) -> None:
         self.id = provider_id
@@ -47,13 +57,19 @@ class OpenAICompatProvider(Provider):
         await self.http.aclose()
 
     async def _post(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:
+        if path == "/chat/completions":
+            payload = {"stream": False, **payload}  # some gateways (OmniRoute) stream unless told not to
         try:
             r = await self.http.post(f"{self.base}{path}", json=payload)
         except (httpx.HTTPError, *NETWORK_EXCEPTIONS) as e:
             raise ProviderError(f"Could not reach {self.base}: {e}", NETWORK_ERROR) from e
         if r.status_code >= 400:
             raise ProviderError(_error_text(r), r.status_code, _retry_after(r))
-        return r.json()
+        try:
+            return r.json()
+        except ValueError as e:
+            kind = r.headers.get("content-type", "unknown")
+            raise ProviderError(f"{self.base} sent a reply that is not JSON ({kind}).", 502) from e
 
     async def list_models(self) -> list[dict[str, Any]]:
         try:
@@ -140,6 +156,12 @@ class OpenAICompatProvider(Provider):
         chat = [m["name"] for m in models if m["kind"] == "chat"]
         if not chat:
             return ""
+        # A specific upstream model answers faster than a gateway's auto/ router, which may try several.
+        if gw := _gateway_gemini(models):
+            from .gemini import GeminiProvider
+
+            if name := GeminiProvider.pick_chat(gw[1]):
+                return f"{gw[0]}/{name}"
         # Gateways (OpenRouter, OmniRoute) expose routing models that pick the best available upstream.
         for routed in ("auto", "auto/best-chat", "auto/chat", "auto/best-fast", "openrouter/auto"):
             if routed in chat:
@@ -153,8 +175,33 @@ class OpenAICompatProvider(Provider):
         return chat[0]
 
     @staticmethod
+    def pick_utility(models: list[dict[str, Any]], chat_model: str) -> str:
+        gw = _gateway_gemini(models)
+        if gw and chat_model.startswith(gw[0] + "/"):
+            from .gemini import GeminiProvider
+
+            name = GeminiProvider.pick_utility(gw[1], chat_model[len(gw[0]) + 1:])
+            return f"{gw[0]}/{name}"
+        return chat_model
+
+    @staticmethod
+    def fallbacks(models: list[dict[str, Any]], primary: str) -> list[str]:
+        """Through a gateway, fall back across the same Gemini models a direct key would use."""
+        gw = _gateway_gemini(models)
+        if not gw or not primary.startswith(gw[0] + "/"):
+            return []
+        from .gemini import GeminiProvider
+
+        return [f"{gw[0]}/{n}" for n in GeminiProvider.fallbacks(gw[1], primary[len(gw[0]) + 1:])]
+
+    @staticmethod
     def pick_embed(models: list[dict[str, Any]]) -> str:
         emb = [m["name"] for m in models if m["kind"] == "embed"]
+        if gw := _gateway_gemini(models):
+            from .gemini import GeminiProvider
+
+            if name := GeminiProvider.pick_embed(gw[1]):
+                return f"{gw[0]}/{name}"
         for preferred in ("text-embedding-3-small", "nomic-embed-text", "mxbai-embed-large"):
             hit = [n for n in emb if preferred in n]
             if hit:

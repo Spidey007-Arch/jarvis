@@ -9,7 +9,7 @@ PRESETS: dict[str, dict[str, Any]] = {
     "omniroute": {
         "name": "OmniRoute",
         "needs_key": False,
-        "base_url": "http://localhost:20128/v1",
+        "base_url": "http://127.0.0.1:20128/v1",  # not localhost: on Windows that tries IPv6 first and OmniRoute listens on IPv4
         "key_hint": "Start OmniRoute (run `omniroute`, or its Docker image), then paste a gateway key from its dashboard's API Keys page if you created one. Hosted instance? Set the base URL to https://your-domain/v1.",
         "embeddings": True,
         "featured": True,

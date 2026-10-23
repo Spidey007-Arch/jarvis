@@ -172,6 +172,9 @@ class LLM:
         n = self._failures.get(model, 0) + 1
         self._failures[model] = n
         backoff = min(_COOLDOWN_S * 2 ** (n - 1), _MAX_COOLDOWN_S)
+        if e.status == 429 and "quota" in str(e).lower():
+            # A used-up daily quota will not come back in minutes, and asking again costs seconds per reply.
+            backoff = _MAX_COOLDOWN_S
         self._cooldown[model] = time.monotonic() + max(e.retry_after or 0, backoff if not e.retry_after else 0, 5.0)
 
     def _ok(self, model: str) -> None:
