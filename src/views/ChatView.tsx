@@ -117,6 +117,27 @@ export default function ChatView({
     const ctrl = new AbortController();
     abort.current = ctrl;
     let failed = false;
+    // Replies are revealed word by word at a natural pace; the orb pulses with each word.
+    let buffer = "";
+    let timer: number | undefined;
+    let drained: (() => void) | null = null;
+    const pump = () => {
+      if (!buffer) {
+        window.clearInterval(timer);
+        timer = undefined;
+        drained?.();
+        drained = null;
+        return;
+      }
+      let n = Math.max(4, Math.ceil(buffer.length / 45));
+      const space = buffer.indexOf(" ", n);
+      if (space !== -1 && space - n < 12) n = space + 1;
+      const piece = buffer.slice(0, n);
+      buffer = buffer.slice(n);
+      onActivity("speaking");
+      emitPulse();
+      setLines((l) => l.map((x) => (x.id === tempReply ? { ...x, content: x.content + piece } : x)));
+    };
     try {
       await streamChat(conn, { message: text, conversation_id: conversationId }, ctrl.signal, {
         meta: (d) => {
@@ -127,9 +148,8 @@ export default function ChatView({
         },
         notice: (d) => setNotice({ tone: "warn", text: d.message }),
         delta: (d) => {
-          onActivity("speaking");
-          emitPulse();
-          setLines((l) => l.map((x) => (x.id === tempReply ? { ...x, content: x.content + d.text } : x)));
+          buffer += d.text;
+          if (timer === undefined) timer = window.setInterval(pump, 35);
         },
         error: (d) => {
           failed = true;
@@ -154,6 +174,14 @@ export default function ChatView({
         setNotice({ tone: "bad", text: (e as Error).message });
       }
     } finally {
+      if (ctrl.signal.aborted && buffer) {
+        const rest = buffer;
+        buffer = "";
+        setLines((l) => l.map((x) => (x.id === tempReply ? { ...x, content: x.content + rest } : x)));
+      } else if (timer !== undefined) {
+        await new Promise<void>((resolve) => (drained = resolve));
+      }
+      window.clearInterval(timer);
       setLines((l) => l.filter((x) => !(x.id === tempReply && !x.content && !x.actions?.length)).map((x) => ({ ...x, pending: false })));
       setStreaming(false);
       abort.current = null;

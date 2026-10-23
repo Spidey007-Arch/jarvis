@@ -26,7 +26,10 @@ const MAX_RESTARTS: usize = 5;
 const RESTART_WINDOW: Duration = Duration::from_secs(120);
 const BACKEND_READY_TIMEOUT: Duration = Duration::from_secs(45);
 const AGENT_CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
-const HEALTH_FAILURES_BEFORE_RESTART: u32 = 3;
+/// A backend whose process is still alive but slow to answer (e.g. the PC is under heavy load)
+/// is busy, not dead: only restart it after this many consecutive unanswered checks (~1 minute).
+const HEALTH_FAILURES_BEFORE_RESTART: u32 = 15;
+const HEALTH_TIMEOUT: Duration = Duration::from_secs(3);
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct ConnInfo {
@@ -265,6 +268,9 @@ impl Supervisor {
                             if other.is_some() {
                                 self.log_error("startup", "backend pid changed; treating as restart");
                             }
+                            if bad_health == 5 {
+                                self.log("startup", "backend is slow to respond (PC under load?); waiting before restarting it");
+                            }
                             if bad_health >= HEALTH_FAILURES_BEFORE_RESTART || exited || other.is_some() {
                                 self.log_error(
                                     "startup",
@@ -502,7 +508,7 @@ impl Supervisor {
     // ---------- health ----------
 
     fn health(&self, port: u16) -> Option<Health> {
-        let body = http_request("GET", port, "/health", None, Duration::from_millis(1200))?;
+        let body = http_request("GET", port, "/health", None, HEALTH_TIMEOUT)?;
         let v: serde_json::Value = serde_json::from_str(&body).ok()?;
         if v.get("service")?.as_str()? != "jarvis-backend" {
             return None;
