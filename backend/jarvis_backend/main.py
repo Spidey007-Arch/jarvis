@@ -24,6 +24,7 @@ from .bridge import AgentBridge, AgentError, AgentUnavailable, HEARTBEAT_TIMEOUT
 from .db import DB
 from .llm import LLM
 from .memory import MemoryStore
+from .monitor import Monitor
 from .reminders import Reminders
 from .settings import SettingsStore
 
@@ -71,7 +72,8 @@ def create_app(port: int, token: str | None = None) -> FastAPI:
     settings = SettingsStore(data_dir() / "settings.dat")
     llm = LLM(settings)
     db = DB(data_dir() / "jarvis.db")
-    services = Services(settings=settings, llm=llm, db=db, memory=MemoryStore(db, llm), bridge=bridge, reminders=Reminders(db, bridge))
+    services = Services(settings=settings, llm=llm, db=db, memory=MemoryStore(db, llm), bridge=bridge, reminders=Reminders(db, bridge),
+                        monitor=Monitor(bridge, settings))
 
     async def daily_maintenance() -> None:
         while True:
@@ -89,12 +91,14 @@ def create_app(port: int, token: str | None = None) -> FastAPI:
         watcher = asyncio.create_task(watch_parent(app))
         maintenance = asyncio.create_task(daily_maintenance())
         reminders = asyncio.create_task(services.reminders.run())
+        monitor = asyncio.create_task(services.monitor.run())
         try:
             yield
         finally:
             watcher.cancel()
             maintenance.cancel()
             reminders.cancel()
+            monitor.cancel()
             db.close()
             _remove_runtime()
             log.info("backend stopped")

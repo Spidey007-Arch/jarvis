@@ -4,7 +4,7 @@ import Particles from "./fx/Particles";
 import type { Activity } from "./fx/activity";
 import { useTelemetry } from "./telemetry";
 import { Connection, Overall, ShellStatus, getConnection, getStatus, insideShell, onStatus } from "./shell";
-import { getSettings } from "./api";
+import { Alert, getAlerts, getSettings } from "./api";
 import ChatView from "./views/ChatView";
 import HistoryPanel from "./views/HistoryPanel";
 import MemoryView from "./views/MemoryView";
@@ -79,6 +79,31 @@ export default function App() {
   const [conversation, setConversation] = useState<string | null>(null);
   const [historyVersion, setHistoryVersion] = useState(0);
   const tel = useTelemetry(conn, "backend");
+  const [alert, setAlert] = useState<Alert | null>(null);
+
+  // Proactive alerts from the backend monitor: show the newest one for a while.
+  useEffect(() => {
+    if (!conn) return;
+    let since = Date.now() / 1000;
+    const id = window.setInterval(async () => {
+      try {
+        const fresh = await getAlerts(conn, since);
+        if (fresh.length) {
+          since = fresh[fresh.length - 1].at;
+          setAlert(fresh[fresh.length - 1]);
+        }
+      } catch {
+        /* backend restarting; the status chip already shows that */
+      }
+    }, 10000);
+    return () => window.clearInterval(id);
+  }, [conn]);
+
+  useEffect(() => {
+    if (!alert) return;
+    const t = window.setTimeout(() => setAlert(null), 20000);
+    return () => window.clearTimeout(t);
+  }, [alert]);
 
   useEffect(() => {
     if (!shell) return;
@@ -154,6 +179,13 @@ export default function App() {
           <Gauge label="DISK" value={s.disk_percent ?? undefined} />
         </div>
       </header>
+
+      {alert && (
+        <div className="alert-toast glass" role="alert" onClick={() => setAlert(null)}>
+          <span className="alert-kind">{alert.kind.toUpperCase()}</span>
+          {alert.message}
+        </div>
+      )}
 
       <nav className="rail" aria-label="Panels">
         {(Object.keys(ICONS) as Exclude<Drawer, null>[]).map((d) => (

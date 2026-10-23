@@ -24,11 +24,12 @@ DEFAULTS: dict[str, Any] = {
     "version": VERSION,
     "user_name": "",
     "address": "sir",
+    "proactive_alerts": True,
     "provider": "gemini",
     "provider_config": {},
     "secrets": {},
 }
-PROFILE_FIELDS = ("user_name", "address")
+PROFILE_FIELDS = ("user_name", "address", "proactive_alerts")
 PROVIDER_FIELDS = ("chat_model", "embed_model", "base_url")
 
 
