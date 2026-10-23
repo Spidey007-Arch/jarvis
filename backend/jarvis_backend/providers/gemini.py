@@ -137,7 +137,10 @@ class GeminiProvider(Provider):
             and re.search(r"gemini-\d", m["name"]) and m["name"] != primary
         ]
         pool.sort(key=lambda n: ("lite" in n, tuple(-x for x in _version_key(n))))
-        return pool[:3]
+        # Free-tier quota is per model, and the lite models have the most of it: always end on one.
+        full = [n for n in pool if "lite" not in n][:3]
+        lite = [n for n in pool if "lite" in n][:1]
+        return full + lite
 
     def tool_session(self, system: str, history: list[tuple[str, str]], tools: list[dict[str, Any]]) -> ToolSession:
         return _GeminiTools(self.client, system, history, tools)

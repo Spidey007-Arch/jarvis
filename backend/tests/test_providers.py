@@ -144,7 +144,7 @@ class ProviderProtocolTests(unittest.TestCase):
         from jarvis_backend.providers import PRESETS, make_provider
         p = make_provider("omniroute", "", "")
         try:
-            self.assertEqual(p.base, "http://localhost:20128/v1")
+            self.assertEqual(p.base, "http://127.0.0.1:20128/v1")
             self.assertFalse(PRESETS["omniroute"]["needs_key"])
         finally:
             asyncio.run(p.aclose())
@@ -338,6 +338,28 @@ class ProviderProtocolTests(unittest.TestCase):
         result_block = SEEN[1]["body"]["messages"][-1]["content"][0]
         self.assertTrue(result_block["is_error"])
         self.assertIn("input_schema", SEEN[0]["body"]["tools"][0])
+
+
+class ModelChoiceTests(unittest.TestCase):
+    def test_gemini_fallbacks_end_on_a_lite_model(self) -> None:
+        from jarvis_backend.providers.gemini import GeminiProvider
+
+        names = ["gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.6-flash", "gemini-3.5-flash", "gemini-3.5-flash-lite", "gemini-3.1-flash-lite"]
+        models = [{"name": n, "kind": "chat"} for n in names]
+        self.assertEqual(GeminiProvider.fallbacks(models, "gemini-3.8-flash"),
+                         ["gemini-3.7-flash", "gemini-3.6-flash", "gemini-3.5-flash", "gemini-3.5-flash-lite"])
+
+    def test_gateway_uses_gemini_rules_with_prefix(self) -> None:
+        from jarvis_backend.providers.openai_compat import OpenAICompatProvider as P
+
+        names = ["auto/best-chat", "gemini/gemini-3.8-flash", "gemini/gemini-3.7-flash", "gemini/gemini-3.5-flash-lite", "gemini/gemini-embedding-2"]
+        models = [{"name": n, "kind": "embed" if "embed" in n else "chat"} for n in names]
+        self.assertEqual(P.pick_chat(models), "gemini/gemini-3.8-flash")
+        self.assertEqual(P.fallbacks(models, "gemini/gemini-3.8-flash"), ["gemini/gemini-3.7-flash", "gemini/gemini-3.5-flash-lite"])
+        self.assertEqual(P.pick_utility(models, "gemini/gemini-3.8-flash"), "gemini/gemini-3.5-flash-lite")
+        self.assertEqual(P.pick_embed(models), "gemini/gemini-embedding-2")
+        # Without Gemini models a gateway still prefers its own router.
+        self.assertEqual(P.pick_chat([{"name": "auto/best-chat", "kind": "chat"}, {"name": "x/y", "kind": "chat"}]), "auto/best-chat")
 
 
 if __name__ == "__main__":
