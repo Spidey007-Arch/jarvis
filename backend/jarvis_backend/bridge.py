@@ -26,6 +26,10 @@ class AgentBridge:
         self.info: dict[str, Any] = {}
         self.stats: dict[str, Any] = {}
         self._pending: dict[str, asyncio.Future] = {}
+        # Voice events from the agent (wake word heard, transcript, speaking, ...), numbered for long-polling.
+        self.voice_events: list[dict[str, Any]] = []
+        self._voice_seq = 0
+        self._voice_changed = asyncio.Event()
 
     @property
     def connected(self) -> bool:
@@ -53,6 +57,23 @@ class AgentBridge:
         self.last_heartbeat = time.monotonic()
         if stats:
             self.stats = stats
+
+    def voice_event(self, msg: dict[str, Any]) -> None:
+        self._voice_seq += 1
+        self.voice_events = (self.voice_events + [{**{k: v for k, v in msg.items() if k != "type"}, "seq": self._voice_seq, "at": time.time()}])[-50:]
+        self._voice_changed.set()
+        self._voice_changed = asyncio.Event()
+
+    async def wait_voice(self, after: int, timeout: float = 25.0) -> list[dict[str, Any]]:
+        """Events newer than `after`, waiting up to `timeout` for one to arrive (long-poll)."""
+        fresh = [e for e in self.voice_events if e["seq"] > after]
+        if fresh:
+            return fresh
+        try:
+            await asyncio.wait_for(self._voice_changed.wait(), timeout)
+        except asyncio.TimeoutError:
+            return []
+        return [e for e in self.voice_events if e["seq"] > after]
 
     def resolve(self, msg: dict[str, Any]) -> None:
         fut = self._pending.get(msg.get("id", ""))

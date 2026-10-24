@@ -61,8 +61,8 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .aurora i:nth-child(2) { left: 28%; background: radial-gradient(closest-side, #8a5cff, transparent); animation-duration: 9s; animation-delay: -3s; }
 .aurora i:nth-child(3) { left: 54%; background: radial-gradient(closest-side, var(--core), transparent); animation-duration: 8s; animation-delay: -5s; }
 @keyframes drift { from { transform: translate3d(-12%, 8%, 0) scale(0.9); } to { transform: translate3d(14%, -6%, 0) scale(1.15); } }
-.app.act-thinking .aurora, .app.act-speaking .aurora { opacity: 1; }
-.app:not(.act-thinking):not(.act-speaking) .aurora i { animation-play-state: paused; }
+.app.act-thinking .aurora, .app.act-speaking .aurora, .app.act-listening .aurora { opacity: 1; }
+.app:not(.act-thinking):not(.act-speaking):not(.act-listening) .aurora i { animation-play-state: paused; }
 .aurora.wake { opacity: 1; animation: wake 1.8s ease both; }
 @keyframes wake { 0% { opacity: 0; transform: translateY(30%); } 35% { opacity: 1; } 100% { opacity: 0; transform: none; } }
 
@@ -452,3 +452,20 @@ label { display: flex; flex-direction: column; gap: 5px; font-size: 11px; letter
 .alert-kind { font-size: 9px; letter-spacing: 0.24em; color: var(--warn); margin-right: 10px; }
 .switch { flex-direction: row !important; align-items: center; gap: 10px !important; margin-top: 12px; font-size: 12.5px !important; letter-spacing: 0 !important; color: var(--text) !important; cursor: pointer; }
 .switch input { width: 16px; height: 16px; accent-color: var(--core); }
+
+/* ---------- voice ---------- */
+.voice-pill {
+  position: absolute; left: 50%; bottom: 96px; transform: translateX(-50%); z-index: 6;
+  display: inline-flex; align-items: center; gap: 10px; padding: 8px 18px; border-radius: 999px;
+  font-size: 13px; letter-spacing: 0.08em; max-width: min(640px, calc(100% - 200px)); animation: rise 0.25s ease both;
+}
+.voice-pill > span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.voice-pill.listening, .voice-pill.transcribing { color: var(--core); text-transform: uppercase; letter-spacing: 0.28em; font-size: 11.5px; }
+.voice-pill.speaking { cursor: pointer; text-transform: uppercase; letter-spacing: 0.28em; font-size: 11.5px; }
+.voice-bars { display: inline-flex; align-items: center; gap: 3px; height: 16px; }
+.voice-bars i { width: 3px; height: 100%; border-radius: 2px; background: linear-gradient(#8a5cff, var(--core)); animation: bars 0.9s ease-in-out infinite; transform-origin: center; }
+.voice-bars i:nth-child(2) { animation-delay: -0.15s; } .voice-bars i:nth-child(3) { animation-delay: -0.3s; }
+.voice-bars i:nth-child(4) { animation-delay: -0.45s; } .voice-bars i:nth-child(5) { animation-delay: -0.6s; }
+.voice-pill.transcribing .voice-bars i { animation-duration: 1.6s; opacity: 0.6; }
+@keyframes bars { 0%, 100% { transform: scaleY(0.25); } 50% { transform: scaleY(1); } }
+.app.act-listening .aurora { opacity: 0.8; }

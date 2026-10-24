@@ -124,6 +124,9 @@ def build_system_prompt(
         line = _pc_line(ctx.get("pc"))
         if line:
             situation.append(line)
+    if ctx.get("voice"):
+        situation.append("The user spoke this aloud and will hear your reply through the speakers: answer in one to three "
+                         "short spoken sentences, no lists, markdown, links or anything that only makes sense on screen.")
     if ctx.get("reminders"):
         situation.append("Upcoming reminders: " + "; ".join(f"{r['text']} ({r['due']})" for r in ctx["reminders"][:5]) + ".")
     if ctx.get("recent"):

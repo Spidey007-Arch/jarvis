@@ -14,6 +14,7 @@ import websockets
 from jarvis_common import logs
 
 from . import __version__
+from . import voice
 from .actions import SCREENSHOT_TTL_S, ActionError, purge_old_screenshots, run, warm_app_index
 
 HEARTBEAT_INTERVAL_S = 5.0
@@ -49,6 +50,25 @@ def _stats() -> dict:
         out["net_up_kbps"] = round((net.bytes_sent - _last_net[2]) / 1024 / dt, 1)
     _last_net = (now, net.bytes_recv, net.bytes_sent)
     return out
+
+
+# Voice events come from worker threads; they wait here until a backend connection can send them.
+_outbox: asyncio.Queue | None = None
+
+
+def emit_voice(event: dict) -> None:
+    loop, box = _loop, _outbox
+    if loop is not None and box is not None:
+        loop.call_soon_threadsafe(box.put_nowait, {"type": "voice", **event})
+
+
+_loop: asyncio.AbstractEventLoop | None = None
+
+
+async def _drain_outbox(ws) -> None:
+    while True:
+        msg = await _outbox.get()  # type: ignore[union-attr]
+        await ws.send(json.dumps(msg))
 
 
 async def _heartbeat(ws) -> None:
@@ -93,6 +113,7 @@ async def _session(url: str, token: str, log: logging.Logger) -> None:
         )
         log.info("connected to backend")
         hb = asyncio.create_task(_heartbeat(ws))
+        drain = asyncio.create_task(_drain_outbox(ws))
         tasks: set[asyncio.Task] = set()
         try:
             async for raw in ws:
@@ -103,6 +124,7 @@ async def _session(url: str, token: str, log: logging.Logger) -> None:
                     t.add_done_callback(tasks.discard)
         finally:
             hb.cancel()
+            drain.cancel()
             for t in tasks:
                 t.cancel()
 
@@ -148,6 +170,9 @@ async def amain() -> int:
         log.warning("could not raise agent priority: %s", e)
     asyncio.get_running_loop().run_in_executor(None, warm_app_index)
     asyncio.create_task(_purge_screenshots(log))
+    global _loop, _outbox
+    _loop, _outbox = asyncio.get_running_loop(), asyncio.Queue(maxsize=200)
+    voice.attach(emit_voice)
     psutil.cpu_percent(interval=None)  # prime the counter so the first reading is meaningful
     url = f"ws://127.0.0.1:{port}/ws/agent"
     backoff = 1.0

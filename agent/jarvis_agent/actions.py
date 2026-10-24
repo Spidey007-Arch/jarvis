@@ -23,7 +23,7 @@ from typing import Any, Callable
 
 import psutil
 
-from . import __version__, webdrive, win
+from . import __version__, voice, webdrive, win
 
 
 class ActionError(Exception):
@@ -303,6 +303,33 @@ def web_click(args: dict[str, Any]) -> dict[str, Any]:
 @action
 def web_type(args: dict[str, Any]) -> dict[str, Any]:
     return webdrive.type_into(_num(args, "n"), _str(args, "text"), bool(args.get("submit")))
+
+
+# ======================= voice =======================
+
+@action
+def voice_set(args: dict[str, Any]) -> dict[str, Any]:
+    return voice.instance().set_enabled(bool(args.get("enabled")))
+
+
+@action
+def voice_status(_: dict[str, Any]) -> dict[str, Any]:
+    v = voice.instance()
+    return {"enabled": v.enabled, **voice.prepare()}
+
+
+@action
+def speak(args: dict[str, Any]) -> dict[str, Any]:
+    try:
+        return voice.instance().speak(_str(args, "text"))
+    except RuntimeError as e:
+        raise ActionError(f"Could not speak: {e}") from e
+
+
+@action
+def stop_speaking(_: dict[str, Any]) -> dict[str, Any]:
+    voice.instance().stop_speaking()
+    return {"stopped": True}
 
 
 # ======================= audio, media, display =======================

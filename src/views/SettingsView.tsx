@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useState } from "react";
-import { ApiError, ModelInfo, ProviderPreset, Settings, SettingsUpdate, getModels, getProviders, getSettings, putSettings } from "../api";
+import { ApiError, ModelInfo, ProviderPreset, Settings, SettingsUpdate, VoiceStatus, getModels, getProviders, getSettings, getVoice, putSettings, setVoice } from "../api";
 import type { Connection } from "../shell";
 
 type Note = { tone: "ok" | "bad"; text: string } | null;
-type Section = "provider" | "model" | "profile";
+type Section = "provider" | "model" | "profile" | "voice";
 
 export default function SettingsView({ conn, onChanged }: { conn: Connection | null; onChanged: () => void }) {
   const [s, setS] = useState<Settings | null>(null);
@@ -15,7 +15,9 @@ export default function SettingsView({ conn, onChanged }: { conn: Connection | n
   const [models, setModels] = useState<{ chat: ModelInfo[]; embed: ModelInfo[] } | null>(null);
   const [busy, setBusy] = useState(false);
   const [loadingModels, setLoadingModels] = useState(false);
-  const [notes, setNotes] = useState<Record<Section, Note>>({ provider: null, model: null, profile: null });
+  const [notes, setNotes] = useState<Record<Section, Note>>({ provider: null, model: null, profile: null, voice: null });
+  const [voice, setVoiceStatus] = useState<VoiceStatus | null>(null);
+  const [voiceBusy, setVoiceBusy] = useState(false);
   const note = (k: Section, n: Note) => setNotes((prev) => ({ ...prev, [k]: n }));
 
   const preset = presets.find((p) => p.id === s?.provider);
@@ -51,6 +53,27 @@ export default function SettingsView({ conn, onChanged }: { conn: Connection | n
   useEffect(() => {
     load();
   }, [load]);
+
+  useEffect(() => {
+    if (!conn) return;
+    getVoice(conn).then(setVoiceStatus).catch((e) => note("voice", { tone: "bad", text: (e as Error).message }));
+  }, [conn]);
+
+  const toggleVoice = async (on: boolean) => {
+    if (!conn) return;
+    setVoiceBusy(true);
+    note("voice", null);
+    try {
+      const v = await setVoice(conn, on);
+      setVoiceStatus(v);
+      if (on && !v.enabled) note("voice", { tone: "bad", text: v.error ?? `Voice files still missing: ${v.missing.join(", ")}.` });
+      else note("voice", { tone: "ok", text: on ? "Listening for “JARVIS”. Say it, then your request." : "Voice is off; the microphone is released." });
+    } catch (e) {
+      note("voice", { tone: "bad", text: (e as Error).message });
+    } finally {
+      setVoiceBusy(false);
+    }
+  };
 
   const save = async (section: Section, body: SettingsUpdate, okText: string, reload = false) => {
     if (!conn) return;
@@ -153,6 +176,21 @@ export default function SettingsView({ conn, onChanged }: { conn: Connection | n
       </section>
 
       <div className="settings-side">
+        <section className="card">
+          <h2>Voice</h2>
+          <label className="switch">
+            <input type="checkbox" checked={!!voice?.enabled} disabled={voiceBusy || !voice} onChange={(e) => toggleVoice(e.target.checked)} />
+            <span>Listen for “JARVIS” (wake word), then answer out loud</span>
+          </label>
+          <p className="dim small">
+            {!voice
+              ? "Checking voice…"
+              : voice.ready
+                ? "Runs entirely on this PC: Windows hears the wake word, Whisper turns speech into text, Piper speaks (British voice)."
+                : `Voice files still downloading or missing: ${voice.missing.join(", ") || "programs not unpacked yet"}.`}
+          </p>
+          <Note k="voice" />
+        </section>
         <section className="card">
           <h2>Models</h2>
           {!models ? (

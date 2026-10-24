@@ -3,7 +3,7 @@ import Reactor from "./Reactor";
 import type { Activity } from "./fx/activity";
 import { useTelemetry } from "./telemetry";
 import { Connection, Overall, ShellStatus, getConnection, getStatus, insideShell, onStatus } from "./shell";
-import { Alert, Quota, getAlerts, getQuota, getSettings } from "./api";
+import { Alert, Quota, VoiceEvent, getAlerts, getQuota, getSettings, getVoiceEvents, stopSpeaking } from "./api";
 import ChatView from "./views/ChatView";
 import HistoryPanel from "./views/HistoryPanel";
 import MemoryView from "./views/MemoryView";
@@ -121,6 +121,82 @@ function QuotaStrip({ conn, activity }: { conn: Connection | null; activity: Act
   );
 }
 
+type VoiceState = "off" | "listening" | "transcribing" | "speaking";
+
+/** Follows the agent's voice events: shows when JARVIS is listening, hands what was heard to the
+ *  chat, and lets a click stop JARVIS mid-sentence. */
+function VoiceLink({ conn, onState }: { conn: Connection | null; onState: (s: VoiceState) => void }) {
+  const [state, setState] = useState<VoiceState>("off");
+  const [heard, setHeard] = useState<string | null>(null);
+  const [note, setNote] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!conn) return;
+    const ctrl = new AbortController();
+    let after = 0;
+    let first = true;
+    const put = (s: VoiceState) => {
+      setState(s);
+      onState(s);
+    };
+    (async () => {
+      while (!ctrl.signal.aborted) {
+        let events: VoiceEvent[] = [];
+        try {
+          events = await getVoiceEvents(conn, after, ctrl.signal);
+        } catch {
+          await new Promise((r) => setTimeout(r, 2000));
+          continue;
+        }
+        for (const e of events) {
+          after = Math.max(after, e.seq);
+          if (first) continue; // replay protection: only react to what happens from now on
+          if (e.event === "listening") {
+            setHeard(null);
+            setNote(null);
+            put("listening");
+          } else if (e.event === "transcribing") put("transcribing");
+          else if (e.event === "speaking") put("speaking");
+          else if (e.event === "transcript" && e.text) {
+            setHeard(e.text);
+            put("off");
+            window.dispatchEvent(new CustomEvent("jarvis:voice-text", { detail: e.text }));
+          } else if (e.event === "idle") {
+            if (e.reason && e.reason !== "spoken" && e.reason !== "interrupted") setNote(e.reason);
+            put("off");
+          } else if (e.event === "error") {
+            setNote(e.message ?? "voice error");
+            put("off");
+          }
+        }
+        first = false;
+      }
+    })();
+    return () => ctrl.abort();
+  }, [conn, onState]);
+
+  useEffect(() => {
+    if (!heard && !note) return;
+    const t = window.setTimeout(() => {
+      setHeard(null);
+      setNote(null);
+    }, 6000);
+    return () => window.clearTimeout(t);
+  }, [heard, note]);
+
+  if (state === "off" && !heard && !note) return null;
+  const label = state === "listening" ? "Listening" : state === "transcribing" ? "Understanding" : state === "speaking" ? "Speaking" : "";
+  return (
+    <div className={`voice-pill glass ${state}`} role="status" onClick={() => state === "speaking" && conn && stopSpeaking(conn).catch(() => {})}
+         title={state === "speaking" ? "Click (or say JARVIS) to stop" : undefined}>
+      {state !== "off" && (
+        <span className="voice-bars" aria-hidden="true"><i /><i /><i /><i /><i /></span>
+      )}
+      <span>{label || (heard ? `“${heard}”` : note)}</span>
+    </div>
+  );
+}
+
 export default function App() {
   const shell = insideShell();
   const [status, setStatus] = useState<ShellStatus | null>(null);
@@ -133,7 +209,8 @@ export default function App() {
   const [historyVersion, setHistoryVersion] = useState(0);
   const tel = useTelemetry(conn, "backend");
   const [alert, setAlert] = useState<Alert | null>(null);
-  const [wake, setWake] = useState(1); // bumps replay the aurora sweep: on launch and on every new chat
+  const [wake, setWake] = useState(1);
+  const [voice, setVoiceState] = useState<VoiceState>("off"); // bumps replay the aurora sweep: on launch and on every new chat
 
   // Proactive alerts from the backend monitor: show the newest one for a while.
   useEffect(() => {
@@ -212,7 +289,9 @@ export default function App() {
   }
 
   const overall: Overall = status?.overall ?? "starting";
-  const coreActivity: Activity = overall === "failed" ? "offline" : overall !== "online" && activity === "idle" ? "thinking" : activity;
+  const baseActivity: Activity = overall === "failed" ? "offline" : overall !== "online" && activity === "idle" ? "thinking" : activity;
+  const coreActivity: Activity =
+    voice === "listening" ? "listening" : voice === "transcribing" ? "thinking" : voice === "speaking" ? "speaking" : baseActivity;
   const s = tel.agent?.stats ?? {};
 
   return (
@@ -264,6 +343,8 @@ export default function App() {
           <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" /></svg>
         </button>
       </nav>
+
+      <VoiceLink conn={conn} onState={setVoiceState} />
 
       <main className="front">
         <ChatView

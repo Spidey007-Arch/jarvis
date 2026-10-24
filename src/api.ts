@@ -87,6 +87,50 @@ export interface Quota {
 }
 export const getQuota = (c: Connection) => call<Quota>(c, "/api/quota");
 
+// ---------- voice ----------
+
+export interface VoiceEvent {
+  seq: number;
+  at: number;
+  event: "listening" | "transcribing" | "transcript" | "speaking" | "idle" | "error";
+  text?: string;
+  message?: string;
+  reason?: string;
+  seconds?: number;
+}
+export interface VoiceStatus {
+  enabled: boolean;
+  ready: boolean;
+  missing: string[];
+  error?: string;
+}
+export const getVoiceEvents = (c: Connection, after: number, signal?: AbortSignal) =>
+  call<VoiceEvent[]>(c, `/api/voice/events?after=${after}`, { signal });
+export const getVoice = (c: Connection) => call<VoiceStatus>(c, "/api/voice");
+export const setVoice = (c: Connection, enabled: boolean) =>
+  call<VoiceStatus>(c, "/api/voice", { method: "POST", body: JSON.stringify({ enabled }) });
+export const speak = (c: Connection, text: string) => call<{ spoken: boolean }>(c, "/api/voice/speak", { method: "POST", body: JSON.stringify({ text }) });
+export const stopSpeaking = (c: Connection) => call<{ stopped: boolean }>(c, "/api/voice/stop", { method: "POST", body: "{}" });
+
+/** A reply as it should sound: no markdown, links or lists; long answers trimmed at a sentence. */
+export function forSpeech(text: string): string {
+  let t = text
+    .replace(/```[\s\S]*?```/g, " (code on screen) ")
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
+    .replace(/https?:\/\/\S+/g, "")
+    .replace(/^#+\s*/gm, "")
+    .replace(/^\s*[-*•]\s+/gm, "")
+    .replace(/[*_`>#|]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (t.length > 700) {
+    const cut = t.slice(0, 700);
+    const end = Math.max(cut.lastIndexOf(". "), cut.lastIndexOf("? "), cut.lastIndexOf("! "));
+    t = (end > 200 ? cut.slice(0, end + 1) : cut) + " The rest is on screen.";
+  }
+  return t;
+}
+
 export const getModels = (c: Connection) => call<{ chat: ModelInfo[]; embed: ModelInfo[] }>(c, "/api/models");
 
 // ---------- conversations ----------
@@ -143,7 +187,7 @@ export interface ChatHandlers {
 /** Streams a reply over server-sent events. Abort the signal to stop generation. */
 export async function streamChat(
   c: Connection,
-  body: { message: string; conversation_id?: string | null },
+  body: { message: string; conversation_id?: string | null; voice?: boolean },
   signal: AbortSignal,
   on: ChatHandlers,
 ): Promise<void> {

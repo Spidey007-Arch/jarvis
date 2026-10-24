@@ -107,6 +107,15 @@ class ConfirmIn(BaseModel):
 class ChatIn(BaseModel):
     message: str = Field(min_length=1, max_length=20000)
     conversation_id: str | None = None
+    voice: bool = False  # spoken aloud; the reply will be read out
+
+
+class VoiceIn(BaseModel):
+    enabled: bool
+
+
+class SpeakIn(BaseModel):
+    text: str = Field(min_length=1, max_length=4000)
 
 
 class ConversationPatch(BaseModel):
@@ -372,6 +381,40 @@ def build_router(svc: Services, require_auth: Callable[..., None]) -> APIRouter:
         except Exception:  # noqa: BLE001 - extraction must never break chat; the failure is logged
             log.exception("memory extraction failed")
 
+    @r.get("/voice/events")
+    async def voice_events(after: int = 0) -> list[dict[str, Any]]:
+        return await svc.bridge.wait_voice(after)
+
+    @r.get("/voice")
+    async def voice_status() -> dict[str, Any]:
+        try:
+            return await svc.bridge.call("voice_status", timeout=20)
+        except (AgentUnavailable, AgentError) as e:
+            raise HTTPException(status_code=503, detail=str(e)) from e
+
+    @r.post("/voice")
+    async def voice_toggle(body: VoiceIn) -> dict[str, Any]:
+        try:
+            state = await svc.bridge.call("voice_set", {"enabled": body.enabled}, timeout=30)
+        except (AgentUnavailable, AgentError) as e:
+            raise HTTPException(status_code=503, detail=str(e)) from e
+        svc.settings.update_profile({"voice_enabled": bool(state.get("enabled"))})
+        return state
+
+    @r.post("/voice/speak")
+    async def voice_speak(body: SpeakIn) -> dict[str, Any]:
+        try:
+            return await svc.bridge.call("speak", {"text": body.text}, timeout=120)
+        except (AgentUnavailable, AgentError) as e:
+            raise HTTPException(status_code=503, detail=str(e)) from e
+
+    @r.post("/voice/stop")
+    async def voice_stop() -> dict[str, Any]:
+        try:
+            return await svc.bridge.call("stop_speaking", timeout=10)
+        except (AgentUnavailable, AgentError) as e:
+            raise HTTPException(status_code=503, detail=str(e)) from e
+
     @r.get("/quota")
     async def quota() -> dict[str, Any]:
         """Today's free-tier usage per model as JARVIS counted it (no provider reports this itself)."""
@@ -425,6 +468,7 @@ def build_router(svc: Services, require_auth: Callable[..., None]) -> APIRouter:
                 svc.memory.touch([m["id"] for m in core + relevant])
                 yield _sse("memory", {"core": len(core), "relevant": len(relevant)})
                 context = _situation(conv_id)
+                context["voice"] = body.voice
                 system = build_system_prompt(svc.settings.public(), core, relevant, tools_enabled=True, context=context)
                 history = [(m["role"], m["content"]) for m in prior] + [("user", text)]
 

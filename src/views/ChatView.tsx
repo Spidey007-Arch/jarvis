@@ -1,5 +1,5 @@
 import { KeyboardEvent, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { ActionEvent, Message, answerConfirmation, getMessages, streamChat } from "../api";
+import { ActionEvent, Message, answerConfirmation, forSpeech, getMessages, speak, streamChat } from "../api";
 import { Activity, emitPulse, emitSend } from "../fx/activity";
 import type { Connection } from "../shell";
 
@@ -103,10 +103,10 @@ export default function ChatView({
     if (!streaming) onActivity(input.trim() ? "typing" : "idle");
   }, [input, streaming, onActivity]);
 
-  const send = async () => {
-    const text = input.trim();
+  const send = async (spoken?: string) => {
+    const text = (spoken ?? input).trim();
     if (!conn || !text || streaming) return;
-    setInput("");
+    if (spoken === undefined) setInput("");
     setNotice(null);
     emitSend();
     onActivity("thinking");
@@ -117,6 +117,7 @@ export default function ChatView({
     const ctrl = new AbortController();
     abort.current = ctrl;
     let failed = false;
+    let full = "";
     // Replies are revealed word by word at a natural pace; the orb pulses with each word.
     let buffer = "";
     let timer: number | undefined;
@@ -139,7 +140,7 @@ export default function ChatView({
       setLines((l) => l.map((x) => (x.id === tempReply ? { ...x, content: x.content + piece } : x)));
     };
     try {
-      await streamChat(conn, { message: text, conversation_id: conversationId }, ctrl.signal, {
+      await streamChat(conn, { message: text, conversation_id: conversationId, voice: spoken !== undefined }, ctrl.signal, {
         meta: (d) => {
           if (d.conversation_id !== ownConversation.current) {
             ownConversation.current = d.conversation_id;
@@ -148,6 +149,7 @@ export default function ChatView({
         },
         notice: (d) => setNotice({ tone: "warn", text: d.message }),
         delta: (d) => {
+          full += d.text;
           buffer += d.text;
           if (timer === undefined) timer = window.setInterval(pump, 35);
         },
@@ -187,9 +189,22 @@ export default function ChatView({
       abort.current = null;
       onActivity(failed ? "error" : "idle");
       onConversation(ownConversation.current, true);
+      // Spoken to, so answer out loud.
+      if (spoken !== undefined && !failed && !ctrl.signal.aborted && full.trim()) {
+        speak(conn, forSpeech(full)).catch((e) => setNotice({ tone: "warn", text: `Could not speak the reply: ${(e as Error).message}` }));
+      }
       box.current?.focus();
     }
   };
+
+  // Words heard after the wake word arrive as a window event (see VoiceLink in App).
+  const sendRef = useRef(send);
+  sendRef.current = send;
+  useEffect(() => {
+    const onVoice = (e: Event) => sendRef.current((e as CustomEvent<string>).detail);
+    window.addEventListener("jarvis:voice-text", onVoice);
+    return () => window.removeEventListener("jarvis:voice-text", onVoice);
+  }, []);
 
   const onKey = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey) {
@@ -257,7 +272,7 @@ export default function ChatView({
               <svg viewBox="0 0 24 24"><rect x="7" y="7" width="10" height="10" rx="2" /></svg>
             </button>
           ) : (
-            <button className="send" disabled={!configured || !input.trim()} onClick={send} aria-label="Send" title="Send (Enter)">
+            <button className="send" disabled={!configured || !input.trim()} onClick={() => send()} aria-label="Send" title="Send (Enter)">
               <svg viewBox="0 0 24 24"><path d="M4 12h13M12 5l7 7-7 7" /></svg>
             </button>
           )}

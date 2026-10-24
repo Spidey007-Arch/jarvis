@@ -6,8 +6,8 @@ const COILS = 10;
 const TICKS = 60;
 
 // How lit the coils are, and how fast the chase light runs around them (deg/s), per activity.
-const LIGHT: Record<Activity, number> = { idle: 0.28, typing: 0.4, thinking: 0.75, speaking: 0.6, error: 0.12, offline: 0.05 };
-const CHASE: Record<Activity, number> = { idle: 18, typing: 30, thinking: 220, speaking: 90, error: 6, offline: 0 };
+const LIGHT: Record<Activity, number> = { idle: 0.28, typing: 0.4, listening: 0.95, thinking: 0.75, speaking: 0.6, error: 0.12, offline: 0.05 };
+const CHASE: Record<Activity, number> = { idle: 18, typing: 30, listening: 60, thinking: 220, speaking: 90, error: 6, offline: 0 };
 
 /** Equilateral triangle centred on the reactor, pointing down like the Mark VI chest piece. */
 function triangle(r: number): string {

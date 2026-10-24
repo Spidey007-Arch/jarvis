@@ -189,6 +189,15 @@ def create_app(port: int, token: str | None = None) -> FastAPI:
         result = await bridge.call("ping", timeout=5)
         return {"ok": True, "round_trip_ms": round((time.perf_counter() - t0) * 1000, 1), "agent": result}
 
+    async def _restore_voice() -> None:
+        """A restarted agent forgets that the wake word was on; turn it back on."""
+        await asyncio.sleep(1.0)
+        try:
+            state = await bridge.call("voice_set", {"enabled": True}, timeout=30)
+            log.info("voice restored", extra={"fields": {"enabled": state.get("enabled"), "missing": state.get("missing")}})
+        except Exception as e:  # noqa: BLE001
+            log.warning("could not restore voice: %s", e)
+
     @app.websocket("/ws/agent")
     async def agent_socket(ws: WebSocket) -> None:
         supplied = (ws.headers.get("authorization") or "").removeprefix("Bearer ").strip()
@@ -212,6 +221,8 @@ def create_app(port: int, token: str | None = None) -> FastAPI:
             except Exception:  # noqa: BLE001 - old socket may already be dead
                 pass
         log.info("agent connected", extra={"fields": {"agent": bridge.info}})
+        if settings.get("voice_enabled"):
+            asyncio.create_task(_restore_voice())
         try:
             while True:
                 msg = await asyncio.wait_for(ws.receive_json(), timeout=HEARTBEAT_TIMEOUT_S)
@@ -220,6 +231,8 @@ def create_app(port: int, token: str | None = None) -> FastAPI:
                     bridge.heartbeat(msg.get("stats"))
                 elif kind == "result":
                     bridge.resolve(msg)
+                elif kind == "voice":
+                    bridge.voice_event(msg)
         except asyncio.TimeoutError:
             log.warning("agent heartbeat timed out; dropping connection")
         except WebSocketDisconnect:
