@@ -47,6 +47,20 @@ TOOLS: list[ToolSpec] = [
              obj({"query": S, "engine": S, "browser": S}, ["query"]), agent_action="web_search", label="Searching for {query}"),
     ToolSpec("web_research", "Search the web yourself and read the top results to answer a factual or current-events question directly, with sources. Use this instead of web_search when the user wants an answer, not a browser tab.",
              obj({"query": S}, ["query"]), timeout=60, label="Researching {query}"),
+    # Shopping and food ordering run in JARVIS's own browser window (its own profile; the user signs in there once).
+    ToolSpec("web_open", "Open a page in JARVIS's shopping browser window, e.g. a store's search URL: https://www.amazon.in/s?k=..., "
+             "https://www.flipkart.com/search?q=..., https://www.swiggy.com/search?query=..., https://www.zomato.com, https://www.dominos.co.in. "
+             "Use this (not open_url) when the user wants something bought or ordered.",
+             obj({"url": S}, ["url"]), agent_action="web_open", timeout=45, label="Opening {url}"),
+    ToolSpec("web_read", "Read the shopping window's current page: title, some text, and numbered controls (links, buttons, inputs). "
+             "Pass find to list only controls whose label contains it (e.g. 'add to cart'); offset pages through more controls.",
+             obj({"find": S, "offset": I}), agent_action="web_read", timeout=30, label="Reading the page"),
+    ToolSpec("web_click", "Click control n from the last web_read (numbers change after every read). Paying or placing the order is "
+             "refused by design: stop at the cart or checkout and tell the user to review it and pay themselves.",
+             obj({"n": I}, ["n"]), agent_action="web_click", timeout=30, label="Clicking on the page"),
+    ToolSpec("web_type", "Type into input n from the last web_read, e.g. a search box or a delivery address field; submit=true presses "
+             "Enter. Password, card, OTP and UPI fields are refused by design.",
+             obj({"n": I, "text": S, "submit": B}, ["n", "text"]), agent_action="web_type", timeout=30, label="Typing on the page"),
     ToolSpec("volume", "Get or change the system volume. action: get, set (with level 0-100), up, down (step default 10), mute, unmute.",
              obj({"action": S, "level": I, "step": I}, ["action"]), agent_action="volume", label="Adjusting volume"),
     ToolSpec("media", "Control whatever media is playing. action: play_pause, next, previous, stop.",
@@ -86,9 +100,9 @@ TOOLS: list[ToolSpec] = [
 ]
 
 # Repeating these is normal (another key press, the next track), never a loop.
-STEPWISE_TOOLS = frozenset({"press_keys", "type_text", "volume", "media", "brightness"})
+STEPWISE_TOOLS = frozenset({"press_keys", "type_text", "volume", "media", "brightness", "web_click", "web_type"})
 # Read-only looks whose answer can change after other actions.
-OBSERVE_TOOLS = frozenset({"look_at_screen", "system_status", "clipboard_get", "list_folder", "find_files", "list_reminders"})
+OBSERVE_TOOLS = frozenset({"look_at_screen", "system_status", "clipboard_get", "list_folder", "find_files", "list_reminders", "web_read"})
 
 BY_NAME = {t.name: t for t in TOOLS}
 

@@ -23,7 +23,7 @@ from typing import Any, Callable
 
 import psutil
 
-from . import __version__, win
+from . import __version__, webdrive, win
 
 
 class ActionError(Exception):
@@ -44,7 +44,7 @@ def run(name: str, args: dict[str, Any]) -> Any:
         raise ActionError(f"Unknown action '{name}'.")
     try:
         return fn(args)
-    except win.WinError as e:
+    except (win.WinError, webdrive.WebError) as e:
         raise ActionError(str(e)) from e
     except subprocess.TimeoutExpired as e:
         raise ActionError(f"Windows did not respond in time ({e.timeout:.0f}s).") from e
@@ -270,6 +270,39 @@ def web_search(args: dict[str, Any]) -> dict[str, Any]:
     url = _SEARCH[engine].format(urllib.parse.quote_plus(query))
     used = _open_url(url, _str(args, "browser", False))
     return {"searched": query, "engine": engine, "url": url, "in": used}
+
+
+# ======================= shopping browser =======================
+# Paying stays with the user: webdrive refuses pay/place-order controls and secret fields in code.
+
+def _num(args: dict[str, Any], key: str) -> int:
+    try:
+        return int(args.get(key))
+    except (TypeError, ValueError) as e:
+        raise ActionError(f"'{key}' must be a control number from web_read.") from e
+
+
+@action
+def web_open(args: dict[str, Any]) -> dict[str, Any]:
+    url = _str(args, "url")
+    if not re.match(r"^https?://", url, re.I):
+        url = "https://" + url
+    return webdrive.open_page(url)
+
+
+@action
+def web_read(args: dict[str, Any]) -> dict[str, Any]:
+    return webdrive.read_page(_str(args, "find", False), int(args.get("offset") or 0))
+
+
+@action
+def web_click(args: dict[str, Any]) -> dict[str, Any]:
+    return webdrive.click(_num(args, "n"))
+
+
+@action
+def web_type(args: dict[str, Any]) -> dict[str, Any]:
+    return webdrive.type_into(_num(args, "n"), _str(args, "text"), bool(args.get("submit")))
 
 
 # ======================= audio, media, display =======================
