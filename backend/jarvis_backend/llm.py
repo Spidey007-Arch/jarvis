@@ -10,7 +10,7 @@ import time
 from typing import Any, AsyncIterator, Awaitable, Callable, TypeVar
 
 from .providers import PRESETS, Provider, ProviderError, make_provider, provider_class
-from .providers.base import NETWORK_ERROR, Step, ToolCall, tools_unsupported
+from .providers.base import NETWORK_ERROR, NO_REPLY, Step, ToolCall, tools_unsupported
 from .settings import SettingsStore
 
 T = TypeVar("T")
@@ -39,7 +39,7 @@ async def _timed(aw: Awaitable[T], seconds: float = FIRST_RESPONSE_TIMEOUT_S) ->
     try:
         return await asyncio.wait_for(aw, seconds)
     except asyncio.TimeoutError as e:
-        raise ProviderError(f"No response within {seconds:.0f}s", 504) from e
+        raise ProviderError(f"no reply within {seconds:.0f}s", NO_REPLY) from e
 
 
 def describe(e: ProviderError, provider: str, model: str | None) -> LLMError:
@@ -50,6 +50,8 @@ def describe(e: ProviderError, provider: str, model: str | None) -> LLMError:
         return LLMError(f"{where}: {e}{wait}")
     if e.status == NETWORK_ERROR:
         return LLMError(f"{where}: the connection dropped before an answer arrived ({e}). Please try again; your internet connection may be unstable.")
+    if e.status == NO_REPLY:
+        return LLMError(f"{where} sent {e}, so I stopped waiting. Your internet connection or the model is slow right now; try again in a moment.")
     if e.status in (500, 502, 503, 504, 529):
         return LLMError(f"{where} is overloaded right now (error {e.status}). Try again in a moment.")
     if e.status == 401:
@@ -65,6 +67,7 @@ class LLM:
         self._provider: Provider | None = None
         self._signature: tuple[str, str, str] | None = None
         self._models_cache: list[dict[str, Any]] | None = None
+        self._models_retry_at = 0.0
         self._cooldown: dict[str, float] = {}
         self._failures: dict[str, int] = {}
 
@@ -89,6 +92,7 @@ class LLM:
                 raise LLMNotConfigured(str(e)) from e
             self._signature = sig
             self._models_cache = None
+            self._models_retry_at = 0.0
             self._cooldown.clear()
             if old is not None:
                 try:
@@ -149,11 +153,13 @@ class LLM:
         return {"chat_model": cls.pick_chat(models), "embed_model": cls.pick_embed(models) if PRESETS[provider_id]["embeddings"] else ""}
 
     async def _models(self) -> list[dict[str, Any]]:
-        if self._models_cache is None:
+        # A failed fetch (e.g. the gateway was still starting) is retried, not remembered: the list
+        # is what the backup models come from, and without it every reply rides on one model.
+        if self._models_cache is None and time.monotonic() >= self._models_retry_at:
             try:
                 await self.list_models()
             except LLMError:
-                self._models_cache = []
+                self._models_retry_at = time.monotonic() + 30.0
         return self._models_cache or []
 
     # ---------- fallback ----------

@@ -414,5 +414,42 @@ class ToolResultRoleTests(unittest.TestCase):
         self.assertEqual([p.function_response.response for p in parts], [r for _, _, r in self.CALLS])
 
 
+class WaitingAndModelListTests(unittest.TestCase):
+    def test_own_timeout_is_not_called_overloaded(self) -> None:
+        from jarvis_backend.llm import _timed, describe
+        from jarvis_backend.providers.base import NO_REPLY, ProviderError
+
+        with self.assertRaises(ProviderError) as cm:
+            asyncio.run(_timed(asyncio.sleep(1), 0.01))
+        self.assertEqual(cm.exception.status, NO_REPLY)
+        self.assertTrue(cm.exception.transient, "a slow reply must still fall back to the next model")
+        text = str(describe(cm.exception, "omniroute", "gemini/gemini-3.8-flash"))
+        self.assertIn("sent no reply within 0s", text)
+        self.assertNotIn("overloaded", text)
+        self.assertNotIn("504", text)
+
+    def test_failed_model_list_is_retried_not_remembered(self) -> None:
+        from jarvis_backend.llm import LLM, LLMError
+
+        llm = object.__new__(LLM)
+        llm._models_cache, llm._models_retry_at = None, 0.0
+        models = [{"name": "gemini/gemini-3.5-flash-lite", "kind": "chat"}]
+        calls = {"n": 0}
+
+        async def list_models():
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise LLMError("Could not reach http://127.0.0.1:20128/v1")  # gateway still starting
+            llm._models_cache = models
+            return models
+
+        llm.list_models = list_models
+        self.assertEqual(asyncio.run(llm._models()), [])
+        self.assertEqual(asyncio.run(llm._models()), [], "no refetch storm while the gateway is down")
+        self.assertEqual(calls["n"], 1)
+        llm._models_retry_at = 0.0  # 30 seconds later
+        self.assertEqual(asyncio.run(llm._models()), models)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

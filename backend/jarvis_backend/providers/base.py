@@ -9,7 +9,8 @@ from dataclasses import dataclass, field
 from typing import Any, AsyncIterator
 
 NETWORK_ERROR = 599  # our own code: the connection dropped or could not be made (no HTTP status)
-TRANSIENT_STATUS = {408, 409, 429, 500, 502, 503, 504, 529, NETWORK_ERROR}
+NO_REPLY = 598  # our own code: we stopped waiting; nobody sent an error, so it is not "overloaded"
+TRANSIENT_STATUS = {408, 409, 429, 500, 502, 503, 504, 529, NETWORK_ERROR, NO_REPLY}
 
 
 def _network_exceptions() -> tuple[type[BaseException], ...]:
