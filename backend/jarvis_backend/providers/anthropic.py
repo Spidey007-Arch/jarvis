@@ -117,6 +117,8 @@ class AnthropicProvider(Provider):
 
 
 class _AnthropicTools(ToolSession):
+    portable = True
+
     def __init__(self, provider: AnthropicProvider, system: str, history: list[tuple[str, str]], tools: list[dict[str, Any]]) -> None:
         self.p = provider
         self.system = system

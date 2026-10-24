@@ -219,6 +219,8 @@ class OpenAICompatProvider(Provider):
 
 
 class _OpenAITools(ToolSession):
+    portable = True
+
     def __init__(self, provider: OpenAICompatProvider, system: str, history: list[tuple[str, str]], tools: list[dict[str, Any]]) -> None:
         self.p = provider
         self.messages: list[dict[str, Any]] = provider._messages(system, history)

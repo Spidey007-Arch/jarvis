@@ -451,5 +451,67 @@ class WaitingAndModelListTests(unittest.TestCase):
         self.assertEqual(asyncio.run(llm._models()), models)
 
 
+class MidTaskFallbackTests(unittest.TestCase):
+    """Replays 2026-10-24: step 1 of a task succeeded, then the model's daily quota ran out (429)."""
+
+    def run_task(self, portable: bool):
+        from jarvis_backend.llm import LLM
+        from jarvis_backend.providers.base import ProviderError, Step, ToolCall, ToolSession
+
+        seen: list[str] = []
+
+        class Session(ToolSession):
+            def __init__(self) -> None:
+                self.portable = portable
+                self.rounds = 0
+
+            async def step(self, model: str) -> Step:
+                seen.append(model)
+                if self.rounds == 0:
+                    self.rounds = 1
+                    return Step(text="", calls=[ToolCall(id="c1", name="system_status", args={})])
+                if model == "gemini/gemini-3.6-flash":
+                    raise ProviderError("You exceeded your current quota", 429)
+                return Step(text="CPU is at 62%, sir.", calls=[])
+
+            def add_results(self, results) -> None:
+                pass
+
+        class FakeLLM(LLM):
+            chat_model = "gemini/gemini-3.6-flash"
+            provider_id = "omniroute"
+
+        llm = object.__new__(FakeLLM)
+        llm._cooldown, llm._failures = {}, {}
+        session = Session()
+        llm.provider = lambda: type("P", (), {"tool_session": lambda *a: session})()
+
+        async def candidates():
+            return llm._available(["gemini/gemini-3.6-flash", "gemini/gemini-3.5-flash-lite"])
+
+        llm._chat_candidates = candidates
+        notices: list[str] = []
+
+        async def execute(call):
+            return {"ok": True, "result": {"cpu": 62}}
+
+        result = asyncio.run(llm.run_agent("sys", [("user", "why is my CPU high?")], [], execute, notices.append))
+        return result, seen, notices, llm
+
+    def test_portable_task_finishes_on_a_backup_model(self) -> None:
+        result, seen, notices, llm = self.run_task(portable=True)
+        self.assertEqual(result, "CPU is at 62%, sir.")
+        # the quota error is not retried on the same model; the backup takes over at once
+        self.assertEqual(seen, ["gemini/gemini-3.6-flash", "gemini/gemini-3.6-flash", "gemini/gemini-3.5-flash-lite"])
+        self.assertTrue(any("finished it" in n for n in notices))
+        self.assertIn("gemini/gemini-3.6-flash", llm._cooldown)
+
+    def test_non_portable_task_still_stops_cleanly(self) -> None:
+        from jarvis_backend.llm import AgentIncomplete
+
+        with self.assertRaises(AgentIncomplete):
+            self.run_task(portable=False)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

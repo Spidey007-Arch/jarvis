@@ -94,6 +94,10 @@ class ToolSession(ABC):
     """One multi-step tool-using exchange. Keeps the provider's native message history,
     so provider-specific details (tool ids, thought signatures) survive between steps."""
 
+    # Whether a half-finished exchange may continue on a different model. False where the history
+    # carries model-bound state (Gemini's thought signatures); plain message lists are portable.
+    portable = False
+
     @abstractmethod
     async def step(self, model: str) -> Step: ...
 

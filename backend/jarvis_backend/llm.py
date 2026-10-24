@@ -293,8 +293,8 @@ class LLM:
     ) -> str:
         """Let the model call tools until it produces a final answer. Returns that answer.
 
-        Falls back to another model only on the first step (before any tool ran), because
-        some providers tie in-progress tool state to the model that produced it."""
+        The first step may fall back to any available model. Later steps (after tools ran) can
+        only move to another model when the session is portable; see _next_step."""
         p = self.provider()
         preferred = self.chat_model
         session = p.tool_session(system, history, tools)
@@ -335,16 +335,41 @@ class LLM:
                 return step.text
             results = [(call, await execute(call)) for call in step.calls]
             session.add_results(results)
-            for attempt in range(2):
-                try:
-                    step = await _timed(session.step(model), 60.0)
-                    break
-                except ProviderError as e:
-                    if attempt == 1 or not e.transient:
-                        # Actions already ran; the caller reports them even though the model can't finish.
-                        raise AgentIncomplete(str(describe(e, self.provider_id, model))) from e
-                    await asyncio.sleep(min(e.retry_after or 3.0, 20.0))
+            step, model = await self._next_step(session, model, on_notice)
         return step.text or "I stopped after several steps without finishing; tell me if you want me to keep going."
+
+    async def _next_step(self, session: Any, model: str, on_notice: Callable[[str], None] | None) -> tuple[Step, str]:
+        """One more step of a task whose tools already ran. A busy model gets one retry; a used-up
+        quota does not come back in seconds, so it gets none. Then, if the session can move between
+        models, a backup model finishes the task instead of the whole reply failing."""
+        try:
+            return await _timed(session.step(model), 60.0), model
+        except ProviderError as e:
+            err = e
+        if err.transient and err.status != 429:
+            await asyncio.sleep(min(err.retry_after or 3.0, 20.0))
+            try:
+                return await _timed(session.step(model), 60.0), model
+            except ProviderError as e:
+                err = e
+        if err.transient:
+            self._cool(model, err)
+            if session.portable:
+                backups = [m for m in await self._chat_candidates() if m != model][:3]
+                for other in backups:
+                    try:
+                        step = await _timed(session.step(other), 60.0)
+                    except ProviderError as e:
+                        if not e.transient:
+                            break
+                        self._cool(other, e)
+                        continue
+                    self._ok(other)
+                    if on_notice:
+                        on_notice(f"{model} stopped answering mid-task; {other} finished it.")
+                    return step, other
+        # Actions already ran; the caller reports them even though the model can't finish.
+        raise AgentIncomplete(str(describe(err, self.provider_id, model))) from err
 
     async def describe_image(self, prompt: str, image: bytes) -> str:
         p = self.provider()
