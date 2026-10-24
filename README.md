@@ -38,11 +38,24 @@ If a model is overloaded or rate-limited, JARVIS automatically tries another mod
 |---|---|
 | 1. Startup & reliability | Done |
 | 2. Memory + multi-provider chat | Done |
-| 3. Desktop automation: apps, web search & research, system status, volume, media, brightness, screen reading, clipboard, keyboard, files, power, settings, reminders | Done |
+| 3. Desktop automation: apps, web search & research, system status, volume, media, brightness, screen reading, clipboard, keyboard, files, power, settings, reminders, shopping & food carts (you pay) | Done |
 | 4. Persona: Section 2 behaviours, situational awareness, proactive alerts, scored evaluation | Done |
-| 5. Voice (wake word, speech-to-text, text-to-speech, all free and local) | Planned |
+| 5. Voice (wake word, speech-to-text, text-to-speech, all free and local) | Done |
 | 6. UI polish (markdown, code highlighting, regenerate/edit) | Partial |
 | 7. Packaging (installer, portable, standalone .exe) | Planned |
+
+## Voice setup
+
+Voice runs entirely on your PC. Download these free files into `%LOCALAPPDATA%\JARVISoice\downloads`, then turn on **Settings → Voice**:
+
+| File | Source |
+|---|---|
+| `whisper-bin-x64.zip` | [whisper.cpp release b5130](https://github.com/ggml-org/whisper.cpp/releases/tag/b5130) |
+| `ggml-base.en-q5_1.bin` | [whisper.cpp models](https://huggingface.co/ggerganov/whisper.cpp) |
+| `piper_windows_amd64.zip` | [Piper 2023.11.14-2](https://github.com/rhasspy/piper/releases/tag/2023.11.14-2) |
+| `en_GB-alan-medium.onnx` and `.onnx.json` | [Piper voices](https://huggingface.co/rhasspy/piper-voices/tree/main/en/en_GB/alan/medium) |
+
+Say "JARVIS" (or "Hey JARVIS"), then your request. Saying it again while JARVIS talks stops it. The wake word uses Windows' built-in offline recognizer, so no extra download is needed for it.
 
 ## Run from source
 
