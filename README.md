@@ -46,7 +46,7 @@ If a model is overloaded or rate-limited, JARVIS automatically tries another mod
 
 ## Voice setup
 
-Voice runs entirely on your PC. Download these free files into `%LOCALAPPDATA%\JARVISoice\downloads`, then turn on **Settings → Voice**:
+Voice runs entirely on your PC. Download these free files into `%LOCALAPPDATA%\JARVIS\voice\downloads`, then turn on **Settings → Voice**:
 
 | File | Source |
 |---|---|
