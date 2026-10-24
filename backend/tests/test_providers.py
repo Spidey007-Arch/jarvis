@@ -482,7 +482,7 @@ class MidTaskFallbackTests(unittest.TestCase):
             provider_id = "omniroute"
 
         llm = object.__new__(FakeLLM)
-        llm._cooldown, llm._failures = {}, {}
+        llm._cooldown, llm._failures, llm.usage = {}, {}, None
         session = Session()
         llm.provider = lambda: type("P", (), {"tool_session": lambda *a: session})()
 

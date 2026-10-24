@@ -2,35 +2,52 @@ import { useEffect, useRef } from "react";
 import type { Activity } from "./fx/activity";
 import { frameDue } from "./fx/pacer";
 
-// radius, stroke width, dash pattern, opacity, base speed (deg/s; negative = counter-clockwise)
-const RINGS: [number, number, string, number, number][] = [
-  [190, 6, "1.5 7", 0.55, 4],
-  [164, 3, "70 18 6 18", 0.8, -9],
-  [140, 16, "34 9", 0.35, 13],
-  [108, 2, "3 5", 0.8, -4],
-  [86, 12, "110 24", 0.65, 26],
-  [52, 5, "45 14", 0.9, -15],
-];
+const COILS = 10;
+const TICKS = 60;
 
-const SPEED: Record<Activity, number> = { idle: 1, typing: 1.8, thinking: 5, speaking: 2.6, error: 0.25, offline: 0 };
+// How lit the coils are, and how fast the chase light runs around them (deg/s), per activity.
+const LIGHT: Record<Activity, number> = { idle: 0.28, typing: 0.4, thinking: 0.75, speaking: 0.6, error: 0.12, offline: 0.05 };
+const CHASE: Record<Activity, number> = { idle: 18, typing: 30, thinking: 220, speaking: 90, error: 6, offline: 0 };
 
-/** The core. Rings are driven frame by frame so speed changes are smooth; it leans toward
- *  the cursor, swells with each streamed chunk and fires a shockwave when a message is sent.
- *  Every moving part is its own layer moved by CSS transform/opacity, so the glow filter is
- *  painted once instead of on every frame. */
+/** Equilateral triangle centred on the reactor, pointing down like the Mark VI chest piece. */
+function triangle(r: number): string {
+  return [90, 210, 330]
+    .map((deg) => {
+      const a = (deg * Math.PI) / 180;
+      return `${(200 + r * Math.cos(a)).toFixed(2)},${(200 + r * Math.sin(a)).toFixed(2)}`;
+    })
+    .join(" ");
+}
+
+/** A ring sector from r0 to r1 spanning `span` degrees, starting at 12 o'clock. */
+function sector(r0: number, r1: number, span: number): string {
+  const p = (r: number, deg: number) => {
+    const a = ((deg - 90) * Math.PI) / 180;
+    return `${(200 + r * Math.cos(a)).toFixed(2)} ${(200 + r * Math.sin(a)).toFixed(2)}`;
+  };
+  return `M ${p(r1, 0)} A ${r1} ${r1} 0 0 1 ${p(r1, span)} L ${p(r0, span)} A ${r0} ${r0} 0 0 0 ${p(r0, 0)} Z`;
+}
+
+/** The arc reactor. Every moving part is its own layer moved by CSS transform/opacity, so the glow
+ *  filters are painted once. It breathes when idle, a light chases round the coils while JARVIS
+ *  thinks, it surges with each streamed chunk, leans toward the cursor and fires a shockwave on send. */
 export default function Reactor({ activity, label }: { activity: Activity; label: string }) {
   const wrap = useRef<HTMLDivElement>(null);
-  const rings = useRef<(SVGSVGElement | null)[]>([]);
-  const core = useRef<SVGSVGElement>(null);
   const halo = useRef<SVGSVGElement>(null);
+  const coilsLit = useRef<SVGSVGElement>(null);
+  const chase = useRef<SVGSVGElement>(null);
+  const ticks = useRef<SVGSVGElement>(null);
+  const core = useRef<SVGSVGElement>(null);
   const waves = useRef<SVGGElement>(null);
   const activityRef = useRef(activity);
   activityRef.current = activity;
 
   useEffect(() => {
     const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    const angles = RINGS.map(() => Math.random() * 360);
-    let speed = 1;
+    let chaseAngle = 0;
+    let tickAngle = 0;
+    let chaseSpeed = CHASE.idle;
+    let light = LIGHT.idle;
     let energy = 0;
     let tiltX = 0;
     let tiltY = 0;
@@ -48,17 +65,23 @@ export default function Reactor({ activity, label }: { activity: Activity; label
       const dt = Math.min((now - last) / 1000, 0.05);
       last = now;
       const act = activityRef.current;
-      speed += (SPEED[act] - speed) * Math.min(dt * 2.5, 1);
-      energy = Math.max(0, energy - dt * 1.6);
-      RINGS.forEach((r, i) => {
-        angles[i] = (angles[i] + r[4] * speed * dt) % 360;
-        const el = rings.current[i];
-        if (el) el.style.transform = `rotate(${angles[i].toFixed(2)}deg)`;
-      });
-      const breathe = act === "thinking" ? Math.sin(now / 140) * 0.18 : Math.sin(now / 900) * 0.08;
-      const s = 1 + breathe + energy * 0.6;
-      if (core.current) core.current.style.transform = `scale(${s.toFixed(3)})`;
-      if (halo.current) halo.current.style.opacity = Math.min(1, 0.55 + energy * 0.45 + (act === "thinking" ? 0.2 : 0)).toFixed(2);
+      const k = Math.min(dt * 2.5, 1);
+      chaseSpeed += (CHASE[act] - chaseSpeed) * k;
+      light += (LIGHT[act] - light) * k;
+      energy = Math.max(0, energy - dt * 1.4);
+      chaseAngle = (chaseAngle + chaseSpeed * dt) % 360;
+      tickAngle = (tickAngle + (act === "thinking" ? 14 : 3) * dt) % 360;
+
+      const pulse = act === "thinking" ? Math.sin(now / 160) * 0.5 + 0.5 : Math.sin(now / 1100) * 0.5 + 0.5;
+      if (chase.current) {
+        chase.current.style.transform = `rotate(${chaseAngle.toFixed(2)}deg)`;
+        chase.current.style.opacity = Math.min(1, light * 1.25 + energy * 0.4).toFixed(2);
+      }
+      if (ticks.current) ticks.current.style.transform = `rotate(${(-tickAngle).toFixed(2)}deg)`;
+      if (coilsLit.current) coilsLit.current.style.opacity = Math.min(1, light * (0.75 + pulse * 0.35) + energy * 0.5).toFixed(2);
+      if (core.current) core.current.style.transform = `scale(${(1 + pulse * (act === "thinking" ? 0.12 : 0.05) + energy * 0.35).toFixed(3)})`;
+      if (halo.current) halo.current.style.opacity = Math.min(1, 0.45 + light * 0.5 + energy * 0.4).toFixed(2);
+
       tiltX += (targetX - tiltX) * Math.min(dt * 4, 1);
       tiltY += (targetY - tiltY) * Math.min(dt * 4, 1);
       if (wrap.current) {
@@ -68,11 +91,11 @@ export default function Reactor({ activity, label }: { activity: Activity; label
     };
 
     const onMove = (e: PointerEvent) => {
-      targetY = ((e.clientX / window.innerWidth) - 0.5) * 18;
-      targetX = -((e.clientY / window.innerHeight) - 0.5) * 18;
+      targetY = (e.clientX / window.innerWidth - 0.5) * 14;
+      targetX = -(e.clientY / window.innerHeight - 0.5) * 14;
     };
     const onPulse = () => {
-      energy = Math.min(1, energy + 0.35);
+      energy = Math.min(1, energy + 0.3);
     };
     const onSend = () => {
       energy = 1;
@@ -107,9 +130,17 @@ export default function Reactor({ activity, label }: { activity: Activity; label
     };
   }, []);
 
+  const coil = (i: number, lit: boolean) => (
+    <g key={i} transform={`rotate(${(i * 360) / COILS} 200 200)`}>
+      <rect x="183" y="42" width="34" height="56" rx="5" className={lit ? "coil-lit" : "coil"} />
+      {!lit &&
+        [0, 1, 2, 3, 4, 5, 6].map((w) => <line key={w} x1="186" x2="214" y1={49 + w * 7} y2={49 + w * 7} className="winding" />)}
+    </g>
+  );
+
   return (
-    <div ref={wrap} className={`reactor ${activity}`} role="img" aria-label={`JARVIS core: ${label}`}>
-      <svg ref={halo} className="layer" viewBox="0 0 400 400" style={{ opacity: 0.55 }}>
+    <div ref={wrap} className={`reactor ${activity}`} role="img" aria-label={`JARVIS arc reactor: ${label}`}>
+      <svg ref={halo} className="layer" viewBox="0 0 400 400" style={{ opacity: 0.6 }}>
         <defs>
           <filter id="glow" x="-30%" y="-30%" width="160%" height="160%">
             <feGaussianBlur stdDeviation="3.5" result="b" />
@@ -118,32 +149,95 @@ export default function Reactor({ activity, label }: { activity: Activity; label
               <feMergeNode in="SourceGraphic" />
             </feMerge>
           </filter>
+          <filter id="bloom" x="-50%" y="-50%" width="200%" height="200%">
+            <feGaussianBlur stdDeviation="9" />
+          </filter>
           <radialGradient id="halo" cx="50%" cy="50%" r="50%">
-            <stop offset="0%" stopColor="var(--core)" stopOpacity="0.32" />
-            <stop offset="60%" stopColor="var(--core)" stopOpacity="0.07" />
+            <stop offset="0%" stopColor="var(--core)" stopOpacity="0.38" />
+            <stop offset="55%" stopColor="var(--core)" stopOpacity="0.08" />
+            <stop offset="100%" stopColor="var(--core)" stopOpacity="0" />
+          </radialGradient>
+          <radialGradient id="hot" cx="50%" cy="50%" r="50%">
+            <stop offset="0%" stopColor="#ffffff" />
+            <stop offset="45%" stopColor="#e6fbff" />
+            <stop offset="75%" stopColor="var(--core)" />
+            <stop offset="100%" stopColor="var(--core)" stopOpacity="0" />
+          </radialGradient>
+          <linearGradient id="metal" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0%" stopColor="#3b4b55" />
+            <stop offset="50%" stopColor="#141f27" />
+            <stop offset="100%" stopColor="#2c3a44" />
+          </linearGradient>
+          <linearGradient id="copper" x1="0" y1="0" x2="1" y2="0">
+            <stop offset="0%" stopColor="#3d2a1c" />
+            <stop offset="50%" stopColor="#7a5233" />
+            <stop offset="100%" stopColor="#3d2a1c" />
+          </linearGradient>
+          <radialGradient id="sweep" cx="50%" cy="0%" r="100%">
+            <stop offset="0%" stopColor="#ffffff" stopOpacity="0.95" />
             <stop offset="100%" stopColor="var(--core)" stopOpacity="0" />
           </radialGradient>
         </defs>
         <circle cx="200" cy="200" r="198" fill="url(#halo)" />
       </svg>
+
+      {/* housing: metal ring, notches, outlines */}
       <svg className="layer" viewBox="0 0 400 400">
+        <circle cx="200" cy="200" r="182" fill="none" stroke="url(#metal)" strokeWidth="18" />
         <g filter="url(#glow)" fill="none" stroke="var(--core)">
-          <circle cx="200" cy="200" r="176" strokeWidth="1" opacity="0.5" />
-          <circle cx="200" cy="200" r="122" strokeWidth="1.5" opacity="0.6" />
-          <circle cx="200" cy="200" r="66" strokeWidth="1.5" opacity="0.8" />
-          <circle cx="200" cy="200" r="34" strokeWidth="2" opacity="0.9" />
+          <circle cx="200" cy="200" r="193" strokeWidth="1.2" opacity="0.55" />
+          <circle cx="200" cy="200" r="171" strokeWidth="1" opacity="0.4" />
+        </g>
+        {Array.from({ length: 12 }, (_, i) => (
+          <circle key={i} cx="200" cy="18" r="2.6" fill="#8aa3b0" opacity="0.8" transform={`rotate(${i * 30 + 15} 200 200)`} />
+        ))}
+        <circle cx="200" cy="200" r="104" fill="#071118" stroke="#24333d" strokeWidth="2" />
+      </svg>
+
+      {/* rotating instrument ticks */}
+      <svg ref={ticks} className="layer spin" viewBox="0 0 400 400">
+        {Array.from({ length: TICKS }, (_, i) => (
+          <line
+            key={i}
+            x1="200"
+            x2="200"
+            y1={i % 5 === 0 ? 2 : 4}
+            y2="9"
+            stroke="var(--core)"
+            strokeWidth={i % 5 === 0 ? 1.6 : 0.8}
+            opacity={i % 5 === 0 ? 0.8 : 0.4}
+            transform={`rotate(${(i * 360) / TICKS} 200 200)`}
+          />
+        ))}
+      </svg>
+
+      {/* copper coils with windings */}
+      <svg className="layer" viewBox="0 0 400 400">
+        {Array.from({ length: COILS }, (_, i) => coil(i, false))}
+      </svg>
+      <svg ref={coilsLit} className="layer spin" viewBox="0 0 400 400" style={{ opacity: 0.3 }}>
+        <g filter="url(#bloom)">{Array.from({ length: COILS }, (_, i) => coil(i, true))}</g>
+      </svg>
+      {/* the chase light that runs round the coils while JARVIS works */}
+      <svg ref={chase} className="layer spin" viewBox="0 0 400 400" style={{ opacity: 0.3 }}>
+        <path d={sector(104, 160, 48)} fill="url(#sweep)" filter="url(#bloom)" />
+      </svg>
+
+      {/* inner ring, plate and triangle */}
+      <svg className="layer" viewBox="0 0 400 400">
+        <g filter="url(#glow)" fill="none">
+          <circle cx="200" cy="200" r="98" stroke="var(--core)" strokeWidth="5" />
+          <circle cx="200" cy="200" r="90" stroke="#dff8ff" strokeWidth="1.2" opacity="0.8" />
+          <polygon points={triangle(74)} stroke="var(--core)" strokeWidth="7" strokeLinejoin="round" fill="color-mix(in srgb, var(--core) 12%, transparent)" />
+          <polygon points={triangle(60)} stroke="#e8fbff" strokeWidth="1.6" strokeLinejoin="round" opacity="0.85" />
         </g>
       </svg>
-      {RINGS.map(([r, w, dash, op], i) => (
-        <svg key={r} ref={(el) => (rings.current[i] = el)} className="layer spin" viewBox="0 0 400 400">
-          <circle filter="url(#glow)" fill="none" stroke="var(--core)" cx="200" cy="200" r={r} strokeWidth={w} strokeDasharray={dash} opacity={op} />
-        </svg>
-      ))}
       <svg className="layer" viewBox="0 0 400 400">
         <g ref={waves} filter="url(#glow)" />
       </svg>
       <svg ref={core} className="layer spin" viewBox="0 0 400 400">
-        <circle className="core" filter="url(#glow)" cx="200" cy="200" r="16" fill="var(--core)" />
+        <circle cx="200" cy="200" r="40" fill="url(#hot)" filter="url(#bloom)" opacity="0.9" />
+        <circle cx="200" cy="200" r="22" fill="url(#hot)" />
       </svg>
     </div>
   );

@@ -222,10 +222,9 @@ export default function ChatView({
             <div className="text">
               {m.content}
               {m.pending && !m.content && (
-                <span className="thinking">
-                  <i />
-                  <i />
-                  <i />
+                <span className="thinking" role="status" aria-label="JARVIS is thinking">
+                  <span className="thinking-text">Thinking</span>
+                  <span className="thinking-bar" />
                 </span>
               )}
               {m.pending && m.content && <span className="cursor" />}

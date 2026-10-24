@@ -372,6 +372,11 @@ def build_router(svc: Services, require_auth: Callable[..., None]) -> APIRouter:
         except Exception:  # noqa: BLE001 - extraction must never break chat; the failure is logged
             log.exception("memory extraction failed")
 
+    @r.get("/quota")
+    async def quota() -> dict[str, Any]:
+        """Today's free-tier usage per model as JARVIS counted it (no provider reports this itself)."""
+        return await svc.llm.quota_view()
+
     @r.post("/chat")
     async def chat(body: ChatIn, request: Request):
         text = body.message.strip()

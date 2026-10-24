@@ -22,6 +22,7 @@ from . import __version__
 from .api import Services, build_router
 from .bridge import AgentBridge, AgentError, AgentUnavailable, HEARTBEAT_TIMEOUT_S
 from .db import DB
+from .usage import QuotaTracker
 from .llm import LLM
 from .memory import MemoryStore
 from .monitor import Monitor
@@ -72,6 +73,8 @@ def create_app(port: int, token: str | None = None) -> FastAPI:
     settings = SettingsStore(data_dir() / "settings.dat")
     llm = LLM(settings)
     db = DB(data_dir() / "jarvis.db")
+    llm.usage = QuotaTracker(db)
+    llm.usage.prune()
     services = Services(settings=settings, llm=llm, db=db, memory=MemoryStore(db, llm), bridge=bridge, reminders=Reminders(db, bridge),
                         monitor=Monitor(bridge, settings))
 

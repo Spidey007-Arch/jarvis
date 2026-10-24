@@ -70,6 +70,23 @@ export interface Alert {
 
 export const getAlerts = (c: Connection, since: number) => call<Alert[]>(c, `/api/alerts?since=${since}`);
 
+export interface QuotaModel {
+  model: string;
+  used: number;
+  limit: number | null; // learned from the provider's own quota errors; null until one says
+  state: "ready" | "out";
+  reason: string | null;
+  until: number | null; // epoch seconds
+}
+export interface Quota {
+  provider: string;
+  provider_name: string;
+  day: string;
+  resets_at: number;
+  models: QuotaModel[];
+}
+export const getQuota = (c: Connection) => call<Quota>(c, "/api/quota");
+
 export const getModels = (c: Connection) => call<{ chat: ModelInfo[]; embed: ModelInfo[] }>(c, "/api/models");
 
 // ---------- conversations ----------

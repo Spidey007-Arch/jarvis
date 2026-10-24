@@ -6,12 +6,16 @@ candidate is tried immediately, and the user is told which model answered.
 from __future__ import annotations
 
 import asyncio
+import logging
 import time
 from typing import Any, AsyncIterator, Awaitable, Callable, TypeVar
 
 from .providers import PRESETS, Provider, ProviderError, make_provider, provider_class
 from .providers.base import NETWORK_ERROR, NO_REPLY, Step, ToolCall, tools_unsupported
 from .settings import SettingsStore
+from .usage import QuotaTracker
+
+log = logging.getLogger("jarvis.llm")
 
 T = TypeVar("T")
 _COOLDOWN_S = 120.0
@@ -70,6 +74,7 @@ class LLM:
         self._models_retry_at = 0.0
         self._cooldown: dict[str, float] = {}
         self._failures: dict[str, int] = {}
+        self.usage: QuotaTracker | None = None  # set by the app once the database is open
 
     # ---------- configuration ----------
 
@@ -182,9 +187,31 @@ class LLM:
             # A used-up daily quota will not come back in minutes, and asking again costs seconds per reply.
             backoff = _MAX_COOLDOWN_S
         self._cooldown[model] = time.monotonic() + max(e.retry_after or 0, backoff if not e.retry_after else 0, 5.0)
+        if e.status == 429 and self.usage:
+            try:
+                self.usage.rejected(model, str(e), e.retry_after)
+            except Exception:  # noqa: BLE001 - quota bookkeeping must never break a reply
+                log.exception("could not record a quota rejection")
 
     def _ok(self, model: str) -> None:
         self._failures.pop(model, None)
+        if self.usage:
+            try:
+                self.usage.record(model)
+            except Exception:  # noqa: BLE001
+                log.exception("could not record usage")
+
+    async def quota_view(self) -> dict[str, Any]:
+        """Today's per-model counts for the models JARVIS would use, plus any it used today."""
+        names: list[str] = []
+        try:
+            names = [self.chat_model] + self.provider().fallbacks(await self._models(), self.chat_model)
+        except LLMError:
+            pass
+        if self.embed_model:
+            names.append(self.embed_model)
+        snap = self.usage.snapshot(names) if self.usage else {"models": []}
+        return {**snap, "provider": self.provider_id, "provider_name": PRESETS.get(self.provider_id, {}).get("name", self.provider_id)}
 
     async def _chat_candidates(self) -> list[str]:
         primary = self.chat_model
@@ -273,6 +300,7 @@ class LLM:
         for attempt in range(3):
             try:
                 out = await p.embed(model, texts, task)
+                self._ok(model)
                 break
             except ProviderError as e:
                 if attempt == 2 or not e.transient:
@@ -343,13 +371,17 @@ class LLM:
         quota does not come back in seconds, so it gets none. Then, if the session can move between
         models, a backup model finishes the task instead of the whole reply failing."""
         try:
-            return await _timed(session.step(model), 60.0), model
+            step = await _timed(session.step(model), 60.0)
+            self._ok(model)
+            return step, model
         except ProviderError as e:
             err = e
         if err.transient and err.status != 429:
             await asyncio.sleep(min(err.retry_after or 3.0, 20.0))
             try:
-                return await _timed(session.step(model), 60.0), model
+                step = await _timed(session.step(model), 60.0)
+                self._ok(model)
+                return step, model
             except ProviderError as e:
                 err = e
         if err.transient:

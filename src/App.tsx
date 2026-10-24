@@ -1,10 +1,9 @@
 import { ReactNode, useCallback, useEffect, useState } from "react";
 import Reactor from "./Reactor";
-import Particles from "./fx/Particles";
 import type { Activity } from "./fx/activity";
 import { useTelemetry } from "./telemetry";
 import { Connection, Overall, ShellStatus, getConnection, getStatus, insideShell, onStatus } from "./shell";
-import { Alert, getAlerts, getSettings } from "./api";
+import { Alert, Quota, getAlerts, getQuota, getSettings } from "./api";
 import ChatView from "./views/ChatView";
 import HistoryPanel from "./views/HistoryPanel";
 import MemoryView from "./views/MemoryView";
@@ -68,6 +67,60 @@ function Gauge({ label, value }: { label: string; value: number | undefined }) {
   );
 }
 
+const clock = (epoch: number) => new Date(epoch * 1000).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+
+/** Today's free-tier usage as JARVIS counted it. Neither Google nor OmniRoute reports remaining
+ *  quota, so limits appear once a provider's own quota error has named them. */
+function QuotaStrip({ conn, activity }: { conn: Connection | null; activity: Activity }) {
+  const [q, setQ] = useState<Quota | null>(null);
+  const [open, setOpen] = useState(false);
+  const busy = activity === "thinking" || activity === "speaking";
+
+  useEffect(() => {
+    if (!conn) return;
+    let alive = true;
+    const load = () => getQuota(conn).then((v) => alive && setQ(v)).catch(() => {});
+    load();
+    const id = window.setInterval(load, busy ? 5000 : 30000);
+    return () => {
+      alive = false;
+      window.clearInterval(id);
+    };
+  }, [conn, busy]);
+
+  if (!q || !q.models.length) return null;
+  const main = q.models[0];
+  const out = q.models.filter((m) => m.state === "out").length;
+  const pct = main.limit ? Math.min(100, (main.used / main.limit) * 100) : null;
+  return (
+    <div className={`quota glass ${main.state === "out" ? "is-out" : ""}`}>
+      <button className="quota-row" onClick={() => setOpen(!open)} aria-expanded={open} title="Free-tier usage today, counted by JARVIS">
+        <span className="quota-label">QUOTA</span>
+        <span className="quota-model">{main.model}</span>
+        <span className="quota-num">{main.state === "out" ? "OUT" : main.limit ? `${main.used}/${main.limit}` : `${main.used} today`}</span>
+        {pct !== null && <span className="quota-bar"><i style={{ width: `${pct}%` }} /></span>}
+        {out > 0 && <span className="quota-out">{out} out</span>}
+      </button>
+      {open && (
+        <div className="quota-list">
+          <div className="quota-meta">
+            via {q.provider_name} · resets {clock(q.resets_at)}
+          </div>
+          {q.models.map((m) => (
+            <div key={m.model} className={`quota-item ${m.state}`}>
+              <span>{m.model}</span>
+              <span>
+                {m.state === "out" ? `${m.reason ?? "out"} · back ${m.until ? clock(m.until) : "later"}` : m.limit ? `${m.used} / ${m.limit}` : `${m.used} today`}
+              </span>
+            </div>
+          ))}
+          <div className="quota-note">Counted by JARVIS; limits appear once a quota error names them.</div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function App() {
   const shell = insideShell();
   const [status, setStatus] = useState<ShellStatus | null>(null);
@@ -80,6 +133,7 @@ export default function App() {
   const [historyVersion, setHistoryVersion] = useState(0);
   const tel = useTelemetry(conn, "backend");
   const [alert, setAlert] = useState<Alert | null>(null);
+  const [wake, setWake] = useState(1); // bumps replay the aurora sweep: on launch and on every new chat
 
   // Proactive alerts from the backend monitor: show the newest one for a while.
   useEffect(() => {
@@ -163,8 +217,10 @@ export default function App() {
 
   return (
     <div className={`app ${overall} act-${coreActivity}`} style={{ ["--core" as string]: COLOR[overall] }}>
-      <Particles color={COLOR[overall]} activity={coreActivity} />
+      <div className="grid" aria-hidden="true" />
       <Reactor activity={coreActivity} label={LABEL[overall]} />
+      <div className="aurora" aria-hidden="true"><i /><i /><i /></div>
+      <div key={wake} className="aurora wake" aria-hidden="true"><i /><i /><i /></div>
 
       <header className="topbar">
         <button className="status-chip" onClick={() => setDrawer(drawer === "system" ? null : "system")} title="System details">
@@ -172,10 +228,13 @@ export default function App() {
           <span className="brand">J.A.R.V.I.S</span>
           <span className="state">{LABEL[overall]}</span>
         </button>
-        <div className="gauges" onClick={() => setDrawer("system")} role="button" tabIndex={0} aria-label="Open system details">
-          <Gauge label="CPU" value={s.cpu_percent} />
-          <Gauge label="RAM" value={s.ram_percent} />
-          <Gauge label="DISK" value={s.disk_percent ?? undefined} />
+        <div className="topbar-right">
+          <div className="gauges" onClick={() => setDrawer("system")} role="button" tabIndex={0} aria-label="Open system details">
+            <Gauge label="CPU" value={s.cpu_percent} />
+            <Gauge label="RAM" value={s.ram_percent} />
+            <Gauge label="DISK" value={s.disk_percent ?? undefined} />
+          </div>
+          <QuotaStrip conn={conn} activity={coreActivity} />
         </div>
       </header>
 
@@ -199,6 +258,7 @@ export default function App() {
           onClick={() => {
             setConversation(null);
             setDrawer(null);
+            setWake((w) => w + 1);
           }}
         >
           <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" /></svg>
@@ -218,7 +278,7 @@ export default function App() {
       </main>
 
       {drawer && <div className="scrim" onClick={() => setDrawer(null)} />}
-      <aside className={`glass drawer ${drawer ? "open" : ""} ${drawer === "history" ? "left" : "right"} ${drawer === "memory" ? "wide" : ""} ${drawer === "settings" ? "xwide" : ""}`} aria-hidden={!drawer}>
+      <aside className={`glass drawer ${drawer ? "open" : ""} ${drawer === "memory" ? "wide" : ""} ${drawer === "settings" ? "xwide" : ""}`} aria-hidden={!drawer}>
         {drawer && (
           <>
             <header className="drawer-head">
