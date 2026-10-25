@@ -67,7 +67,7 @@ export default function SettingsView({ conn, onChanged }: { conn: Connection | n
       const v = await setVoice(conn, on);
       setVoiceStatus(v);
       if (on && !v.enabled) note("voice", { tone: "bad", text: v.error ?? `Voice files still missing: ${v.missing.join(", ")}.` });
-      else note("voice", { tone: "ok", text: on ? "Listening for “JARVIS”. Say it, then your request." : "Voice is off; the microphone is released." });
+      else note("voice", { tone: "ok", text: on ? "Listening for “Hey JARVIS”. Say it, wait for the chime, then your request." : "Voice is off; the microphone is released." });
     } catch (e) {
       note("voice", { tone: "bad", text: (e as Error).message });
     } finally {
@@ -180,13 +180,13 @@ export default function SettingsView({ conn, onChanged }: { conn: Connection | n
           <h2>Voice</h2>
           <label className="switch">
             <input type="checkbox" checked={!!voice?.enabled} disabled={voiceBusy || !voice} onChange={(e) => toggleVoice(e.target.checked)} />
-            <span>Listen for “JARVIS” (wake word), then answer out loud</span>
+            <span>Listen for “Hey JARVIS” (wake word), then answer out loud</span>
           </label>
           <p className="dim small">
             {!voice
               ? "Checking voice…"
               : voice.ready
-                ? "Runs entirely on this PC: Windows hears the wake word, Whisper turns speech into text, Piper speaks (British voice)."
+                ? "Runs entirely on this PC: openWakeWord hears “Hey JARVIS”, Whisper turns speech into text, Piper speaks (British voice)."
                 : `Voice files still downloading or missing: ${voice.missing.join(", ") || "programs not unpacked yet"}.`}
           </p>
           <Note k="voice" />

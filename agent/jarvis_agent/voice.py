@@ -1,7 +1,7 @@
 """Voice: wake word, listening, transcription and speech, all on this PC.
 
-- Wake word: Windows' offline recognizer, constrained to "JARVIS" / "hey JARVIS", with a dictation
-  grammar competing so ordinary speech is not forced into a match.
+- Wake word: "Hey JARVIS", detected by openWakeWord's neural models on onnxruntime (see wakeword.py).
+  Windows' built-in recognizer was tried first and could not pick the name out of quiet laptop audio.
 - Listening: the default microphone at 16 kHz until about a second of silence.
 - Transcription: whisper.cpp with the base English model.
 - Speech: Piper with a British male voice; saying the wake word while JARVIS talks stops it.
@@ -28,7 +28,6 @@ from . import win
 log = logging.getLogger("jarvis.voice")
 
 RATE = 16000
-WAKE_CONFIDENCE = 0.72
 MAX_UTTERANCE_S = 15.0
 NO_SPEECH_S = 5.0  # give up if nothing is said this long after the wake word
 END_SILENCE_S = 1.0
@@ -39,35 +38,13 @@ FILES = {
     "piper_zip": "piper_windows_amd64.zip",
     "voice_model": "en_GB-alan-medium.onnx",
     "voice_config": "en_GB-alan-medium.onnx.json",
+    "wake_mel": "melspectrogram.onnx",
+    "wake_embedding": "embedding_model.onnx",
+    "wake_model": "hey_jarvis_v0.1.onnx",
 }
 # A download still in progress already exists as a file; only a complete one counts.
-MIN_BYTES = {"whisper_zip": 8_000_000, "whisper_model": 59_000_000, "piper_zip": 22_000_000, "voice_model": 63_000_000, "voice_config": 4_000}
-
-_WAKE_PS = r"""
-$ErrorActionPreference = 'Stop'
-Add-Type -AssemblyName System.Speech
-$rec = [System.Speech.Recognition.SpeechRecognitionEngine]::InstalledRecognizers() |
-  Sort-Object { if ($_.Culture.Name -eq 'en-GB') { 0 } elseif ($_.Culture.Name -like 'en-*') { 1 } else { 2 } } | Select-Object -First 1
-if (-not $rec) { [Console]::Out.WriteLine('ERROR no speech recognizer is installed'); exit 2 }
-$r = New-Object System.Speech.Recognition.SpeechRecognitionEngine($rec)
-$c = New-Object System.Speech.Recognition.Choices
-$c.Add([string[]]@('jarvis', 'hey jarvis', 'okay jarvis', 'ok jarvis'))
-$gb = New-Object System.Speech.Recognition.GrammarBuilder($c); $gb.Culture = $rec.Culture
-$wake = New-Object System.Speech.Recognition.Grammar($gb); $wake.Name = 'wake'
-$r.LoadGrammar($wake)
-try { $d = New-Object System.Speech.Recognition.DictationGrammar; $d.Name = 'other'; $r.LoadGrammar($d) } catch { }
-if ($env:JARVIS_WAKE_WAV) { $r.SetInputToWaveFile($env:JARVIS_WAKE_WAV) } else { $r.SetInputToDefaultAudioDevice() }
-[Console]::Out.WriteLine('READY ' + $rec.Culture.Name); [Console]::Out.Flush()
-while ($true) {
-  # The agent that started this listener is gone (crash, restart): release the microphone and exit.
-  if ($env:JARVIS_AGENT_PID -and -not (Get-Process -Id $env:JARVIS_AGENT_PID -ErrorAction SilentlyContinue)) { exit 0 }
-  try { $res = $r.Recognize([TimeSpan]::FromSeconds(4)) }
-  catch { if ($env:JARVIS_WAKE_WAV) { break }; Start-Sleep -Seconds 1; try { $r.SetInputToDefaultAudioDevice() } catch { }; continue }
-  if ($res -and $res.Grammar.Name -eq 'wake') { [Console]::Out.WriteLine('WAKE ' + $res.Confidence.ToString('0.00')); [Console]::Out.Flush() }
-  elseif ($env:JARVIS_WAKE_WAV -and -not $res) { break }
-}
-"""
-
+MIN_BYTES = {"whisper_zip": 8_000_000, "whisper_model": 59_000_000, "piper_zip": 22_000_000, "voice_model": 63_000_000, "voice_config": 4_000,
+             "wake_mel": 1_000_000, "wake_embedding": 1_000_000, "wake_model": 1_000_000}
 
 def voice_dir() -> Path:
     base = Path(os.environ.get("JARVIS_DATA_DIR") or Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "JARVIS")
@@ -106,6 +83,11 @@ def prepare() -> dict[str, Any]:
             _unzip(dl / FILES["piper_zip"], piper_dir)
     except (zipfile.BadZipFile, ValueError) as e:
         return {"ready": False, "missing": missing, "error": f"A download is damaged or incomplete: {e}"}
+    try:
+        import numpy  # noqa: F401
+        import onnxruntime  # noqa: F401
+    except ImportError:
+        missing.append("numpy + onnxruntime (pip install numpy onnxruntime)")
     whisper = _find(whisper_dir, "whisper-cli.exe", "main.exe")
     piper = _find(piper_dir, "piper.exe")
     return {
@@ -201,7 +183,8 @@ class Voice:
     def __init__(self, emit: Callable[[dict[str, Any]], None]) -> None:
         self.emit = emit
         self.enabled = False
-        self._wake: subprocess.Popen | None = None
+        self._wake: threading.Thread | None = None
+        self._wake_stop = threading.Event()
         self._busy = threading.Lock()
         self._stop_listening = threading.Event()
         self._speech: Path | None = None
@@ -215,36 +198,42 @@ class Voice:
             self.enabled = False
             return {"enabled": False, **setup}
         self.enabled = enabled
-        if enabled and (self._wake is None or self._wake.poll() is not None):
-            self._wake = subprocess.Popen(["powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", _WAKE_PS],
-                                          stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, creationflags=win.CREATE_NO_WINDOW,
-                                          env={**os.environ, "JARVIS_AGENT_PID": str(os.getpid())})
-            threading.Thread(target=self._read_wake, args=(self._wake,), daemon=True).start()
+        if enabled and (self._wake is None or not self._wake.is_alive()):
+            self._wake_stop = threading.Event()
+            self._wake = threading.Thread(target=self._wake_loop, args=(self._wake_stop,), daemon=True)
+            self._wake.start()
         if not enabled and self._wake is not None:
-            self._wake.kill()
+            self._wake_stop.set()  # the loop closes the microphone within 80 ms
             self._wake = None
         return {"enabled": self.enabled, **setup}
 
-    def _read_wake(self, proc: subprocess.Popen) -> None:
-        for line in proc.stdout:  # type: ignore[union-attr]
-            line = line.strip()
-            if line.startswith("READY"):
-                log.info("wake word listening (%s)", line.split(" ", 1)[-1])
-            elif line.startswith("WAKE"):
-                try:
-                    conf = float(line.split()[1])
-                except (IndexError, ValueError):
-                    conf = 0.0
-                if conf >= WAKE_CONFIDENCE and self.enabled:
-                    self.on_wake(conf)
-            elif line.startswith("ERROR"):
-                self.emit({"event": "error", "message": line[6:]})
-        if self.enabled and proc is self._wake:
-            log.warning("wake listener exited; restarting in 3s")
-            time.sleep(3)
-            if self.enabled:
-                self._wake = None
-                self.set_enabled(True)
+    def _wake_loop(self, stop: threading.Event) -> None:
+        import sounddevice as sd
+
+        from .wakeword import CHUNK, WakeWord
+
+        try:
+            detector = WakeWord(voice_dir() / "downloads")
+        except Exception as e:  # noqa: BLE001
+            log.exception("wake word models could not load")
+            self.emit({"event": "error", "message": f"Wake word could not start: {e}"})
+            return
+        log.info("wake word listening (openWakeWord: hey jarvis)")
+        while not stop.is_set():
+            try:
+                with sd.RawInputStream(samplerate=RATE, channels=1, dtype="int16", blocksize=CHUNK) as mic:
+                    while not stop.is_set():
+                        data, _ = mic.read(CHUNK)
+                        if self._busy.locked():  # already taking a request: do not trigger on it
+                            detector.reset()
+                            continue
+                        score = detector.heard(bytes(data))
+                        if score is not None:
+                            log.info("wake word heard (%.2f)", score)
+                            self.on_wake(score)
+            except Exception as e:  # noqa: BLE001 - device unplugged or busy: try again shortly
+                log.warning("microphone unavailable (%s); retrying in 3s", e)
+                stop.wait(3)
 
     def on_wake(self, confidence: float = 1.0) -> None:
         self.stop_speaking()

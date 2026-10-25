@@ -54,8 +54,11 @@ Voice runs entirely on your PC. Download these free files into `%LOCALAPPDATA%\J
 | `ggml-base.en-q5_1.bin` | [whisper.cpp models](https://huggingface.co/ggerganov/whisper.cpp) |
 | `piper_windows_amd64.zip` | [Piper 2023.11.14-2](https://github.com/rhasspy/piper/releases/tag/2023.11.14-2) |
 | `en_GB-alan-medium.onnx` and `.onnx.json` | [Piper voices](https://huggingface.co/rhasspy/piper-voices/tree/main/en/en_GB/alan/medium) |
+| `melspectrogram.onnx`, `embedding_model.onnx`, `hey_jarvis_v0.1.onnx` | [openWakeWord v0.5.1](https://github.com/dscripka/openWakeWord/releases/tag/v0.5.1) |
 
-Say "JARVIS" (or "Hey JARVIS"), then your request. Saying it again while JARVIS talks stops it. The wake word uses Windows' built-in offline recognizer, so no extra download is needed for it.
+Also install two Python packages into the app's environment: `pip install numpy onnxruntime`.
+
+Say **"Hey JARVIS"**, wait for the chime, then your request. Saying it again while JARVIS talks stops it.
 
 ## Run from source
 

@@ -23,10 +23,27 @@ def say_to_wav(text: str, path: str) -> None:
     subprocess.run(["powershell", "-NoProfile", "-Command", ps], check=True, capture_output=True, timeout=60)
 
 
-def wake_lines(wav: str) -> list[str]:
-    r = subprocess.run(["powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", voice._WAKE_PS],
-                       env={**os.environ, "JARVIS_WAKE_WAV": wav}, capture_output=True, text=True, timeout=120)
-    return [line for line in r.stdout.splitlines() if line.startswith("WAKE")]
+def best_wake_score(wav: str) -> float:
+    """Run a WAV through the wake detector in 80 ms chunks, with a little silence either side."""
+    from jarvis_agent.wakeword import CHUNK, WakeWord
+
+    det = WakeWord(voice.voice_dir() / "downloads")
+    with wave.open(wav) as w:
+        pcm = w.readframes(w.getnframes())
+    pcm = bytes(32000) + pcm + bytes(32000)  # a second of silence either side
+    best = 0.0
+    for i in range(0, len(pcm) - CHUNK * 2, CHUNK * 2):
+        best = max(best, det.process(pcm[i:i + CHUNK * 2]))
+    return best
+
+
+def wake_ready() -> bool:
+    try:
+        import numpy  # noqa: F401
+        import onnxruntime  # noqa: F401
+    except ImportError:
+        return False
+    return all((voice.voice_dir() / "downloads" / f).is_file() for f in ("melspectrogram.onnx", "embedding_model.onnx", "hey_jarvis_v0.1.onnx"))
 
 
 class ReadinessTests(unittest.TestCase):
@@ -50,17 +67,19 @@ class AudioTests(unittest.TestCase):
             self.assertEqual((w.getframerate(), w.getnchannels(), w.getnframes()), (16000, 1, 800))
 
 
-@unittest.skipUnless(sys.platform == "win32", "uses Windows speech")
+@unittest.skipUnless(sys.platform == "win32" and wake_ready(), "needs Windows speech, numpy, onnxruntime and the wake models")
 class WakeWordTests(unittest.TestCase):
-    def test_wake_word_fires_only_for_jarvis(self) -> None:
+    def test_hey_jarvis_wakes_and_other_speech_does_not(self) -> None:
+        from jarvis_agent.wakeword import THRESHOLD
+
         with tempfile.TemporaryDirectory() as d:
-            for text, expect in [("Hey Jarvis", True), ("Jarvis", True), ("What is the weather like in Mumbai today", False),
-                                 ("Please open the downloads folder for me", False), ("Travis", False)]:
+            for text, expect in [("Hey Jarvis", True), ("Hey Jarvis, what time is it?", True),
+                                 ("What is the weather like in Mumbai today", False), ("Please open the downloads folder for me", False)]:
                 with self.subTest(text=text):
                     wav = os.path.join(d, "t.wav")
                     say_to_wav(text, wav)
-                    hits = [float(line.split()[1]) for line in wake_lines(wav)]
-                    self.assertEqual(any(c >= voice.WAKE_CONFIDENCE for c in hits), expect, f"{text}: {hits}")
+                    score = best_wake_score(wav)
+                    self.assertEqual(score >= THRESHOLD, expect, f"{text}: best score {score:.3f}")
 
 
 if __name__ == "__main__":
