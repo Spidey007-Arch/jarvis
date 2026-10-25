@@ -92,5 +92,37 @@ class WakeWordTests(unittest.TestCase):
                     self.assertEqual(score >= THRESHOLD, expect, f"{text}: best score {score:.3f}")
 
 
+def tone(seconds: float, amp: int) -> bytes:
+    n = int(voice.RATE * seconds)
+    return array.array("h", (amp if (i // 20) % 2 else -amp for i in range(n))).tobytes()
+
+
+class WakeOnSpeech(unittest.TestCase):
+    def test_gate_cuts_one_utterance_with_preroll(self) -> None:
+        gate = voice.SpeechGate()
+        stream = tone(1.0, 20) + tone(0.24, 400) + tone(1.0, 2000) + tone(1.0, 20)
+        out = []
+        for i in range(0, len(stream), 2560):  # 80 ms chunks, like the wake loop
+            pcm = gate.feed(stream[i:i + 2560])
+            if pcm:
+                out.append(pcm)
+        self.assertEqual(len(out), 1)
+        secs = len(out[0]) / 2 / voice.RATE
+        self.assertGreater(secs, 1.6)  # pre-roll + speech + the closing pause
+        self.assertLess(secs, 2.7)
+
+    def test_gate_ignores_clicks(self) -> None:
+        gate = voice.SpeechGate()
+        stream = tone(1.0, 20) + tone(0.08, 3000) + tone(2.0, 20)
+        self.assertFalse(any(gate.feed(stream[i:i + 2560]) for i in range(0, len(stream), 2560)))
+
+    def test_who_is_it_for(self) -> None:
+        for text in ("Jarvis", "Jarvis, open Spotify", "Hello.", "hey there", "Good morning", "Are you there?", "okay what's the time"):
+            self.assertTrue(voice.addressed(text, media_playing=True), text)
+        self.assertTrue(voice.addressed("what's the weather like", media_playing=False))
+        self.assertFalse(voice.addressed("what's the weather like", media_playing=True))  # could be the TV
+        self.assertFalse(voice.addressed("um", media_playing=False))
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

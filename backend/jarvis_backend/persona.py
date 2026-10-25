@@ -126,7 +126,10 @@ def build_system_prompt(
             situation.append(line)
     if ctx.get("voice"):
         situation.append("The user spoke this aloud and will hear your reply through the speakers: answer in one to three "
-                         "short spoken sentences, no lists, markdown, links or anything that only makes sense on screen.")
+                         "short spoken sentences, no lists, markdown, links or anything that only makes sense on screen. "
+                         "The start-up briefing already covered the system: do not mention its load or health again unless "
+                         "asked or something new is critical. A greeting gets a short greeting back. If what you hear is "
+                         "clearly not meant for you (background talk, a fragment), stay silent.")
     if ctx.get("reminders"):
         situation.append("Upcoming reminders: " + "; ".join(f"{r['text']} ({r['due']})" for r in ctx["reminders"][:5]) + ".")
     if ctx.get("recent"):

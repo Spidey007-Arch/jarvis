@@ -159,6 +159,7 @@ class GUID(ctypes.Structure):
 _CLSID_MMDeviceEnumerator = GUID.of("BCDE0395-E52F-467C-8E3D-C4579291692E")
 _IID_IMMDeviceEnumerator = GUID.of("A95664D2-9614-4F35-A746-DE8DB63617E6")
 _IID_IAudioEndpointVolume = GUID.of("5CDF2C82-841E-4546-9722-0CF74078229A")
+_IID_IAudioMeterInformation = GUID.of("C02216F6-8C67-4B5B-9D00-D008E73E0064")
 _CLSCTX_ALL = 23
 
 
@@ -173,7 +174,10 @@ def _check(hr: int, what: str) -> None:
 
 
 class _Endpoint:
-    """Default playback device's IAudioEndpointVolume, released on exit."""
+    """An interface of the default playback device (IAudioEndpointVolume unless told otherwise), released on exit."""
+
+    def __init__(self, iid: GUID = _IID_IAudioEndpointVolume, what: str = "Opening the volume control") -> None:
+        self.iid, self.what = iid, what
 
     def __enter__(self) -> ctypes.c_void_p:
         hr = ole32.CoInitializeEx(None, 0x2)  # apartment-threaded; S_FALSE / RPC_E_CHANGED_MODE are fine
@@ -190,7 +194,7 @@ class _Endpoint:
         self._objs.append(dev)
         vol = ctypes.c_void_p()
         _check(_method(dev, 3, ctypes.HRESULT, ctypes.POINTER(GUID), wintypes.DWORD, ctypes.c_void_p, ctypes.POINTER(ctypes.c_void_p))(
-            dev, ctypes.byref(_IID_IAudioEndpointVolume), _CLSCTX_ALL, None, ctypes.byref(vol)), "Opening the volume control")
+            dev, ctypes.byref(self.iid), _CLSCTX_ALL, None, ctypes.byref(vol)), self.what)
         self._objs.append(vol)
         return vol
 
@@ -218,6 +222,35 @@ def set_volume(percent: int) -> None:
 def set_mute(mute: bool) -> None:
     with _Endpoint() as v:
         _check(_method(v, 14, ctypes.HRESULT, wintypes.BOOL, ctypes.c_void_p)(v, bool(mute), None), "Changing mute")
+
+
+class PlaybackMeter:
+    """How loud the PC itself is playing right now (0..1), e.g. a video or music. Kept open while
+    listening, so each reading is one cheap call; reopened if the output device changes."""
+
+    def __init__(self) -> None:
+        self._ep: _Endpoint | None = None
+        self._meter: ctypes.c_void_p | None = None
+
+    def peak(self) -> float:
+        try:
+            if self._meter is None:
+                self._ep = _Endpoint(_IID_IAudioMeterInformation, "Opening the output meter")
+                self._meter = self._ep.__enter__()
+            v = ctypes.c_float()
+            _check(_method(self._meter, 3, ctypes.HRESULT, ctypes.POINTER(ctypes.c_float))(self._meter, ctypes.byref(v)), "Reading the output meter")
+            return float(v.value)
+        except (WinError, OSError):
+            self.close()
+            return 0.0
+
+    def close(self) -> None:
+        if self._ep is not None:
+            try:
+                self._ep.__exit__(None, None, None)
+            except OSError:
+                pass
+        self._ep = self._meter = None
 
 
 # ---------------- Recycle Bin ----------------

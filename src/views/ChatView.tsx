@@ -44,7 +44,7 @@ type Notice = { tone: "warn" | "bad" | "dim"; text: string };
 type Voice = "off" | "listening" | "transcribing" | "speaking" | "connecting" | "live";
 
 const HINT: Record<Voice, string> = {
-  off: "Say “Hey JARVIS”, tap the mic or press Ctrl+Space",
+  off: "Just say “Jarvis”, “hello” or what you need",
   connecting: "Connecting…",
   live: "Listening. Just talk",
   speaking: "Speaking. Talk to interrupt",

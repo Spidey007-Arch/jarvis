@@ -1,7 +1,10 @@
 """Voice: wake word, listening, transcription and speech, all on this PC.
 
-- Wake word: "Hey JARVIS", detected by openWakeWord's neural models on onnxruntime (see wakeword.py).
-  Windows' built-in recognizer was tried first and could not pick the name out of quiet laptop audio.
+- Waking: "Hey JARVIS" is caught instantly by openWakeWord's neural models (see wakeword.py). Besides
+  that, any speech is cut out of the microphone stream (SpeechGate) and transcribed here; JARVIS wakes
+  when it hears its name or a greeting ("Jarvis", "hello", "you there?"), or, while the PC itself is
+  silent, anything said at all. While a video or music is playing the name or a greeting is needed,
+  so JARVIS does not answer the TV.
 - Listening: the default microphone at 16 kHz until about a second of silence.
 - Transcription: whisper.cpp with the base English model.
 - Speech: Piper with a British male voice; saying the wake word while JARVIS talks stops it.
@@ -14,6 +17,7 @@ import io
 import logging
 import math
 import os
+import re
 import subprocess
 import tempfile
 import threading
@@ -31,6 +35,12 @@ RATE = 16000
 MAX_UTTERANCE_S = 15.0
 NO_SPEECH_S = 5.0  # give up if nothing is said this long after the wake word
 END_SILENCE_S = 1.0
+GATE_ONSET_S = 0.24  # this much continuous sound starts an utterance
+GATE_PREROLL_S = 0.5
+GATE_END_S = 0.7
+GATE_MAX_S = 8.0
+GATE_MIN_LEVEL = 110.0  # laptop mic arrays can be very quiet
+MEDIA_PEAK = 0.02  # output louder than this means the PC is playing something
 
 FILES = {
     "whisper_zip": "whisper-bin-x64.zip",
@@ -143,6 +153,63 @@ def record_utterance(stop: threading.Event) -> bytes | None:
     return b"".join(frames) if spoken else None
 
 
+class SpeechGate:
+    """Cuts utterances out of a continuous 16 kHz stream fed in chunks. Tracks the room's noise floor,
+    starts on GATE_ONSET_S of sound above it (keeping GATE_PREROLL_S before, so the first word is whole)
+    and ends after GATE_END_S of quiet or GATE_MAX_S. feed() returns the utterance when one ends."""
+
+    def __init__(self) -> None:
+        self.floor = 60.0
+        self.reset()
+
+    def reset(self) -> None:
+        self.pre: list[bytes] = []
+        self.frames: list[bytes] = []
+        self.loud = self.quiet = 0.0
+        self.active = False
+
+    def threshold(self) -> float:
+        return max(GATE_MIN_LEVEL, self.floor * 2.5)
+
+    def feed(self, chunk: bytes, level: float | None = None) -> bytes | None:
+        level = _rms(chunk) if level is None else level
+        secs = len(chunk) / 2 / RATE
+        loud = level > self.threshold()
+        if not self.active:
+            if loud:
+                self.loud += secs
+            else:
+                self.floor += (level - self.floor) * 0.05  # follow the room, slowly
+                self.loud = 0.0
+            self.pre.append(chunk)
+            while len(self.pre) * secs > GATE_PREROLL_S + GATE_ONSET_S:
+                self.pre.pop(0)
+            if self.loud >= GATE_ONSET_S:
+                self.active, self.frames, self.pre, self.quiet = True, self.pre, [], 0.0
+            return None
+        self.frames.append(chunk)
+        self.quiet = 0.0 if loud else self.quiet + secs
+        if self.quiet >= GATE_END_S or len(self.frames) * secs >= GATE_MAX_S:
+            pcm = b"".join(self.frames)
+            self.reset()
+            return pcm
+        return None
+
+
+_NAME = re.compile(r"\b(jarvis|jarvys|jervis|jarvas|jarves|javis)\b", re.I)
+_GREETING = re.compile(
+    r"^(hello|hi|hey|hiya|yo|ok|okay|good (morning|afternoon|evening)|you there|are you there|wake up|listen)\b", re.I)
+
+
+def addressed(text: str, media_playing: bool) -> bool:
+    """Was this speech meant for JARVIS? Its name or a greeting always counts; with nothing playing on
+    the PC, any real sentence does too."""
+    t = text.strip()
+    if _NAME.search(t) or _GREETING.search(t):
+        return True
+    return not media_playing and len(re.findall(r"[A-Za-z']{2,}", t)) >= 2
+
+
 def normalise(pcm: bytes, target_peak: int = 20000) -> bytes:
     """Bring quiet speech up to a healthy level (at most 30x) so Whisper hears it clearly."""
     a = array.array("h", pcm)
@@ -164,27 +231,29 @@ def to_wav(pcm: bytes) -> bytes:
     return buf.getvalue()
 
 
-def clean_transcript(text: str) -> str:
+def clean_transcript(text: str, strip_name: bool = True) -> str:
     """Drop Whisper's descriptions of non-speech, e.g. "(birds chirping)", "[Music]", "*sigh*"."""
-    import re
-
     text = re.sub(r"\([^)]*\)|\[[^\]]*\]|\*[^*]*\*", " ", text)
     text = re.sub(r"\s+", " ", text).strip(" .,-")
-    text = re.sub(r"^(hey|ok|okay)?\s*jarvis\b[\s,.!?-]*", "", text, flags=re.I)  # the name is not part of the request
+    if strip_name:
+        text = re.sub(r"^(hey|ok|okay)?\s*jarvis\b[\s,.!?-]*", "", text, flags=re.I)  # the name is not part of the request
     return text if re.search(r"[A-Za-z]{2,}", text) else ""
 
 
-def transcribe(wav: bytes, setup: dict[str, Any]) -> str:
+def transcribe(wav: bytes, setup: dict[str, Any], strip_name: bool = True) -> str:
     fd, path = tempfile.mkstemp(prefix="jarvis-voice-", suffix=".wav")
     os.close(fd)
     try:
         Path(path).write_bytes(wav)
         threads = str(max(2, (os.cpu_count() or 4) // 2))
-        r = subprocess.run([setup["whisper"], "-m", setup["whisper_model"], "-f", path, "-l", "en", "-nt", "-np", "-t", threads],
+        # Whisper always encodes a 30 s window; a short clip only needs the part it fills (3x faster).
+        secs = max(0.0, (len(wav) - 44) / 2 / RATE)
+        ctx = str(min(1500, max(256, int(secs / 30 * 1500) + 128)))
+        r = subprocess.run([setup["whisper"], "-m", setup["whisper_model"], "-f", path, "-l", "en", "-nt", "-np", "-t", threads, "-ac", ctx],
                            capture_output=True, text=True, timeout=90, creationflags=win.CREATE_NO_WINDOW | win.ABOVE_NORMAL_PRIORITY_CLASS)
         if r.returncode != 0:
             raise RuntimeError((r.stderr or r.stdout).strip().splitlines()[-1] if (r.stderr or r.stdout).strip() else f"whisper exited {r.returncode}")
-        return clean_transcript(" ".join(line.strip() for line in r.stdout.splitlines() if line.strip()))
+        return clean_transcript(" ".join(line.strip() for line in r.stdout.splitlines() if line.strip()), strip_name)
     finally:
         Path(path).unlink(missing_ok=True)
 
@@ -215,6 +284,9 @@ class Voice:
         self._stop_listening = threading.Event()
         self._speech: Path | None = None
         self._speech_token = 0
+        self.any_speech = True  # wake on any speech meant for JARVIS, not only "Hey JARVIS"
+        self._hearing = threading.Lock()  # one transcription at a time
+        self._quiet_until = 0.0
 
     # ----- wake word -----
 
@@ -250,22 +322,69 @@ class Voice:
             log.exception("wake word models could not load")
             self.emit({"event": "error", "message": f"Wake word could not start: {e}"})
             return
-        log.info("wake word listening (openWakeWord: hey jarvis)")
+        gate, meter = SpeechGate(), win.PlaybackMeter()
+        media_until = 0.0
+        log.info("listening for JARVIS (wake word%s)", " and any speech" if self.any_speech else "")
         while not stop.is_set():
             try:
                 with sd.RawInputStream(samplerate=RATE, channels=1, dtype="int16", blocksize=CHUNK) as mic:
                     while not stop.is_set():
                         data, _ = mic.read(CHUNK)
-                        if self._busy.locked() or self.live_busy():  # already taking a request: do not trigger on it
-                            detector.reset()
+                        chunk = bytes(data)
+                        now = time.monotonic()
+                        if self._busy.locked() or self.live_busy() or now < self._quiet_until:
+                            detector.reset()  # already taking a request: do not trigger on it
+                            gate.reset()
                             continue
-                        score = detector.heard(bytes(data))
+                        if meter.peak() > MEDIA_PEAK:
+                            media_until = now + 1.5  # playing now, or was a moment ago
+                        score = detector.heard(chunk)
                         if score is not None:
                             log.info("wake word heard (%.2f)", score)
+                            gate.reset()
+                            self._quiet_until = now + 3.0
                             self.on_wake(score)
+                            continue
+                        if not self.any_speech or self._hearing.locked():
+                            continue
+                        pcm = gate.feed(chunk)
+                        if pcm:
+                            threading.Thread(target=self._consider, args=(pcm, now < media_until), daemon=True).start()
             except Exception as e:  # noqa: BLE001 - device unplugged or busy: try again shortly
                 log.warning("microphone unavailable (%s); retrying in 3s", e)
                 stop.wait(3)
+        meter.close()
+
+    def _consider(self, pcm: bytes, media_playing: bool) -> None:
+        """Transcribe an overheard utterance and wake if it was meant for JARVIS."""
+        if not self._hearing.acquire(blocking=False):
+            return
+        try:
+            setup = prepare()
+            if not setup.get("whisper"):
+                return  # without Whisper only "Hey JARVIS" wakes it
+            raw = transcribe(to_wav(pcm), setup, strip_name=False)
+            if not raw or not addressed(raw, media_playing):
+                if raw:
+                    log.info("overheard speech, not for JARVIS (%d words, media %s)", len(raw.split()), media_playing)
+                return
+            if self._busy.locked() or self.live_busy():
+                return
+            log.info("woken by speech (media %s)", media_playing)
+            self._quiet_until = time.monotonic() + 3.0
+            if self.mode == "live":
+                self.emit({"event": "wake", "text": raw})  # the backend opens a live session that answers it
+                return
+            request = clean_transcript(raw)
+            if len(request.split()) >= 2:
+                self.stop_speaking()
+                self.emit({"event": "transcript", "text": request})
+            else:
+                self.on_wake(1.0)  # just the name or a greeting: listen for the request
+        except Exception:  # noqa: BLE001 - never kill the listener
+            log.exception("could not consider overheard speech")
+        finally:
+            self._hearing.release()
 
     def on_wake(self, confidence: float = 1.0) -> None:
         if self.mode == "live":

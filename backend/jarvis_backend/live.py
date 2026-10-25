@@ -63,8 +63,10 @@ class LiveVoice:
 
     # ----- control -----
 
-    async def start(self, origin: str, opening: str | None = None, label: str | None = None, wait: bool = False) -> dict[str, Any]:
-        """Open a session. opening: a text turn JARVIS answers out loud before listening; label titles the saved
+    async def start(self, origin: str, opening: str | None = None, label: str | None = None, wait: bool = False,
+                    said: str | None = None) -> dict[str, Any]:
+        """Open a session. opening: a text turn JARVIS answers out loud before listening; said: what the user
+        already said to wake JARVIS (answered first, and saved as their words); label titles the saved
         conversation. wait: return only once connected, raising LiveError if it cannot connect."""
         if self.active:
             return {"live": True, "already": True}
@@ -73,7 +75,7 @@ class LiveVoice:
         self._stop = asyncio.Event()
         self._mic = asyncio.Queue(maxsize=100)
         opened: asyncio.Future = asyncio.get_running_loop().create_future()
-        self._task = asyncio.create_task(self._run(origin, opening, label, opened))
+        self._task = asyncio.create_task(self._run(origin, opening or said, label, opened, said or ""))
         if wait:
             err = await opened
             if err:
@@ -136,7 +138,7 @@ class LiveVoice:
         except Exception:  # noqa: BLE001 - older live models take it as a client turn
             await session.send_client_content(turns=types.Content(role="user", parts=[types.Part(text=text)]), turn_complete=True)
 
-    async def _run(self, origin: str, opening: str | None, label: str | None, opened: asyncio.Future) -> None:
+    async def _run(self, origin: str, opening: str | None, label: str | None, opened: asyncio.Future, said: str = "") -> None:
         from google import genai
         from google.genai import types
 
@@ -151,10 +153,12 @@ class LiveVoice:
             return
         opened.set_result(None)
         log.info("live session open", extra={"fields": {"model": model, "origin": origin}})
-        state = {"last": time.monotonic(), "playing_until": 0.0, "user": "", "jarvis": "", "bye": False, "opening": bool(opening), "done": False}
+        state = {"last": time.monotonic(), "playing_until": 0.0, "user": said, "jarvis": "", "bye": False, "opening": bool(opening), "done": False}
         try:
             await self.call_agent("live_mic", {"on": True}, timeout=10)
             self.emit({"event": "live_start", "model": model, "origin": origin})
+            if said:
+                self.emit({"event": "user_text", "text": said})
             if opening:
                 await self._send_text(session, types, opening)
 

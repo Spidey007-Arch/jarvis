@@ -189,9 +189,9 @@ def create_app(port: int, token: str | None = None) -> FastAPI:
         result = await bridge.call("ping", timeout=5)
         return {"ok": True, "round_trip_ms": round((time.perf_counter() - t0) * 1000, 1), "agent": result}
 
-    async def _start_live(origin: str) -> None:
+    async def _start_live(origin: str, said: str | None = None) -> None:
         try:
-            await services.live.start(origin)
+            await services.live.start(origin, said=said)
         except Exception as e:  # noqa: BLE001
             bridge.voice_event({"type": "voice", "event": "error", "message": str(e)})
 
@@ -243,7 +243,7 @@ def create_app(port: int, token: str | None = None) -> FastAPI:
                 elif kind == "voice":
                     bridge.voice_event(msg)
                     if msg.get("event") == "wake" and services.live and (settings.get("voice_mode") or "live") == "live":
-                        asyncio.create_task(_start_live("wake"))
+                        asyncio.create_task(_start_live("wake", (msg.get("text") or "").strip() or None))
         except asyncio.TimeoutError:
             log.warning("agent heartbeat timed out; dropping connection")
         except WebSocketDisconnect:
