@@ -1,5 +1,5 @@
 import { KeyboardEvent, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { ActionEvent, Message, answerConfirmation, forSpeech, getMessages, speak, streamChat } from "../api";
+import { ActionEvent, Message, answerConfirmation, forSpeech, getMessages, listenNow, speak, streamChat } from "../api";
 import { Activity, emitPulse, emitSend } from "../fx/activity";
 import type { Connection } from "../shell";
 
@@ -56,6 +56,7 @@ export default function ChatView({
   onConversation,
   onActivity,
   goSettings,
+  reload = 0,
 }: {
   conn: Connection | null;
   configured: boolean;
@@ -64,6 +65,7 @@ export default function ChatView({
   onConversation: (id: string | null, changed: boolean) => void;
   onActivity: (a: Activity) => void;
   goSettings: () => void;
+  reload?: number; // bumped when a live voice turn was saved to this conversation
 }) {
   const [lines, setLines] = useState<Line[]>([]);
   const [input, setInput] = useState("");
@@ -74,9 +76,12 @@ export default function ChatView({
   const box = useRef<HTMLTextAreaElement>(null);
   const ownConversation = useRef<string | null>(null);
 
-  // Load a conversation picked from history (but not the one this view just created).
+  // Load a conversation picked from history (but not the one this view just created), or refresh it
+  // when a live voice session added to it.
+  const lastReload = useRef(reload);
   useEffect(() => {
-    if (conversationId === ownConversation.current) return;
+    if (conversationId === ownConversation.current && reload === lastReload.current) return;
+    lastReload.current = reload;
     ownConversation.current = conversationId;
     setNotice(null);
     if (!conversationId || !conn) {
@@ -86,7 +91,7 @@ export default function ChatView({
     getMessages(conn, conversationId)
       .then(setLines)
       .catch((e) => setNotice({ tone: "bad", text: (e as Error).message }));
-  }, [conversationId, conn]);
+  }, [conversationId, conn, reload]);
 
   useEffect(() => {
     bottom.current?.scrollIntoView({ block: "end", behavior: "smooth" });
@@ -197,6 +202,24 @@ export default function ChatView({
     }
   };
 
+  // Push-to-talk: the mic button or Ctrl+Space anywhere in the window starts listening at once.
+  const talk = () => {
+    if (!conn || streaming) return;
+    listenNow(conn).catch((e) => setNotice({ tone: "bad", text: (e as Error).message }));
+  };
+  const talkRef = useRef(talk);
+  talkRef.current = talk;
+  useEffect(() => {
+    const onKey = (e: globalThis.KeyboardEvent) => {
+      if (e.ctrlKey && e.code === "Space") {
+        e.preventDefault();
+        talkRef.current();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
   // Words heard after the wake word arrive as a window event (see VoiceLink in App).
   const sendRef = useRef(send);
   sendRef.current = send;
@@ -267,6 +290,9 @@ export default function ChatView({
             onKeyDown={onKey}
             aria-label="Message JARVIS"
           />
+          <button className="mic" disabled={!configured || !conn || streaming} onClick={talk} aria-label="Talk to JARVIS" title="Talk (Ctrl+Space)">
+            <svg viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3" /><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21" /></svg>
+          </button>
           {streaming ? (
             <button className="send stop" onClick={() => abort.current?.abort()} aria-label="Stop generating" title="Stop">
               <svg viewBox="0 0 24 24"><rect x="7" y="7" width="10" height="10" rx="2" /></svg>

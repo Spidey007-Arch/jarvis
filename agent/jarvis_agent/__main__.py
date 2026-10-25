@@ -15,6 +15,8 @@ from jarvis_common import logs
 
 from . import __version__
 from . import voice
+from .actions import attach_live
+from .live_audio import LiveAudio
 from .actions import SCREENSHOT_TTL_S, ActionError, purge_old_screenshots, run, warm_app_index
 
 HEARTBEAT_INTERVAL_S = 5.0
@@ -57,12 +59,25 @@ _outbox: asyncio.Queue | None = None
 
 
 def emit_voice(event: dict) -> None:
+    send_backend({"type": "voice", **event})
+
+
+def send_backend(msg: dict) -> None:
+    """Queue a message for the backend from any thread (voice events, live microphone frames)."""
     loop, box = _loop, _outbox
     if loop is not None and box is not None:
-        loop.call_soon_threadsafe(box.put_nowait, {"type": "voice", **event})
+        loop.call_soon_threadsafe(_offer, box, msg)
+
+
+def _offer(box: asyncio.Queue, msg: dict) -> None:
+    try:
+        box.put_nowait(msg)
+    except asyncio.QueueFull:
+        pass  # disconnected for a while: drop rather than build up stale audio
 
 
 _loop: asyncio.AbstractEventLoop | None = None
+live: LiveAudio  # set in amain once the event loop exists
 
 
 async def _drain_outbox(ws) -> None:
@@ -118,6 +133,12 @@ async def _session(url: str, token: str, log: logging.Logger) -> None:
         try:
             async for raw in ws:
                 msg = json.loads(raw)
+                if msg.get("type") == "speaker":
+                    live.play(msg.get("pcm", ""))
+                    continue
+                if msg.get("type") == "speaker_flush":
+                    live.flush()
+                    continue
                 if msg.get("type") == "call":
                     t = asyncio.create_task(_handle_call(ws, msg, log))
                     tasks.add(t)
@@ -173,6 +194,8 @@ async def amain() -> int:
     global _loop, _outbox
     _loop, _outbox = asyncio.get_running_loop(), asyncio.Queue(maxsize=200)
     voice.attach(emit_voice)
+    global live
+    live = attach_live(send_backend)
     psutil.cpu_percent(interval=None)  # prime the counter so the first reading is meaningful
     url = f"ws://127.0.0.1:{port}/ws/agent"
     backoff = 1.0

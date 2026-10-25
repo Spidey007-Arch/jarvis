@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { ApiError, ModelInfo, ProviderPreset, Settings, SettingsUpdate, VoiceStatus, getModels, getProviders, getSettings, getVoice, putSettings, setVoice } from "../api";
+import { ApiError, ModelInfo, ProviderPreset, Settings, SettingsUpdate, VoiceStatus, getModels, getProviders, getSettings, getVoice, putSettings, setVoice, setVoiceMode } from "../api";
 import type { Connection } from "../shell";
 
 type Note = { tone: "ok" | "bad"; text: string } | null;
@@ -182,6 +182,25 @@ export default function SettingsView({ conn, onChanged }: { conn: Connection | n
             <input type="checkbox" checked={!!voice?.enabled} disabled={voiceBusy || !voice} onChange={(e) => toggleVoice(e.target.checked)} />
             <span>Listen for “Hey JARVIS” (wake word), then answer out loud</span>
           </label>
+          <div className="chips" role="radiogroup" aria-label="Voice engine">
+            {(["live", "local"] as const).map((m) => (
+              <button
+                key={m}
+                role="radio"
+                aria-checked={(s.voice_mode ?? "live") === m}
+                className={(s.voice_mode ?? "live") === m ? "on" : ""}
+                disabled={voiceBusy}
+                onClick={async () => {
+                  if (!conn) return;
+                  await setVoiceMode(conn, m).catch((e) => note("voice", { tone: "bad", text: (e as Error).message }));
+                  setS({ ...s, voice_mode: m });
+                  note("voice", { tone: "ok", text: m === "live" ? "Live: natural speech-to-speech with Gemini (needs internet and your Gemini key)." : "Offline: Whisper listens and Piper speaks, all on this PC." });
+                }}
+              >
+                {m === "live" ? "Live (Gemini)" : "Offline"}
+              </button>
+            ))}
+          </div>
           <p className="dim small">
             {!voice
               ? "Checking voice…"

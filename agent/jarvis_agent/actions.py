@@ -23,7 +23,7 @@ from typing import Any, Callable
 
 import psutil
 
-from . import __version__, voice, webdrive, win
+from . import __version__, live_audio, voice, webdrive, win
 
 
 class ActionError(Exception):
@@ -309,7 +309,25 @@ def web_type(args: dict[str, Any]) -> dict[str, Any]:
 
 @action
 def voice_set(args: dict[str, Any]) -> dict[str, Any]:
-    return voice.instance().set_enabled(bool(args.get("enabled")))
+    return voice.instance().set_enabled(bool(args.get("enabled")), args.get("mode"))
+
+
+_LIVE: live_audio.LiveAudio | None = None
+
+
+def attach_live(send: Any) -> live_audio.LiveAudio:
+    global _LIVE
+    _LIVE = live_audio.LiveAudio(send)
+    voice.instance().live_busy = lambda: _LIVE.mic_on if _LIVE else False
+    return _LIVE
+
+
+@action
+def live_mic(args: dict[str, Any]) -> dict[str, Any]:
+    if _LIVE is None:
+        raise ActionError("Live audio is not ready.")
+    _LIVE.set_mic(bool(args.get("on")))
+    return {"mic": _LIVE.mic_on}
 
 
 @action
@@ -324,6 +342,16 @@ def speak(args: dict[str, Any]) -> dict[str, Any]:
         return voice.instance().speak(_str(args, "text"))
     except RuntimeError as e:
         raise ActionError(f"Could not speak: {e}") from e
+
+
+@action
+def listen_now(_: dict[str, Any]) -> dict[str, Any]:
+    """Push-to-talk: start taking a request now, without the wake word."""
+    setup = voice.prepare()
+    if not setup["whisper"] or voice.FILES["whisper_model"] in setup["missing"]:
+        raise ActionError("Whisper is not installed yet, so JARVIS cannot listen. See Settings > Voice.")
+    voice.instance().on_wake(1.0)
+    return {"listening": True}
 
 
 @action

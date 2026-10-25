@@ -32,6 +32,7 @@ export interface Settings {
   embed_model: string;
   has_api_key: boolean;
   ready: boolean;
+  voice_mode?: "live" | "local";
   api_key_hint: string;
   providers_with_keys: string[];
   load_error: string | null;
@@ -92,7 +93,12 @@ export const getQuota = (c: Connection) => call<Quota>(c, "/api/quota");
 export interface VoiceEvent {
   seq: number;
   at: number;
-  event: "listening" | "transcribing" | "transcript" | "speaking" | "idle" | "error";
+  event:
+    | "listening" | "transcribing" | "transcript" | "speaking" | "idle" | "error"
+    | "live_connecting" | "live_start" | "user_text" | "jarvis_text" | "live_tool" | "live_turn" | "live_end";
+  conversation_id?: string | null;
+  tool?: string;
+  model?: string;
   text?: string;
   message?: string;
   reason?: string;
@@ -106,6 +112,10 @@ export interface VoiceStatus {
 }
 export const getVoiceEvents = (c: Connection, after: number, signal?: AbortSignal) =>
   call<VoiceEvent[]>(c, `/api/voice/events?after=${after}`, { signal });
+export const setVoiceMode = (c: Connection, mode: "live" | "local") =>
+  call<{ mode: string }>(c, "/api/voice/mode", { method: "POST", body: JSON.stringify({ mode }) });
+export const getVoiceSeq = (c: Connection) => call<{ seq: number }>(c, "/api/voice/seq");
+export const listenNow = (c: Connection) => call<{ listening: boolean }>(c, "/api/voice/listen", { method: "POST", body: "{}" });
 export const getVoice = (c: Connection) => call<VoiceStatus>(c, "/api/voice");
 export const setVoice = (c: Connection, enabled: boolean) =>
   call<VoiceStatus>(c, "/api/voice", { method: "POST", body: JSON.stringify({ enabled }) });

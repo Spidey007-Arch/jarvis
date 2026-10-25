@@ -58,6 +58,16 @@ class ReadinessTests(unittest.TestCase):
             self.assertIn(voice.FILES["piper_zip"], state["missing"])
 
 
+class TranscriptTests(unittest.TestCase):
+    def test_non_speech_and_the_name_are_dropped(self) -> None:
+        cases = {"(birds chirping)": "", "[Music]": "", " [BLANK_AUDIO] ": "", "*sigh* What time is it?": "What time is it?",
+                 "Open (inaudible) the downloads folder.": "Open the downloads folder", "Hey Jarvis, play some music.": "play some music",
+                 "Jarvis.": "", "Jarvis, what's the weather?": "what's the weather?"}
+        for raw, want in cases.items():
+            with self.subTest(raw=raw):
+                self.assertEqual(voice.clean_transcript(raw), want)
+
+
 class AudioTests(unittest.TestCase):
     def test_rms_and_wav(self) -> None:
         loud = array.array("h", [1000, -1000] * 400).tobytes()

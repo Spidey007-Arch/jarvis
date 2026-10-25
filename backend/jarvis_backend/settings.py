@@ -26,11 +26,12 @@ DEFAULTS: dict[str, Any] = {
     "address": "sir",
     "proactive_alerts": True,
     "voice_enabled": False,
+    "voice_mode": "live",  # live: Gemini Live speech-to-speech; local: wake word + Whisper + Piper, offline
     "provider": "gemini",
     "provider_config": {},
     "secrets": {},
 }
-PROFILE_FIELDS = ("user_name", "address", "proactive_alerts", "voice_enabled")
+PROFILE_FIELDS = ("user_name", "address", "proactive_alerts", "voice_enabled", "voice_mode")
 PROVIDER_FIELDS = ("chat_model", "embed_model", "base_url")
 
 

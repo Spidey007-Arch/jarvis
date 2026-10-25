@@ -113,6 +113,7 @@ def record_utterance(stop: threading.Event) -> bytes | None:
     block = int(RATE * 0.05)
     noise: list[float] = []
     spoken = False
+    loud_for = 0.0  # speech must last a moment: a door or a bird is not a request
     quiet_for = 0.0
     started = time.monotonic()
     with sd.RawInputStream(samplerate=RATE, channels=1, dtype="int16", blocksize=block) as stream:
@@ -124,10 +125,13 @@ def record_utterance(stop: threading.Event) -> bytes | None:
             if elapsed < 0.3:
                 noise.append(level)  # the room's background level, to judge what counts as speech
                 continue
-            threshold = max(160.0, (sum(noise) / max(1, len(noise))) * 3.5)  # laptop mic arrays can be quiet
+            threshold = max(110.0, (sum(noise) / max(1, len(noise))) * 2.5)  # laptop mic arrays can be very quiet
             frames.append(data)
             if level > threshold:
-                spoken, quiet_for = True, 0.0
+                loud_for += 0.05
+                quiet_for = 0.0
+                if loud_for >= 0.3:
+                    spoken = True
             else:
                 quiet_for += 0.05
             if spoken and quiet_for >= END_SILENCE_S:
@@ -139,7 +143,18 @@ def record_utterance(stop: threading.Event) -> bytes | None:
     return b"".join(frames) if spoken else None
 
 
+def normalise(pcm: bytes, target_peak: int = 20000) -> bytes:
+    """Bring quiet speech up to a healthy level (at most 30x) so Whisper hears it clearly."""
+    a = array.array("h", pcm)
+    peak = max((abs(x) for x in a), default=0)
+    if not peak or peak >= target_peak:
+        return pcm
+    gain = min(30.0, target_peak / peak)
+    return array.array("h", (max(-32768, min(32767, int(x * gain))) for x in a)).tobytes()
+
+
 def to_wav(pcm: bytes) -> bytes:
+    pcm = normalise(pcm)
     buf = io.BytesIO()
     with wave.open(buf, "wb") as w:
         w.setnchannels(1)
@@ -147,6 +162,16 @@ def to_wav(pcm: bytes) -> bytes:
         w.setframerate(RATE)
         w.writeframes(pcm)
     return buf.getvalue()
+
+
+def clean_transcript(text: str) -> str:
+    """Drop Whisper's descriptions of non-speech, e.g. "(birds chirping)", "[Music]", "*sigh*"."""
+    import re
+
+    text = re.sub(r"\([^)]*\)|\[[^\]]*\]|\*[^*]*\*", " ", text)
+    text = re.sub(r"\s+", " ", text).strip(" .,-")
+    text = re.sub(r"^(hey|ok|okay)?\s*jarvis\b[\s,.!?-]*", "", text, flags=re.I)  # the name is not part of the request
+    return text if re.search(r"[A-Za-z]{2,}", text) else ""
 
 
 def transcribe(wav: bytes, setup: dict[str, Any]) -> str:
@@ -159,8 +184,7 @@ def transcribe(wav: bytes, setup: dict[str, Any]) -> str:
                            capture_output=True, text=True, timeout=90, creationflags=win.CREATE_NO_WINDOW | win.ABOVE_NORMAL_PRIORITY_CLASS)
         if r.returncode != 0:
             raise RuntimeError((r.stderr or r.stdout).strip().splitlines()[-1] if (r.stderr or r.stdout).strip() else f"whisper exited {r.returncode}")
-        text = " ".join(line.strip() for line in r.stdout.splitlines() if line.strip())
-        return "" if text.strip("[]() ").lower() in {"blank_audio", "silence", "music", ""} else text.strip()
+        return clean_transcript(" ".join(line.strip() for line in r.stdout.splitlines() if line.strip()))
     finally:
         Path(path).unlink(missing_ok=True)
 
@@ -183,6 +207,8 @@ class Voice:
     def __init__(self, emit: Callable[[dict[str, Any]], None]) -> None:
         self.emit = emit
         self.enabled = False
+        self.mode = "live"  # live: the backend runs a Gemini Live session; local: Whisper + Piper here
+        self.live_busy: Callable[[], bool] = lambda: False
         self._wake: threading.Thread | None = None
         self._wake_stop = threading.Event()
         self._busy = threading.Lock()
@@ -192,8 +218,14 @@ class Voice:
 
     # ----- wake word -----
 
-    def set_enabled(self, enabled: bool) -> dict[str, Any]:
+    def set_enabled(self, enabled: bool, mode: str | None = None) -> dict[str, Any]:
+        if mode in ("live", "local"):
+            self.mode = mode
         setup = prepare()
+        if enabled and self.mode == "live":
+            # live mode only needs the wake word models here; Gemini hears and speaks
+            wake_missing = [m for m in setup["missing"] if m.endswith(".onnx") and "alan" not in m or "numpy" in m]
+            setup = {**setup, "ready": not wake_missing, "missing": wake_missing}
         if enabled and not setup["ready"]:
             self.enabled = False
             return {"enabled": False, **setup}
@@ -224,7 +256,7 @@ class Voice:
                 with sd.RawInputStream(samplerate=RATE, channels=1, dtype="int16", blocksize=CHUNK) as mic:
                     while not stop.is_set():
                         data, _ = mic.read(CHUNK)
-                        if self._busy.locked():  # already taking a request: do not trigger on it
+                        if self._busy.locked() or self.live_busy():  # already taking a request: do not trigger on it
                             detector.reset()
                             continue
                         score = detector.heard(bytes(data))
@@ -236,6 +268,9 @@ class Voice:
                 stop.wait(3)
 
     def on_wake(self, confidence: float = 1.0) -> None:
+        if self.mode == "live":
+            self.emit({"event": "wake", "confidence": confidence})  # the backend opens a live session
+            return
         self.stop_speaking()
         if not self._busy.acquire(blocking=False):
             return  # already listening

@@ -24,6 +24,7 @@ from .providers.base import ToolCall
 from .monitor import Monitor
 from .reminders import ReminderError, Reminders
 from .research import ResearchError, web_research
+from .live import LiveError, LiveVoice
 from .tools import BY_NAME, OBSERVE_TOOLS, STEPWISE_TOOLS, TOOLS, ToolSpec, describe_call
 from .providers import PRESETS
 from .memory import TYPES, MemoryStore
@@ -48,6 +49,7 @@ class Services:
     bridge: AgentBridge
     reminders: Reminders
     monitor: Monitor
+    live: Any = None  # LiveVoice, created with the router (it needs the router's tool runner)
 
 
 class ToolFailure(Exception):
@@ -112,6 +114,10 @@ class ChatIn(BaseModel):
 
 class VoiceIn(BaseModel):
     enabled: bool
+
+
+class VoiceModeIn(BaseModel):
+    mode: str = Field(pattern="^(live|local)$")
 
 
 class SpeakIn(BaseModel):
@@ -381,9 +387,89 @@ def build_router(svc: Services, require_auth: Callable[..., None]) -> APIRouter:
         except Exception:  # noqa: BLE001 - extraction must never break chat; the failure is logged
             log.exception("memory extraction failed")
 
+    async def _live_tool(name: str, args: dict[str, Any]) -> dict[str, Any]:
+        """A tool call made by the live voice model. Risky actions still need a click on screen."""
+        spec = BY_NAME.get(name)
+        if spec is None:
+            return {"ok": False, "error": f"There is no tool named '{name}'."}
+        previewing = spec.name == "organize_folder" and args.get("dry_run", True) is not False
+        if spec.risk == "confirm" and not previewing:
+            return {"ok": False, "error": "This action needs the user's approval on screen, which a voice session cannot give. "
+                                          "Tell them to ask for it by typing in the JARVIS window so they can approve it."}
+        audit.info("tool call", extra={"fields": {"tool": spec.name, "args": args, "via": "live"}})
+        try:
+            return {"ok": True, "result": _trim(await _run_tool(spec, args))}
+        except (AgentUnavailable, AgentError, ResearchError, ReminderError, ToolFailure, LLMError, LLMNotConfigured) as e:
+            audit.warning("tool failed", extra={"fields": {"tool": spec.name, "error": str(e)}})
+            return {"ok": False, "error": str(e)}
+
+    def _live_prompt() -> str:
+        context = _situation("")
+        context["voice"] = True
+        return build_system_prompt(svc.settings.public(), svc.memory.core(), [], tools_enabled=True, context=context)
+
+    def _live_save(conv_id: str | None, user: str, reply: str) -> str:
+        now = time.time()
+        if conv_id is None:
+            conv_id = uuid.uuid4().hex
+            title = ("Voice: " + (user or reply).splitlines()[0])[:60]
+            svc.db.run("INSERT INTO conversations (id, title, created_at, updated_at) VALUES (?,?,?,?)", [conv_id, title, now, now])
+        if user:
+            svc.db.run("INSERT INTO messages (id, conversation_id, role, content, created_at) VALUES (?,?,?,?,?)",
+                       [uuid.uuid4().hex, conv_id, "user", user, now])
+        if reply:
+            svc.db.run("INSERT INTO messages (id, conversation_id, role, content, created_at) VALUES (?,?,?,?,?)",
+                       [uuid.uuid4().hex, conv_id, "model", reply, now + 0.001])
+        svc.db.run("UPDATE conversations SET updated_at=? WHERE id=?", [now, conv_id])
+        return conv_id
+
+    svc.live = LiveVoice(
+        api_key=lambda: svc.settings.api_key("gemini"),
+        push_agent=svc.bridge.push,
+        call_agent=svc.bridge.call,
+        emit=lambda e: svc.bridge.voice_event({"type": "voice", **e}),
+        system_prompt=_live_prompt,
+        tools=TOOL_SCHEMAS,
+        run_tool=_live_tool,
+        save_turn=_live_save,
+        after_turn=lambda user, reply, conv: spawn(_remember(user, reply, svc.memory.core(), conv)),
+    )
+
     @r.get("/voice/events")
     async def voice_events(after: int = 0) -> list[dict[str, Any]]:
         return await svc.bridge.wait_voice(after)
+
+    @r.get("/voice/seq")
+    async def voice_seq() -> dict[str, int]:
+        """Where the event stream is now, so a freshly opened window only reacts to new events."""
+        return {"seq": svc.bridge.voice_seq}
+
+    @r.post("/voice/listen")
+    async def voice_listen() -> dict[str, Any]:
+        """Push-to-talk: open a live conversation (or, in local mode, take one request) without the wake word.
+        Pressing it again during a live conversation ends it."""
+        if (svc.settings.get("voice_mode") or "live") == "live":
+            if svc.live.active:
+                await svc.live.stop()
+                return {"live": False}
+            try:
+                return await svc.live.start("button")
+            except LiveError as e:
+                raise HTTPException(status_code=400, detail=str(e)) from e
+        try:
+            return await svc.bridge.call("listen_now", timeout=20)
+        except (AgentUnavailable, AgentError) as e:
+            raise HTTPException(status_code=503, detail=str(e)) from e
+
+    @r.post("/voice/mode")
+    async def voice_mode(body: VoiceModeIn) -> dict[str, Any]:
+        svc.settings.update_profile({"voice_mode": body.mode})
+        if svc.settings.get("voice_enabled"):
+            try:
+                await svc.bridge.call("voice_set", {"enabled": True, "mode": body.mode}, timeout=30)
+            except (AgentUnavailable, AgentError):
+                pass
+        return {"mode": body.mode}
 
     @r.get("/voice")
     async def voice_status() -> dict[str, Any]:
@@ -395,7 +481,7 @@ def build_router(svc: Services, require_auth: Callable[..., None]) -> APIRouter:
     @r.post("/voice")
     async def voice_toggle(body: VoiceIn) -> dict[str, Any]:
         try:
-            state = await svc.bridge.call("voice_set", {"enabled": body.enabled}, timeout=30)
+            state = await svc.bridge.call("voice_set", {"enabled": body.enabled, "mode": svc.settings.get("voice_mode") or "live"}, timeout=30)
         except (AgentUnavailable, AgentError) as e:
             raise HTTPException(status_code=503, detail=str(e)) from e
         svc.settings.update_profile({"voice_enabled": bool(state.get("enabled"))})
@@ -410,6 +496,9 @@ def build_router(svc: Services, require_auth: Callable[..., None]) -> APIRouter:
 
     @r.post("/voice/stop")
     async def voice_stop() -> dict[str, Any]:
+        if svc.live.active:
+            await svc.live.stop()
+            return {"stopped": True}
         try:
             return await svc.bridge.call("stop_speaking", timeout=10)
         except (AgentUnavailable, AgentError) as e:

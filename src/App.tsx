@@ -3,7 +3,7 @@ import Reactor from "./Reactor";
 import type { Activity } from "./fx/activity";
 import { useTelemetry } from "./telemetry";
 import { Connection, Overall, ShellStatus, getConnection, getStatus, insideShell, onStatus } from "./shell";
-import { Alert, Quota, VoiceEvent, getAlerts, getQuota, getSettings, getVoiceEvents, stopSpeaking } from "./api";
+import { Alert, Quota, VoiceEvent, getAlerts, getQuota, getSettings, getVoiceEvents, getVoiceSeq, stopSpeaking } from "./api";
 import ChatView from "./views/ChatView";
 import HistoryPanel from "./views/HistoryPanel";
 import MemoryView from "./views/MemoryView";
@@ -121,26 +121,34 @@ function QuotaStrip({ conn, activity }: { conn: Connection | null; activity: Act
   );
 }
 
-type VoiceState = "off" | "listening" | "transcribing" | "speaking";
+type VoiceState = "off" | "listening" | "transcribing" | "speaking" | "connecting" | "live";
 
 /** Follows the agent's voice events: shows when JARVIS is listening, hands what was heard to the
  *  chat, and lets a click stop JARVIS mid-sentence. */
-function VoiceLink({ conn, onState }: { conn: Connection | null; onState: (s: VoiceState) => void }) {
+function VoiceLink({ conn, onState, onTurn }: { conn: Connection | null; onState: (s: VoiceState) => void; onTurn: (conversationId: string) => void }) {
   const [state, setState] = useState<VoiceState>("off");
+  const [caption, setCaption] = useState<string>("");
   const [heard, setHeard] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
 
   useEffect(() => {
     if (!conn) return;
     const ctrl = new AbortController();
-    let after = 0;
-    let first = true;
+    let after = -1;
     const put = (s: VoiceState) => {
       setState(s);
       onState(s);
     };
     (async () => {
       while (!ctrl.signal.aborted) {
+        if (after < 0) {
+          try {
+            after = (await getVoiceSeq(conn)).seq; // start from now: old events are history
+          } catch {
+            await new Promise((r) => setTimeout(r, 2000));
+            continue;
+          }
+        }
         let events: VoiceEvent[] = [];
         try {
           events = await getVoiceEvents(conn, after, ctrl.signal);
@@ -150,7 +158,6 @@ function VoiceLink({ conn, onState }: { conn: Connection | null; onState: (s: Vo
         }
         for (const e of events) {
           after = Math.max(after, e.seq);
-          if (first) continue; // replay protection: only react to what happens from now on
           if (e.event === "listening") {
             setHeard(null);
             setNote(null);
@@ -164,16 +171,34 @@ function VoiceLink({ conn, onState }: { conn: Connection | null; onState: (s: Vo
           } else if (e.event === "idle") {
             if (e.reason && e.reason !== "spoken" && e.reason !== "interrupted") setNote(e.reason);
             put("off");
+          } else if (e.event === "live_connecting") {
+            setCaption("");
+            setNote(null);
+            put("connecting");
+          } else if (e.event === "live_start") put("live");
+          else if (e.event === "user_text" && e.text) {
+            setCaption(`You: ${e.text}`);
+            put("live");
+          } else if (e.event === "jarvis_text" && e.text) {
+            setCaption(e.text);
+            put("speaking");
+          } else if (e.event === "live_tool") setCaption(`Working on it… (${(e.tool ?? "").replace(/_/g, " ")})`);
+          else if (e.event === "live_turn" && e.conversation_id) {
+            onTurn(e.conversation_id);
+            put("live");
+          } else if (e.event === "live_end") {
+            setCaption("");
+            if (e.conversation_id) onTurn(e.conversation_id);
+            put("off");
           } else if (e.event === "error") {
             setNote(e.message ?? "voice error");
             put("off");
           }
         }
-        first = false;
       }
     })();
     return () => ctrl.abort();
-  }, [conn, onState]);
+  }, [conn, onState, onTurn]);
 
   useEffect(() => {
     if (!heard && !note) return;
@@ -185,10 +210,16 @@ function VoiceLink({ conn, onState }: { conn: Connection | null; onState: (s: Vo
   }, [heard, note]);
 
   if (state === "off" && !heard && !note) return null;
-  const label = state === "listening" ? "Listening" : state === "transcribing" ? "Understanding" : state === "speaking" ? "Speaking" : "";
+  const live = state === "connecting" || state === "live" || (state === "speaking" && !!caption);
+  const label =
+    state === "connecting" ? "Connecting"
+    : live && caption ? caption
+    : state === "live" ? "Live · listening"
+    : state === "listening" ? "Listening" : state === "transcribing" ? "Understanding" : state === "speaking" ? "Speaking" : "";
   return (
-    <div className={`voice-pill glass ${state}`} role="status" onClick={() => state === "speaking" && conn && stopSpeaking(conn).catch(() => {})}
-         title={state === "speaking" ? "Click (or say JARVIS) to stop" : undefined}>
+    <div className={`voice-pill glass ${state} ${live ? "is-live" : ""}`} role="status"
+         onClick={() => conn && state !== "off" && stopSpeaking(conn).catch(() => {})}
+         title={live ? "Click to end the conversation (or say “that's all”)" : state === "speaking" ? "Click to stop" : undefined}>
       {state !== "off" && (
         <span className="voice-bars" aria-hidden="true"><i /><i /><i /><i /><i /></span>
       )}
@@ -210,7 +241,13 @@ export default function App() {
   const tel = useTelemetry(conn, "backend");
   const [alert, setAlert] = useState<Alert | null>(null);
   const [wake, setWake] = useState(1);
-  const [voice, setVoiceState] = useState<VoiceState>("off"); // bumps replay the aurora sweep: on launch and on every new chat
+  const [voice, setVoiceState] = useState<VoiceState>("off");
+  const [reload, setReload] = useState(0);
+  const onTurn = useCallback((id: string) => {
+    setConversation(id);
+    setReload((n) => n + 1);
+    setHistoryVersion((v) => v + 1);
+  }, []); // bumps replay the aurora sweep: on launch and on every new chat
 
   // Proactive alerts from the backend monitor: show the newest one for a while.
   useEffect(() => {
@@ -291,7 +328,9 @@ export default function App() {
   const overall: Overall = status?.overall ?? "starting";
   const baseActivity: Activity = overall === "failed" ? "offline" : overall !== "online" && activity === "idle" ? "thinking" : activity;
   const coreActivity: Activity =
-    voice === "listening" ? "listening" : voice === "transcribing" ? "thinking" : voice === "speaking" ? "speaking" : baseActivity;
+    voice === "listening" || voice === "live" ? "listening"
+    : voice === "transcribing" || voice === "connecting" ? "thinking"
+    : voice === "speaking" ? "speaking" : baseActivity;
   const s = tel.agent?.stats ?? {};
 
   return (
@@ -344,7 +383,7 @@ export default function App() {
         </button>
       </nav>
 
-      <VoiceLink conn={conn} onState={setVoiceState} />
+      <VoiceLink conn={conn} onState={setVoiceState} onTurn={onTurn} />
 
       <main className="front">
         <ChatView
@@ -355,6 +394,7 @@ export default function App() {
           onConversation={onConversation}
           onActivity={setActivity}
           goSettings={() => setDrawer("settings")}
+          reload={reload}
         />
       </main>
 
