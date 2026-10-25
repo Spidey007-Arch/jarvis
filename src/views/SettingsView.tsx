@@ -277,6 +277,18 @@ export default function SettingsView({ conn, onChanged }: { conn: Connection | n
             />
             <span>Speak up proactively (low battery, full drive, sustained CPU or memory overload)</span>
           </label>
+          <label className="switch">
+            <input
+              type="checkbox"
+              checked={s.startup_briefing}
+              disabled={busy}
+              onChange={(e) =>
+                save("profile", { startup_briefing: e.target.checked },
+                  e.target.checked ? "JARVIS will brief you out loud each time it starts." : "Start-up briefing is off.")
+              }
+            />
+            <span>Start-up briefing: system health, open apps and processes, spoken when JARVIS opens</span>
+          </label>
           <div className="field-row">
             <button
               disabled={busy || (name === s.user_name && address === s.address)}

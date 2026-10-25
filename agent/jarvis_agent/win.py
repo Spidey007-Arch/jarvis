@@ -61,6 +61,34 @@ def visible_windows_of(pid: int) -> list[int]:
     return found
 
 
+user32.GetWindowTextLengthW.argtypes = [wintypes.HWND]
+user32.GetWindowTextW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
+user32.GetWindowRect.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.RECT)]
+user32.GetWindowLongW.argtypes = [wintypes.HWND, ctypes.c_int]
+GWL_EXSTYLE = -20
+WS_EX_TOOLWINDOW = 0x80
+
+
+def titled_windows() -> list[tuple[int, str]]:
+    """(pid, title) of every visible top-level window with a title: the apps the user has open."""
+    found: list[tuple[int, str]] = []
+
+    def cb(hwnd: int, _: int) -> bool:
+        rect = wintypes.RECT()
+        if user32.IsWindowVisible(hwnd) and not user32.GetWindowLongW(hwnd, GWL_EXSTYLE) & WS_EX_TOOLWINDOW                 and (user32.IsIconic(hwnd) or user32.GetWindowRect(hwnd, ctypes.byref(rect)) and rect.right - rect.left > 100):
+            n = user32.GetWindowTextLengthW(hwnd)
+            if n:
+                buf = ctypes.create_unicode_buffer(n + 1)
+                user32.GetWindowTextW(hwnd, buf, n + 1)
+                owner = wintypes.DWORD()
+                user32.GetWindowThreadProcessId(hwnd, ctypes.byref(owner))
+                found.append((owner.value, buf.value))
+        return True
+
+    user32.EnumWindows(_WNDENUMPROC(cb), 0)
+    return found
+
+
 @contextmanager
 def windows_hidden(pid: int, settle: float = 0.25) -> Iterator[None]:
     """Hide a process's windows (e.g. JARVIS itself) for a moment, then show them again unchanged."""

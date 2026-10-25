@@ -25,13 +25,14 @@ DEFAULTS: dict[str, Any] = {
     "user_name": "",
     "address": "sir",
     "proactive_alerts": True,
-    "voice_enabled": False,
+    "voice_enabled": True,
+    "startup_briefing": True,  # JARVIS speaks first on launch: system health, open apps and processes
     "voice_mode": "live",  # live: Gemini Live speech-to-speech; local: wake word + Whisper + Piper, offline
     "provider": "gemini",
     "provider_config": {},
     "secrets": {},
 }
-PROFILE_FIELDS = ("user_name", "address", "proactive_alerts", "voice_enabled", "voice_mode")
+PROFILE_FIELDS = ("user_name", "address", "proactive_alerts", "voice_enabled", "voice_mode", "startup_briefing")
 PROVIDER_FIELDS = ("chat_model", "embed_model", "base_url")
 
 
@@ -142,7 +143,7 @@ class SettingsStore:
         key = self.api_key(pid)
         with self._lock:
             keyed = sorted(k.split(":", 1)[1] for k in self._data["secrets"] if k.startswith("api_key:"))
-            profile = {k: self._data.get(k) for k in PROFILE_FIELDS}
+            profile = {k: self._data.get(k, DEFAULTS.get(k)) for k in PROFILE_FIELDS}
         return {
             **profile,
             "provider": pid,

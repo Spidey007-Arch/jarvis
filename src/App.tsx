@@ -3,7 +3,7 @@ import Reactor from "./Reactor";
 import type { Activity } from "./fx/activity";
 import { useTelemetry } from "./telemetry";
 import { Connection, Overall, ShellStatus, getConnection, getStatus, insideShell, onStatus } from "./shell";
-import { Alert, Quota, VoiceEvent, getAlerts, getQuota, getSettings, getVoiceEvents, getVoiceSeq, stopSpeaking } from "./api";
+import { Alert, Quota, VoiceEvent, getAlerts, getQuota, getSettings, getVoiceEvents, getVoiceSeq, startBriefing, stopSpeaking } from "./api";
 import ChatView from "./views/ChatView";
 import HistoryPanel from "./views/HistoryPanel";
 import MemoryView from "./views/MemoryView";
@@ -121,7 +121,9 @@ function QuotaStrip({ conn, activity }: { conn: Connection | null; activity: Act
   );
 }
 
-type VoiceState = "off" | "listening" | "transcribing" | "speaking" | "connecting" | "live";
+export type VoiceState = "off" | "listening" | "transcribing" | "speaking" | "connecting" | "live";
+
+let briefingAsked = false; // once per window: the backend also refuses a second briefing per launch
 
 /** Follows the agent's voice events: shows when JARVIS is listening, hands what was heard to the
  *  chat, and lets a click stop JARVIS mid-sentence. */
@@ -144,6 +146,10 @@ function VoiceLink({ conn, onState, onTurn }: { conn: Connection | null; onState
         if (after < 0) {
           try {
             after = (await getVoiceSeq(conn)).seq; // start from now: old events are history
+            if (!briefingAsked) {
+              briefingAsked = true; // JARVIS speaks first: the start-up briefing
+              startBriefing(conn).catch(() => {});
+            }
           } catch {
             await new Promise((r) => setTimeout(r, 2000));
             continue;
@@ -164,11 +170,16 @@ function VoiceLink({ conn, onState, onTurn }: { conn: Connection | null; onState
             put("listening");
           } else if (e.event === "transcribing") put("transcribing");
           else if (e.event === "speaking") put("speaking");
+          else if (e.event === "briefing" && e.text) {
+            setCaption(e.text);
+            put("speaking");
+          }
           else if (e.event === "transcript" && e.text) {
             setHeard(e.text);
             put("off");
             window.dispatchEvent(new CustomEvent("jarvis:voice-text", { detail: e.text }));
           } else if (e.event === "idle") {
+            setCaption("");
             if (e.reason && e.reason !== "spoken" && e.reason !== "interrupted") setNote(e.reason);
             put("off");
           } else if (e.event === "live_connecting") {
@@ -395,6 +406,7 @@ export default function App() {
           onActivity={setActivity}
           goSettings={() => setDrawer("settings")}
           reload={reload}
+          voice={voice}
         />
       </main>
 

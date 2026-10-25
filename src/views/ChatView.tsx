@@ -41,6 +41,25 @@ function ActionRow({ a, live, onAnswer }: { a: ActionEvent; live: boolean; onAns
   );
 }
 type Notice = { tone: "warn" | "bad" | "dim"; text: string };
+type Voice = "off" | "listening" | "transcribing" | "speaking" | "connecting" | "live";
+
+const HINT: Record<Voice, string> = {
+  off: "Say “Hey JARVIS”, tap the mic or press Ctrl+Space",
+  connecting: "Connecting…",
+  live: "Listening. Just talk",
+  speaking: "Speaking. Talk to interrupt",
+  listening: "Listening…",
+  transcribing: "Understanding…",
+};
+
+const INPUT_KEY = "jarvis.input"; // remembers whether the keyboard was chosen over voice
+function prefersText(): boolean {
+  try {
+    return localStorage.getItem(INPUT_KEY) === "text";
+  } catch {
+    return false;
+  }
+}
 
 function greeting(address: string) {
   const h = new Date().getHours();
@@ -57,6 +76,7 @@ export default function ChatView({
   onActivity,
   goSettings,
   reload = 0,
+  voice = "off",
 }: {
   conn: Connection | null;
   configured: boolean;
@@ -66,6 +86,7 @@ export default function ChatView({
   onActivity: (a: Activity) => void;
   goSettings: () => void;
   reload?: number; // bumped when a live voice turn was saved to this conversation
+  voice?: Voice;
 }) {
   const [lines, setLines] = useState<Line[]>([]);
   const [input, setInput] = useState("");
@@ -74,6 +95,17 @@ export default function ChatView({
   const abort = useRef<AbortController | null>(null);
   const bottom = useRef<HTMLDivElement>(null);
   const box = useRef<HTMLTextAreaElement>(null);
+  // Voice is the normal way to talk to JARVIS; the text box is optional.
+  const [typing, setTyping] = useState(prefersText);
+  const chooseText = (on: boolean) => {
+    setTyping(on);
+    try {
+      localStorage.setItem(INPUT_KEY, on ? "text" : "voice");
+    } catch {
+      /* not remembered; fine */
+    }
+    if (on) window.setTimeout(() => box.current?.focus(), 0);
+  };
   const ownConversation = useRef<string | null>(null);
 
   // Load a conversation picked from history (but not the one this view just created), or refresh it
@@ -102,7 +134,23 @@ export default function ChatView({
     if (!el) return;
     el.style.height = "0px";
     el.style.height = `${Math.min(el.scrollHeight, 140)}px`;
-  }, [input]);
+  }, [input, typing]);
+
+  // In voice mode, just starting to type opens the text box with that key.
+  useEffect(() => {
+    if (typing) return;
+    const onKey = (e: globalThis.KeyboardEvent) => {
+      const t = e.target as HTMLElement | null;
+      if (e.key.length !== 1 || e.ctrlKey || e.metaKey || e.altKey || e.key === " ") return;
+      if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return;
+      e.preventDefault();
+      setInput((v) => v + e.key);
+      setTyping(true);
+      window.setTimeout(() => box.current?.focus(), 0);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [typing]);
 
   useEffect(() => {
     if (!streaming) onActivity(input.trim() ? "typing" : "idle");
@@ -198,13 +246,13 @@ export default function ChatView({
       if (spoken !== undefined && !failed && !ctrl.signal.aborted && full.trim()) {
         speak(conn, forSpeech(full)).catch((e) => setNotice({ tone: "warn", text: `Could not speak the reply: ${(e as Error).message}` }));
       }
-      box.current?.focus();
+      if (typing) box.current?.focus();
     }
   };
 
   // Push-to-talk: the mic button or Ctrl+Space anywhere in the window starts listening at once.
   const talk = () => {
-    if (!conn || streaming) return;
+    if (!conn) return;
     listenNow(conn).catch((e) => setNotice({ tone: "bad", text: (e as Error).message }));
   };
   const talkRef = useRef(talk);
@@ -244,7 +292,9 @@ export default function ChatView({
         {empty && (
           <div className="hello">
             <div className="hello-line">{greeting(address)}</div>
-            <div className="hello-sub">{configured ? "Systems ready. What do you need?" : "Connect an AI provider in Settings to bring me online."}</div>
+            <div className="hello-sub">
+              {!typing ? "Voice mode. Just talk to me." : configured ? "Systems ready. What do you need?" : "Connect an AI provider in Settings to bring me online."}
+            </div>
           </div>
         )}
         {lines.map((m) => (
@@ -279,7 +329,30 @@ export default function ChatView({
             Connect an AI provider to start →
           </button>
         )}
+        {!typing ? (
+          <div className="voice-dock">
+            <span />
+            <button
+              className={`orb-mic v-${voice}`}
+              disabled={!conn}
+              onClick={talk}
+              aria-label={voice === "off" ? "Talk to JARVIS" : "End the conversation"}
+              title={voice === "off" ? "Talk (Ctrl+Space)" : "End (or say “that's all”)"}
+            >
+              <span className="orb-ring" />
+              <span className="orb-ring r2" />
+              <svg viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3" /><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21" /></svg>
+            </button>
+            <button className="kbd" onClick={() => chooseText(true)} aria-label="Type instead" title="Type instead (or just start typing)">
+              <svg viewBox="0 0 24 24"><rect x="2.5" y="6" width="19" height="12" rx="2.5" /><path d="M6 10h1M9.5 10h1M13 10h1M16.5 10h1M7 14h10" /></svg>
+            </button>
+            <div className="voice-hint">{HINT[voice]}</div>
+          </div>
+        ) : (
         <div className={`composer ${streaming ? "busy" : ""}`}>
+          <button className="mic to-voice" onClick={() => chooseText(false)} aria-label="Back to voice" title="Back to voice mode">
+            <svg viewBox="0 0 24 24"><path d="M4 10v4M8 7v10M12 4v16M16 7v10M20 10v4" /></svg>
+          </button>
           <textarea
             ref={box}
             rows={1}
@@ -303,6 +376,7 @@ export default function ChatView({
             </button>
           )}
         </div>
+        )}
       </div>
     </div>
   );

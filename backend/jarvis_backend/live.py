@@ -6,7 +6,8 @@ directly, answers in its own voice, notices when it is interrupted and can call 
 Both sides are transcribed, and every finished exchange is saved as a normal conversation.
 
 A session opens on the wake word or push-to-talk and closes after IDLE_S of quiet, or when the user
-says something like "that's all". It talks to Google directly with the saved Gemini key (OmniRoute
+says something like "that's all". With an opening message (the start-up briefing) JARVIS speaks first,
+and the microphone is held back until it has finished so its own voice cannot interrupt it. It talks to Google directly with the saved Gemini key (OmniRoute
 does not relay live audio)."""
 from __future__ import annotations
 
@@ -39,7 +40,7 @@ class LiveVoice:
         system_prompt: Callable[[], str],
         tools: list[dict[str, Any]],
         run_tool: Callable[[str, dict[str, Any]], Awaitable[dict[str, Any]]],
-        save_turn: Callable[[str | None, str, str], str],
+        save_turn: Callable[[str | None, str, str, str | None], str],
         after_turn: Callable[[str, str, str], None] | None = None,
     ) -> None:
         self.api_key = api_key
@@ -62,14 +63,21 @@ class LiveVoice:
 
     # ----- control -----
 
-    async def start(self, origin: str) -> dict[str, Any]:
+    async def start(self, origin: str, opening: str | None = None, label: str | None = None, wait: bool = False) -> dict[str, Any]:
+        """Open a session. opening: a text turn JARVIS answers out loud before listening; label titles the saved
+        conversation. wait: return only once connected, raising LiveError if it cannot connect."""
         if self.active:
             return {"live": True, "already": True}
         if not self.api_key():
             raise LiveError("Live voice needs a Google Gemini key saved in Settings (OmniRoute cannot relay live audio).")
         self._stop = asyncio.Event()
         self._mic = asyncio.Queue(maxsize=100)
-        self._task = asyncio.create_task(self._run(origin))
+        opened: asyncio.Future = asyncio.get_running_loop().create_future()
+        self._task = asyncio.create_task(self._run(origin, opening, label, opened))
+        if wait:
+            err = await opened
+            if err:
+                raise LiveError(err)
         return {"live": True}
 
     async def stop(self) -> None:
@@ -122,7 +130,13 @@ class LiveVoice:
                     log.warning("live connect failed", extra={"fields": {"model": model, "voice": voice, "error": str(e)[:200]}})
         raise LiveError(f"Could not open a live voice session: {last}")
 
-    async def _run(self, origin: str) -> None:
+    async def _send_text(self, session: Any, types: Any, text: str) -> None:
+        try:
+            await session.send_realtime_input(text=text)  # Gemini 3 live models take text as realtime input
+        except Exception:  # noqa: BLE001 - older live models take it as a client turn
+            await session.send_client_content(turns=types.Content(role="user", parts=[types.Part(text=text)]), turn_complete=True)
+
+    async def _run(self, origin: str, opening: str | None, label: str | None, opened: asyncio.Future) -> None:
         from google import genai
         from google.genai import types
 
@@ -133,16 +147,24 @@ class LiveVoice:
             cm, session, model = await self._connect(client, types)
         except Exception as e:  # noqa: BLE001
             self.emit({"event": "error", "message": str(e)})
+            opened.set_result(str(e))
             return
+        opened.set_result(None)
         log.info("live session open", extra={"fields": {"model": model, "origin": origin}})
-        state = {"last": time.monotonic(), "playing_until": 0.0, "user": "", "jarvis": "", "bye": False}
+        state = {"last": time.monotonic(), "playing_until": 0.0, "user": "", "jarvis": "", "bye": False, "opening": bool(opening), "done": False}
         try:
             await self.call_agent("live_mic", {"on": True}, timeout=10)
-            self.emit({"event": "live_start", "model": model})
+            self.emit({"event": "live_start", "model": model, "origin": origin})
+            if opening:
+                await self._send_text(session, types, opening)
 
             async def send() -> None:
                 while True:
                     chunk = await self._mic.get()
+                    if state["opening"]:
+                        if not state["done"] or time.monotonic() < state["playing_until"]:
+                            continue  # JARVIS is still giving the briefing; don't let it hear itself
+                        state["opening"] = False
                     await session.send_realtime_input(audio=types.Blob(data=chunk, mime_type="audio/pcm;rate=16000"))
 
             async def receive() -> None:
@@ -179,10 +201,11 @@ class LiveVoice:
                                     state["playing_until"] = max(state["playing_until"], now) + len(pcm) / 48000.0
                                     state["last"] = now
                         if sc.turn_complete:
+                            state["done"] = True
                             user, reply = state["user"].strip(), state["jarvis"].strip()
                             state["user"] = state["jarvis"] = ""
                             if user or reply:
-                                conv_id = self.save_turn(conv_id, user, reply)
+                                conv_id = self.save_turn(conv_id, user, reply, label)
                                 self.emit({"event": "live_turn", "conversation_id": conv_id})
                                 if self.after_turn and user and reply:
                                     self.after_turn(user, reply, conv_id)

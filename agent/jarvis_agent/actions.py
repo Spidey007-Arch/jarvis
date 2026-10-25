@@ -113,6 +113,8 @@ def system_status(_: dict[str, Any]) -> dict[str, Any]:
     return {
         "cpu_percent": cpu,
         "cpu_cores": psutil.cpu_count(),
+        "process_count": len(procs),
+        "open_apps": _open_apps(),
         "memory": {"used_percent": vm.percent, "used_gb": round(vm.used / 1024**3, 1), "total_gb": round(vm.total / 1024**3, 1)},
         "disks": disks,
         "battery": battery,
@@ -122,6 +124,28 @@ def system_status(_: dict[str, Any]) -> dict[str, Any]:
         "top_memory": [{"name": n, "memory_mb": round(m / 1024**2)} for _, m, n in sorted(procs, key=lambda x: x[1], reverse=True)[:5]],
         "flags": flags,
     }
+
+
+_SHELL_WINDOWS = {"program manager", "windows input experience", "settings", "microsoft text input application", "nvidia geforce overlay"}
+
+
+def _open_apps() -> list[dict[str, Any]]:
+    """The apps with a visible window, by name, with their window count and memory use."""
+    apps: dict[str, dict[str, Any]] = {}
+    for pid, title in win.titled_windows():
+        if title.strip().lower() in _SHELL_WINDOWS:
+            continue
+        try:
+            proc = psutil.Process(pid)
+            name = proc.name().removesuffix(".exe")
+            mem = proc.memory_info().rss
+        except psutil.Error:
+            continue
+        if name.lower() in {"jarvis", "textinputhost", "applicationframehost", "systemsettings", "shellexperiencehost"}:
+            continue
+        app = apps.setdefault(name, {"name": name, "windows": 0, "memory_mb": round(mem / 1024**2)})
+        app["windows"] += 1
+    return sorted(apps.values(), key=lambda a: a["memory_mb"], reverse=True)[:12]
 
 
 # ======================= apps =======================

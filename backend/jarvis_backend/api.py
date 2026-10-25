@@ -16,6 +16,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
+from . import briefing
 from .db import DB
 from .extraction import EXTRACT_SCHEMA, extract_prompt
 from .bridge import AgentBridge, AgentError, AgentUnavailable
@@ -95,6 +96,7 @@ class SettingsIn(BaseModel):
     user_name: str | None = Field(default=None, max_length=80)
     address: str | None = Field(default=None, max_length=40)
     proactive_alerts: bool | None = None
+    startup_briefing: bool | None = None
     provider: str | None = None
     api_key: str | None = Field(default=None, max_length=300)
     base_url: str | None = Field(default=None, max_length=300)
@@ -166,7 +168,7 @@ def build_router(svc: Services, require_auth: Callable[..., None]) -> APIRouter:
     @r.put("/settings")
     async def put_settings(body: SettingsIn) -> dict[str, Any]:
         changes = body.model_dump(exclude_unset=True)
-        profile = {k: changes.pop(k) for k in ("user_name", "address", "proactive_alerts") if k in changes}
+        profile = {k: changes.pop(k) for k in ("user_name", "address", "proactive_alerts", "startup_briefing") if k in changes}
         if profile:
             svc.settings.update_profile(profile)
 
@@ -408,11 +410,11 @@ def build_router(svc: Services, require_auth: Callable[..., None]) -> APIRouter:
         context["voice"] = True
         return build_system_prompt(svc.settings.public(), svc.memory.core(), [], tools_enabled=True, context=context)
 
-    def _live_save(conv_id: str | None, user: str, reply: str) -> str:
+    def _live_save(conv_id: str | None, user: str, reply: str, label: str | None = None) -> str:
         now = time.time()
         if conv_id is None:
             conv_id = uuid.uuid4().hex
-            title = ("Voice: " + (user or reply).splitlines()[0])[:60]
+            title = ("Voice: " + (label or (user or reply).splitlines()[0]))[:60]
             svc.db.run("INSERT INTO conversations (id, title, created_at, updated_at) VALUES (?,?,?,?)", [conv_id, title, now, now])
         if user:
             svc.db.run("INSERT INTO messages (id, conversation_id, role, content, created_at) VALUES (?,?,?,?,?)",
@@ -434,6 +436,57 @@ def build_router(svc: Services, require_auth: Callable[..., None]) -> APIRouter:
         save_turn=_live_save,
         after_turn=lambda user, reply, conv: spawn(_remember(user, reply, svc.memory.core(), conv)),
     )
+
+    briefing_state = {"done": False}
+
+    async def _briefing_facts() -> tuple[dict[str, Any] | None, str]:
+        status = None
+        for _ in range(30):  # the agent connects a moment after the window opens
+            if svc.bridge.connected:
+                break
+            await asyncio.sleep(0.5)
+        if svc.bridge.connected:
+            try:
+                status = await svc.bridge.call("system_status", timeout=15)
+            except (AgentUnavailable, AgentError) as e:
+                log.warning("briefing: no system status: %s", e)
+        last = svc.db.one("SELECT updated_at FROM conversations ORDER BY updated_at DESC LIMIT 1")
+        last_used = None
+        if last:
+            when = datetime.fromtimestamp(last["updated_at"])
+            last_used = ("today at " if when.date() == datetime.now().date() else when.strftime("%A %d %B at ")) + when.strftime("%H:%M")
+        try:
+            quota = await svc.llm.quota_view()
+        except Exception:  # noqa: BLE001 - the quota line is optional
+            quota = None
+        return status, briefing.facts(status, svc.reminders.pending(), svc.monitor.recent(time.time() - 86400), quota, last_used, datetime.now())
+
+    @r.post("/briefing")
+    async def start_briefing(force: bool = False) -> dict[str, Any]:
+        """The start-up briefing, spoken. Runs once per launch (the window may reload); force repeats it."""
+        if briefing_state["done"] and not force:
+            return {"started": False, "reason": "already given"}
+        if not svc.settings.get("startup_briefing") and not force:
+            return {"started": False, "reason": "turned off"}
+        briefing_state["done"] = True
+        status, report = await _briefing_facts()
+        address = (svc.settings.get("address") or "sir").strip()
+        now = datetime.now()
+        if svc.live.active:
+            return {"started": False, "reason": "a voice conversation is already open"}
+        if (svc.settings.get("voice_mode") or "live") == "live":
+            try:
+                await svc.live.start("briefing", opening=briefing.opening_prompt(report, address, now), label="Start-up briefing", wait=True)
+                return {"started": True, "mode": "live"}
+            except LiveError as e:
+                log.warning("briefing: live voice unavailable, using the offline voice: %s", e)
+        text = briefing.spoken(status, svc.reminders.pending(), address, now)
+        svc.bridge.voice_event({"type": "voice", "event": "briefing", "text": text})
+        try:
+            await svc.bridge.call("speak", {"text": text}, timeout=120)
+        except (AgentUnavailable, AgentError) as e:
+            return {"started": True, "mode": "text", "text": text, "error": str(e)}
+        return {"started": True, "mode": "local", "text": text}
 
     @r.get("/voice/events")
     async def voice_events(after: int = 0) -> list[dict[str, Any]]:

@@ -26,6 +26,7 @@ export interface Settings {
   user_name: string;
   address: string;
   proactive_alerts: boolean;
+  startup_briefing: boolean;
   provider: string;
   base_url: string;
   chat_model: string;
@@ -55,7 +56,7 @@ export interface ModelInfo {
   kind: "chat" | "embed";
 }
 
-export type SettingsUpdate = Partial<Pick<Settings, "user_name" | "address" | "proactive_alerts" | "provider" | "base_url" | "chat_model" | "embed_model">> & {
+export type SettingsUpdate = Partial<Pick<Settings, "user_name" | "address" | "proactive_alerts" | "startup_briefing" | "provider" | "base_url" | "chat_model" | "embed_model">> & {
   api_key?: string;
 };
 
@@ -95,7 +96,7 @@ export interface VoiceEvent {
   at: number;
   event:
     | "listening" | "transcribing" | "transcript" | "speaking" | "idle" | "error"
-    | "live_connecting" | "live_start" | "user_text" | "jarvis_text" | "live_tool" | "live_turn" | "live_end";
+    | "live_connecting" | "live_start" | "user_text" | "jarvis_text" | "live_tool" | "live_turn" | "live_end" | "briefing";
   conversation_id?: string | null;
   tool?: string;
   model?: string;
@@ -116,6 +117,8 @@ export const setVoiceMode = (c: Connection, mode: "live" | "local") =>
   call<{ mode: string }>(c, "/api/voice/mode", { method: "POST", body: JSON.stringify({ mode }) });
 export const getVoiceSeq = (c: Connection) => call<{ seq: number }>(c, "/api/voice/seq");
 export const listenNow = (c: Connection) => call<{ listening: boolean }>(c, "/api/voice/listen", { method: "POST", body: "{}" });
+/** The spoken start-up briefing; the backend gives it once per launch. */
+export const startBriefing = (c: Connection) => call<{ started: boolean; mode?: string; text?: string }>(c, "/api/briefing", { method: "POST", body: "{}" });
 export const getVoice = (c: Connection) => call<VoiceStatus>(c, "/api/voice");
 export const setVoice = (c: Connection, enabled: boolean) =>
   call<VoiceStatus>(c, "/api/voice", { method: "POST", body: JSON.stringify({ enabled }) });
