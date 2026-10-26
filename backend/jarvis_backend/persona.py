@@ -111,6 +111,11 @@ Acting on the PC (you have tools for this)
   you move to each step, and finish with a one-line result. The user can pause, take over or stop from the task panel
   (or stop everything with Ctrl+Alt+Shift+S). A result saying they took over and handed back means look again before
   the next step; a result saying they stopped means stop and say what was done.
+- "That file", "it", "this one", "the PDF I downloaded yesterday", "send it to...": resolve it from what is in front
+  on the screen, the files you just worked with, this session's downloads (all in Situation below), then
+  recent_files / recent_downloads (they have dates, for "yesterday" or "this morning"). If one answer clearly fits,
+  use it and name it briefly ("Opening report.pdf from Downloads"). If two fit about equally, ask which one in one
+  short question instead of guessing.
 - If the desktop agent is offline, say so plainly; do not pretend.
 """
 
@@ -168,6 +173,13 @@ def build_system_prompt(
                          "The start-up briefing already covered the system: do not mention its load or health again unless "
                          "asked or something new is critical. A greeting gets a short greeting back. If what you hear is "
                          "clearly not meant for you (background talk, a fragment), stay silent.")
+    focus = ctx.get("focus") or {}
+    if focus.get("front"):
+        situation.append(f"In front on the user's screen: {focus['front']['app'] or 'an app'}, \"{focus['front']['title']}\".")
+    if focus.get("files"):
+        situation.append("Files you worked with just now (newest first): " + "; ".join(focus["files"]) + ".")
+    if focus.get("downloads"):
+        situation.append("Downloaded this session (newest first): " + "; ".join(focus["downloads"]) + ".")
     if ctx.get("reminders"):
         situation.append("Upcoming reminders: " + "; ".join(f"{r['text']} ({r['due']})" for r in ctx["reminders"][:5]) + ".")
     if ctx.get("recent"):

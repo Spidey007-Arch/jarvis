@@ -27,6 +27,7 @@ from .reminders import ReminderError, Reminders
 from .research import ResearchError, web_research
 from .live import LiveError, LiveVoice
 from .initiative import Initiative
+from .skills import guidance as skill_guidance
 from .tasks import TaskStopped
 from .tools import BY_NAME, OBSERVE_TOOLS, STEPWISE_TOOLS, TOOLS, ToolSpec, describe_call
 from .providers import PRESETS
@@ -55,6 +56,8 @@ class Services:
     live: Any = None  # LiveVoice, created with the router (it needs the router's tool runner)
     tasks: Any = None  # Tasks: task mode (tasks.py)
     initiative: Any = None  # Initiative: welcome back and follow-ups (initiative.py), created with the router
+    skills: Any = None  # Skills: learned workflows (skills.py)
+    recent_paths: list[dict[str, Any]] = field(default_factory=list)  # files JARVIS worked with lately, newest last
     emergency_stop: Callable[[], Awaitable[None]] | None = None  # set by the router
     offline_voice_until: float = 0.0  # Live voice paused until then: the connection was too slow for it
     agent_event: Callable[[dict[str, Any]], None] | None = None  # set by the router: events the agent reports on its own
@@ -324,6 +327,27 @@ def build_router(svc: Services, require_auth: Callable[..., None]) -> APIRouter:
 
     # ---------------- chat ----------------
 
+    _PATH_KEYS = ("path", "opened", "moved_to", "copied_to", "saved_to", "file", "folder", "destination", "source")
+
+    def _note_paths(tool: str, args: dict[str, Any], result: Any) -> None:
+        """Remember files JARVIS just worked with, so "that file" or "open it" can be resolved."""
+        found = [(k, args.get(k)) for k in ("path", "source", "destination", "folder")]
+        if isinstance(result, dict):
+            found += [(k, result.get(k)) for k in _PATH_KEYS]
+        for _k, v in found:
+            if isinstance(v, str) and (":\\" in v or v.startswith(("~", "Downloads", "Documents", "Desktop"))):
+                svc.recent_paths[:] = [p for p in svc.recent_paths if p["path"] != v][-11:]
+                svc.recent_paths.append({"path": v, "tool": tool, "at": time.time()})
+
+    def _focus() -> dict[str, Any]:
+        stats = svc.bridge.stats if svc.bridge.connected else {}
+        ago = lambda t: f"{int((time.time() - t) // 60)} min ago"  # noqa: E731
+        return {
+            "front": {"app": stats.get("front_app"), "title": stats.get("front_title")} if stats.get("front_title") else None,
+            "files": [f"{p['path']} ({p['tool']}, {ago(p['at'])})" for p in reversed(svc.recent_paths[-5:])],
+            "downloads": [f"{d['path']} ({ago(d['at'])})" for d in reversed(svc.recent_downloads[-3:]) if d.get("at")],
+        }
+
     def _situation(current_conv: str) -> dict[str, Any]:
         """Live context so JARVIS can be proactive and pick up earlier threads."""
         recent = []
@@ -343,6 +367,7 @@ def build_router(svc: Services, require_auth: Callable[..., None]) -> APIRouter:
             "pc": svc.bridge.stats if svc.bridge.connected else None,
             "reminders": svc.reminders.pending(),
             "recent": recent,
+            "focus": _focus(),
         }
 
     @r.get("/alerts")
@@ -472,7 +497,7 @@ def build_router(svc: Services, require_auth: Callable[..., None]) -> APIRouter:
             return {"ok": False, "error": f"There is no tool named '{call.name}'."}
         args = {k: v for k, v in call.args.items() if not k.startswith("_")}
         cid = uuid.uuid4().hex[:10]
-        entry: dict[str, Any] = {"id": cid, "tool": spec.name, "label": describe_call(spec, args), "status": "running"}
+        entry: dict[str, Any] = {"id": cid, "tool": spec.name, "label": describe_call(spec, args), "status": "running", "_args": args}
         if spec.name == "call_api":  # a quiet "via <API> · <category>" line, not the raw link
             entry.update(label="via " + public_apis.source_of(str(args.get("url", "")), str(args.get("use_key") or "")), quiet=True)
         elif spec.name == "find_apis":
@@ -481,7 +506,7 @@ def build_router(svc: Services, require_auth: Callable[..., None]) -> APIRouter:
 
         def emit(status: str, **extra: Any) -> None:
             entry.update(status=status, **extra)
-            queue.put_nowait(("tool", dict(entry)))
+            queue.put_nowait(("tool", {k: v for k, v in entry.items() if not k.startswith("_")}))
 
         decision, cap = permissions.decide(spec, args, svc.settings.get("permissions"), bool(svc.settings.get("full_control")))
         if decision == "block":
@@ -509,6 +534,7 @@ def build_router(svc: Services, require_auth: Callable[..., None]) -> APIRouter:
             audit.warning("tool failed", extra={"fields": {"tool": spec.name, "error": str(e)}})
             return {"ok": False, "error": str(e)}
         emit("done")
+        _note_paths(spec.name, args, result)
         return {"ok": True, "result": _trim(result)}
 
     async def _remember(user_text: str, reply: str, candidates: list[dict[str, Any]], conv_id: str) -> None:
@@ -837,6 +863,16 @@ def build_router(svc: Services, require_auth: Callable[..., None]) -> APIRouter:
         await _emergency_stop()
         return {"stopped": True}
 
+    @r.get("/skills")
+    async def list_skills() -> list[dict[str, Any]]:
+        return svc.skills.list()
+
+    @r.delete("/skills/{skill_id}")
+    async def forget_skill(skill_id: str) -> dict[str, Any]:
+        if not svc.skills.forget(skill_id):
+            raise HTTPException(status_code=404, detail="No such workflow.")
+        return {"forgotten": skill_id}
+
     @r.get("/permissions")
     async def get_permissions() -> list[dict[str, Any]]:
         return permissions.overview(svc.settings.get("permissions"), bool(svc.settings.get("full_control")))
@@ -932,6 +968,9 @@ def build_router(svc: Services, require_auth: Callable[..., None]) -> APIRouter:
                 context["voice"] = body.voice
                 system = build_system_prompt(svc.settings.public(), core, relevant, tools_enabled=True, context=context)
                 history = [(m["role"], m["content"]) for m in prior] + [("user", text)]
+                skill = svc.skills.match(text)
+                if skill:
+                    system += "\n\n" + skill_guidance(skill)
 
                 done_calls: dict[str, tuple[int, int, dict[str, Any]]] = {}
                 task = svc.tasks.begin(text, conv_id, actions)
@@ -1007,6 +1046,12 @@ def build_router(svc: Services, require_auth: Callable[..., None]) -> APIRouter:
             finally:
                 if "task" in locals():
                     svc.tasks.finish(task, "stopped" if task.status == "stopped" else ("done" if reply else "failed"))
+                    if task.status != "stopped" and reply:
+                        try:
+                            svc.skills.learn(text, [{**a, "args": a.get("_args", {})} for a in actions],
+                                             skill["id"] if locals().get("skill") else None)
+                        except Exception:  # noqa: BLE001 - learning is a bonus; never break the reply
+                            log.exception("could not learn the workflow")
                 if agent_task and not agent_task.done():
                     agent_task.cancel()  # user pressed Stop or closed the window
                 for fut in list(pending_confirmations.values()):
@@ -1015,7 +1060,7 @@ def build_router(svc: Services, require_auth: Callable[..., None]) -> APIRouter:
                 if reply or actions:
                     svc.db.run(
                         "INSERT INTO messages (id, conversation_id, role, content, created_at, actions) VALUES (?,?,?,?,?,?)",
-                        [reply_id, conv_id, "model", reply or "(stopped)", time.time(), json.dumps(actions) if actions else None],
+                        [reply_id, conv_id, "model", reply or "(stopped)", time.time(), json.dumps([{k: v for k, v in a.items() if not k.startswith("_")} for a in actions]) if actions else None],
                     )
                     svc.db.run("UPDATE conversations SET updated_at=? WHERE id=?", [time.time(), conv_id])
 

@@ -76,7 +76,16 @@ def _presence() -> dict:
         user32.CloseDesktop(desk)
     if _meter is None:
         _meter = win.PlaybackMeter()
-    return {"idle_s": round(idle, 1) if idle is not None else None, "locked": bool(locked), "audio_playing": _meter.peak() > 0.02}
+    out = {"idle_s": round(idle, 1) if idle is not None else None, "locked": bool(locked), "audio_playing": _meter.peak() > 0.02}
+    try:  # the app the user is looking at (behind JARVIS if JARVIS is in front), for "this file" / "that page"
+        from .uictl import _windows
+
+        front = next((w for w in _windows() if not w["jarvis"] and not w["minimized"]), None)
+        if front:
+            out.update(front_app=front["app"], front_title=front["title"][:120])
+    except Exception:  # noqa: BLE001 - optional
+        pass
+    return out
 
 
 # Voice events come from worker threads; they wait here until a backend connection can send them.
