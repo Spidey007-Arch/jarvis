@@ -2,13 +2,15 @@
 
 The agent streams the microphone here (16 kHz PCM); this relays it to a Gemini Live session and sends
 the spoken reply (24 kHz PCM) back to the agent's speakers as it arrives. Gemini hears the user
-directly, answers in its own voice, notices when it is interrupted and can call JARVIS's tools.
-Both sides are transcribed, and every finished exchange is saved as a normal conversation.
+directly, answers in its own voice and can call JARVIS's tools. JARVIS is not cut off by whatever the
+microphone picks up while it talks (Google's NO_INTERRUPTION mode, and the agent sends silence meanwhile);
+saying "Hey JARVIS" over it stops it (barge()). Both sides are transcribed, and every finished exchange is
+saved as a normal conversation. A session opened within CONTINUE_S of the last exchange continues that
+conversation, so a pause or an interruption does not start a new one.
 
 A session opens on the wake word or push-to-talk and closes after IDLE_S of quiet, or when the user
-says something like "that's all". With an opening message (the start-up briefing) JARVIS speaks first,
-and the microphone is held back until it has finished so its own voice cannot interrupt it. It talks to Google directly with the saved Gemini key (OmniRoute
-does not relay live audio). If Google drops the connection mid-conversation, it reconnects and resumes
+says something like "that's all". With an opening message (the start-up briefing) JARVIS speaks first.
+It talks to Google directly with the saved Gemini key (OmniRoute does not relay live audio). If Google drops the connection mid-conversation, it reconnects and resumes
 the same conversation with a session-resumption handle, and asks JARVIS to finish a cut-off reply."""
 from __future__ import annotations
 
@@ -25,6 +27,7 @@ MODELS = ("gemini-3.8-live", "gemini-3.1-flash-live-preview", "gemini-2.5-flash-
 VOICE = "Charon"  # a deep, composed male voice
 IDLE_S = 15.0
 RECONNECTS = 3  # a dropped connection is reopened (and the conversation resumed) this many times
+CONTINUE_S = 10 * 60  # a new session within this long of the last exchange carries on that conversation
 STALL_S = 6.0  # mid-reply with nothing from Google this long: treat the connection as dead and reconnect
 _BYE = re.compile(r"\b(that'?s all|that will be all|that'?ll be all|goodbye|good night|bye jarvis|stop listening|thank you,? that'?s it)\b", re.I)
 
@@ -45,6 +48,7 @@ class LiveVoice:
         run_tool: Callable[[str, dict[str, Any]], Awaitable[dict[str, Any]]],
         save_turn: Callable[[str | None, str, str, str | None], str],
         after_turn: Callable[[str, str, str], None] | None = None,
+        recent_conversation: Callable[[float], str | None] = lambda _age: None,
     ) -> None:
         self.api_key = api_key
         self.push_agent = push_agent
@@ -55,6 +59,9 @@ class LiveVoice:
         self.run_tool = run_tool
         self.save_turn = save_turn
         self.after_turn = after_turn
+        self.recent_conversation = recent_conversation
+        self.conversation_id: str | None = None  # the conversation this session adds to (its history goes in the prompt)
+        self._barged = False  # the user said "Hey JARVIS" over the reply: drop the rest of it
         self._task: asyncio.Task | None = None
         self._mic: asyncio.Queue[bytes] = asyncio.Queue(maxsize=100)  # ~4 s; older audio is dropped on a slow line
         self._stop = asyncio.Event()
@@ -89,6 +96,14 @@ class LiveVoice:
     async def stop(self) -> None:
         self._stop.set()
 
+    async def barge(self) -> None:
+        """The user said "Hey JARVIS" while JARVIS was talking: stop the reply now and listen."""
+        if not self.active:
+            return
+        self._barged = True
+        await self.push_agent({"type": "speaker_flush"})
+        log.info("live: reply stopped by the wake word")
+
     def feed(self, b64: str) -> None:
         """A 40 ms microphone frame from the agent."""
         if not self.active:
@@ -110,7 +125,7 @@ class LiveVoice:
                 self._available = list(MODELS)
         return self._available
 
-    def _config(self, types: Any, voice: bool, resume: bool = False) -> Any:
+    def _config(self, types: Any, voice: bool, resume: bool = False, steady: bool = True) -> Any:
         decls = [types.FunctionDeclaration(name=t["name"], description=t["description"], parameters_json_schema=t["parameters"]) for t in self.tools]
         kw: dict[str, Any] = dict(
             response_modalities=["AUDIO"],
@@ -119,6 +134,8 @@ class LiveVoice:
             input_audio_transcription=types.AudioTranscriptionConfig(),
             output_audio_transcription=types.AudioTranscriptionConfig(),
         )
+        if steady:  # the user's audio does not cut JARVIS off mid-sentence
+            kw["realtime_input_config"] = types.RealtimeInputConfig(activity_handling=types.ActivityHandling.NO_INTERRUPTION)
         if resume:
             kw["session_resumption"] = types.SessionResumptionConfig(handle=self._handle)
         if voice:
@@ -128,15 +145,16 @@ class LiveVoice:
     async def _connect(self, client: Any, types: Any, models: list[str] | None = None) -> tuple[Any, Any, str]:
         last: Exception | None = None
         for model in models or self._models(client):
-            # some models refuse a voice choice or session resumption; then go without
-            for voice, resume in ((True, True), (True, False), (False, True), (False, False)):
+            # some models refuse a voice choice, session resumption or the no-interruption mode; then go without
+            for voice, resume, steady in ((True, True, True), (True, False, True), (True, False, False), (False, False, False)):
                 try:
-                    cm = client.aio.live.connect(model=model, config=self._config(types, voice, resume))
+                    cm = client.aio.live.connect(model=model, config=self._config(types, voice, resume, steady))
                     session = await asyncio.wait_for(cm.__aenter__(), 20)
                     return cm, session, model
                 except Exception as e:  # noqa: BLE001
                     last = e
-                    log.warning("live connect failed", extra={"fields": {"model": model, "voice": voice, "resume": resume, "error": str(e)[:200]}})
+                    log.warning("live connect failed",
+                                extra={"fields": {"model": model, "voice": voice, "resume": resume, "steady": steady, "error": str(e)[:200]}})
         raise LiveError(f"Could not open a live voice session: {last}")
 
     async def _send_text(self, session: Any, types: Any, text: str) -> None:
@@ -149,8 +167,11 @@ class LiveVoice:
         from google import genai
         from google.genai import types
 
-        conv_id: str | None = None
+        # carry on the conversation from a few minutes ago; the start-up briefing always starts its own
+        conv_id: str | None = None if label else self.recent_conversation(CONTINUE_S)
+        self.conversation_id = conv_id
         self._handle = None
+        self._barged = False
         try:
             client = genai.Client(api_key=self.api_key())
             self.emit({"event": "live_connecting", "origin": origin})
@@ -189,6 +210,7 @@ class LiveVoice:
                 state["user"] = state["jarvis"] = ""
                 if user or reply:
                     conv_id = self.save_turn(conv_id, user, reply, label)
+                    self.conversation_id = conv_id
                     self.emit({"event": "live_turn", "conversation_id": conv_id})
                     if self.after_turn and user and reply:
                         self.after_turn(user, reply, conv_id)
@@ -230,6 +252,8 @@ class LiveVoice:
                         if sc.model_turn:
                             for part in sc.model_turn.parts or []:
                                 if part.inline_data and part.inline_data.data:
+                                    if self._barged:
+                                        continue  # the user stopped this reply
                                     pcm = part.inline_data.data
                                     await self.push_agent({"type": "speaker", "pcm": base64.b64encode(pcm).decode()})
                                     now = time.monotonic()
@@ -238,6 +262,11 @@ class LiveVoice:
                                     state["done"] = False
                         if sc.turn_complete:
                             state["done"] = True
+                            if self._barged:
+                                self._barged = False
+                                state["playing_until"] = 0.0
+                                if state["jarvis"].strip():
+                                    state["jarvis"] += " ..."
                             finish_turn()
 
             async def stall() -> None:

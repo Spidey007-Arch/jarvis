@@ -244,6 +244,8 @@ def create_app(port: int, token: str | None = None) -> FastAPI:
                     bridge.voice_event(msg)
                     if msg.get("event") == "wake" and services.live and (settings.get("voice_mode") or "live") == "live":
                         asyncio.create_task(_start_live("wake", (msg.get("text") or "").strip() or None))
+                    elif msg.get("event") == "barge" and services.live:
+                        asyncio.create_task(services.live.barge())
         except asyncio.TimeoutError:
             log.warning("agent heartbeat timed out; dropping connection")
         except WebSocketDisconnect:

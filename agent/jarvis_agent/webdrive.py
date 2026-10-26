@@ -1,6 +1,9 @@
-"""Drive a dedicated browser window over the Chrome DevTools Protocol, so JARVIS can shop and order food.
+"""Drive a dedicated browser window over the Chrome DevTools Protocol, so JARVIS can shop and order food,
+and read the user's Gmail and WhatsApp (see mailchat.py).
 
-The window runs on its own profile in the JARVIS data folder: the user signs in to shops there once.
+The window runs on its own profile in the JARVIS data folder: the user signs in to shops, Gmail and
+WhatsApp Web there once. Each job has its own tab (shop, gmail, whatsapp), so checking mail does not
+reload WhatsApp or lose the cart.
 JARVIS can open pages, read them as text plus numbered controls, click and type. Paying stays with
 the user, and that is enforced here, not left to the model: controls that pay or place an order,
 and fields for passwords, cards, OTPs or UPI PINs, are refused."""
@@ -46,10 +49,10 @@ def _profile() -> Path:
     return p
 
 
-_TARGET: str | None = None  # the tab JARVIS created and works in
+_TARGETS: dict[str, str] = {}  # job -> the tab JARVIS created for it
 
 
-def _get(path: str, timeout: float = 2.0, method: str = "GET") -> Any:
+def _get(path: str, timeout: float = 6.0, method: str = "GET") -> Any:
     req = urllib.request.Request(f"http://127.0.0.1:{PORT}{path}", method=method)
     with urllib.request.urlopen(req, timeout=timeout) as r:
         return json.loads(r.read().decode("utf-8"))
@@ -71,7 +74,10 @@ def ensure_browser() -> None:
         raise WebError("No Brave, Chrome or Edge installation was found for the shopping window.")
     subprocess.Popen(
         [exe, f"--remote-debugging-port={PORT}", "--remote-debugging-address=127.0.0.1", f"--user-data-dir={_profile()}",
-         "--no-first-run", "--no-default-browser-check", "about:blank"],
+         "--no-first-run", "--no-default-browser-check",
+         # Gmail and WhatsApp load in background tabs; don't let the browser slow those to a crawl
+         "--disable-background-timer-throttling", "--disable-renderer-backgrounding", "--disable-backgrounding-occluded-windows",
+         "about:blank"],
         creationflags=0x00000008,  # DETACHED_PROCESS: the window outlives the agent
     )
     deadline = time.time() + 20
@@ -82,16 +88,15 @@ def ensure_browser() -> None:
     raise WebError("The shopping browser did not start within 20 seconds.")
 
 
-def _page() -> dict[str, Any]:
-    """JARVIS's own tab: created once and then followed by id, so welcome pages or tabs the user opens
-    in the shopping window are never driven by mistake."""
-    global _TARGET
+def _page(job: str = "shop") -> dict[str, Any]:
+    """JARVIS's own tab for a job: created once and then followed by id, so welcome pages or tabs the user
+    opens in the window are never driven by mistake."""
     pages = [t for t in _get("/json/list") if t.get("type") == "page" and t.get("webSocketDebuggerUrl")]
     for t in pages:
-        if t.get("id") == _TARGET:
+        if t.get("id") == _TARGETS.get(job):
             return t
     t = _get("/json/new?about:blank", method="PUT")
-    _TARGET = t.get("id")
+    _TARGETS[job] = t.get("id")
     if not t.get("webSocketDebuggerUrl"):
         raise WebError("The shopping browser did not open a tab for JARVIS.")
     return t
@@ -100,11 +105,11 @@ def _page() -> dict[str, Any]:
 class _Tab:
     """A short-lived DevTools connection to the current tab."""
 
-    def __init__(self) -> None:
+    def __init__(self, job: str = "shop") -> None:
         from websockets.sync.client import connect
 
         try:
-            self.ws = connect(_page()["webSocketDebuggerUrl"], max_size=16 * 1024 * 1024, open_timeout=10)
+            self.ws = connect(_page(job)["webSocketDebuggerUrl"], max_size=16 * 1024 * 1024, open_timeout=10)
         except WebError:
             raise
         except Exception as e:  # noqa: BLE001 - handshake/refused while the tab is mid-swap
@@ -119,7 +124,10 @@ class _Tab:
 
     def send(self, method: str, params: dict[str, Any] | None = None, timeout: float = 20.0) -> dict[str, Any]:
         self.n += 1
-        self.ws.send(json.dumps({"id": self.n, "method": method, "params": params or {}}))
+        try:
+            self.ws.send(json.dumps({"id": self.n, "method": method, "params": params or {}}))
+        except Exception as e:  # noqa: BLE001 - the tab navigated or closed under us
+            raise WebError(f"The connection to the tab dropped before {method}.") from e
         deadline = time.time() + timeout
         while True:
             left = deadline - time.time()
@@ -225,14 +233,14 @@ _DESCRIBE = r"""
 """
 
 
-def _settled(timeout: float = 25.0) -> dict[str, Any]:
+def _settled(timeout: float = 25.0, job: str = "shop") -> dict[str, Any]:
     """Wait for the current tab to finish loading. Navigation can swap the tab's renderer process and
     drop the DevTools connection, so each check uses a fresh connection."""
     deadline = time.time() + timeout
     last: Exception | None = None
     while time.time() < deadline:
         try:
-            with _Tab() as t:
+            with _Tab(job) as t:
                 t.wait_loaded(max(1.0, deadline - time.time()))
                 return {"title": t.eval("document.title"), "url": t.eval("location.href")}
         except (WebError, OSError) as e:
@@ -241,17 +249,18 @@ def _settled(timeout: float = 25.0) -> dict[str, Any]:
     raise WebError(f"The page did not finish loading in time ({last}).")
 
 
-def open_page(url: str) -> dict[str, Any]:
+def open_page(url: str, job: str = "shop", front: bool = True) -> dict[str, Any]:
     if not re.match(r"^https?://", url, re.I):
         raise WebError(f"'{url}' is not a web address.")
     ensure_browser()
-    with _Tab() as t:
-        t.send("Page.bringToFront")
+    with _Tab(job) as t:
+        if front:
+            t.send("Page.bringToFront")
         try:
             t.send("Page.navigate", {"url": url})
         except WebError:
             pass  # the tab swapped processes while navigating; _settled reconnects
-    return _settled(60)
+    return _settled(60, job)
 
 
 def read_page(find: str = "", offset: int = 0) -> dict[str, Any]:

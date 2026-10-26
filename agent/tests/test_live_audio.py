@@ -1,4 +1,4 @@
-"""Live audio: JARVIS's own voice and room noise must not count as the user interrupting; replies are buffered."""
+"""Live audio: nothing the mic hears cuts JARVIS off while it talks; replies are buffered."""
 from __future__ import annotations
 
 import array
@@ -20,21 +20,18 @@ class MicGate(unittest.TestCase):
     def setUp(self) -> None:
         self.a = live_audio.LiveAudio(lambda m: None)
 
-    def test_passes_everything_while_jarvis_is_quiet(self) -> None:
-        self.assertEqual(self.a.gate(frame(50)), frame(50))
+    def test_passes_the_mic_while_jarvis_is_quiet(self) -> None:
+        self.assertEqual(self.a.gate(frame(900)), frame(900))
 
-    def test_silences_echo_and_noise_while_jarvis_talks(self) -> None:
+    def test_silences_everything_while_jarvis_talks(self) -> None:
         self.a._playing_until = time.monotonic() + 5
-        for _ in range(30):
-            self.assertEqual(self.a.gate(frame(150)), bytes(len(frame(150))))  # its own voice, faintly
-        self.assertEqual(self.a.gate(frame(900)), frame(900))  # the user talking over it still gets through
+        for amp in (150, 900, 5000):  # its own echo, the user, a shout: JARVIS finishes in one go
+            self.assertEqual(self.a.gate(frame(amp)), bytes(len(frame(amp))))
 
-    def test_loud_echo_raises_the_bar(self) -> None:
+    def test_opens_again_after_a_flush(self) -> None:
         self.a._playing_until = time.monotonic() + 5
-        for _ in range(60):
-            self.a.gate(frame(250))  # loud speakers right next to the mic
-        self.assertEqual(self.a.gate(frame(500)), bytes(len(frame(500))))
-        self.assertEqual(self.a.gate(frame(1200)), frame(1200))
+        self.a.flush()  # "Hey JARVIS" over the reply
+        self.assertEqual(self.a.gate(frame(900)), frame(900))
 
 
 class Priming(unittest.TestCase):

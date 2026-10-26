@@ -79,6 +79,21 @@ TOOLS: list[ToolSpec] = [
              obj({"query": S, "folder": S, "extension": S, "limit": I}, ["query"]), agent_action="find_files", timeout=20, label="Searching files for {query}"),
     ToolSpec("open_path", "Open a file or folder with its default app. Relative paths start in the user's home; 'Downloads/x' works.",
              obj({"path": S}, ["path"]), agent_action="open_path", label="Opening {path}"),
+    ToolSpec("download_file", "Download a file from a direct link (PDF, document, image, video, audio, archive) into Downloads\\JARVIS and open it "
+             "on screen with its default Windows app (open=false to only save it). Programs and scripts are refused by design.",
+             obj({"url": S, "open": B}, ["url"]), agent_action="download_file", timeout=600, label="Downloading {url}"),
+    # Gmail and WhatsApp are read in JARVIS's browser window, where the user signs in / links once. Read-only.
+    ToolSpec("gmail_list", "List the user's newest emails as numbered rows (sender, subject, snippet, date, unread). query is Gmail search "
+             "syntax; the default 'in:inbox category:primary' leaves out promotions and social. Examples: 'is:unread category:primary', "
+             "'is:important newer_than:2d', 'from:amazon', 'has:attachment'. Use this whenever the user asks about their email.",
+             obj({"query": S, "limit": I}), agent_action="gmail_list", timeout=60, label="Checking Gmail"),
+    ToolSpec("gmail_open", "Open and read email n from the last gmail_list: the newest messages of the thread, with attachment names.",
+             obj({"n": I}, ["n"]), agent_action="gmail_open", timeout=40, label="Reading an email"),
+    ToolSpec("whatsapp_chats", "List the user's recent WhatsApp chats (name, last message, time, unread count) from WhatsApp Web; "
+             "unread_only=true for just the unread ones.",
+             obj({"unread_only": B, "limit": I}), agent_action="whatsapp_chats", timeout=120, label="Checking WhatsApp"),
+    ToolSpec("whatsapp_read", "Read the latest messages of one WhatsApp chat by contact or group name (opening it marks it read on the phone).",
+             obj({"chat": S, "limit": I}, ["chat"]), agent_action="whatsapp_read", timeout=120, label="Reading WhatsApp: {chat}"),
     ToolSpec("list_folder", "List what is inside a folder.", obj({"path": S}, ["path"]), agent_action="list_folder", label="Listing {path}"),
     ToolSpec("create_folder", "Create a folder (and any missing parents).", obj({"path": S}, ["path"]), agent_action="create_folder", label="Creating folder {path}"),
     ToolSpec("move_path", "Move or rename a file or folder. Never overwrites.", obj({"source": S, "destination": S}, ["source", "destination"]),
@@ -102,7 +117,8 @@ TOOLS: list[ToolSpec] = [
 # Repeating these is normal (another key press, the next track), never a loop.
 STEPWISE_TOOLS = frozenset({"press_keys", "type_text", "volume", "media", "brightness", "web_click", "web_type"})
 # Read-only looks whose answer can change after other actions.
-OBSERVE_TOOLS = frozenset({"look_at_screen", "system_status", "clipboard_get", "list_folder", "find_files", "list_reminders", "web_read"})
+OBSERVE_TOOLS = frozenset({"look_at_screen", "system_status", "clipboard_get", "list_folder", "find_files", "list_reminders", "web_read",
+                           "gmail_list", "gmail_open", "whatsapp_chats", "whatsapp_read"})
 
 BY_NAME = {t.name: t for t in TOOLS}
 

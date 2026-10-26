@@ -1,17 +1,15 @@
 """Audio for live voice sessions: the microphone streamed to the backend, and the reply played as it arrives.
 
-Mic: 16 kHz 16-bit mono in 40 ms frames. While JARVIS is talking, frames quieter than a real voice are
-sent as silence, so its own voice coming back through the mic, or room noise, cannot "interrupt" it;
-speaking up still does. Speaker: Gemini's 24 kHz 16-bit mono, queued and written to the default output
-device. Each reply is buffered PRIME_S before it starts, and again if the network falls behind, so a slow
+Mic: 16 kHz 16-bit mono in 40 ms frames. While JARVIS is talking the mic is sent as silence, so it
+finishes in one go: its own voice coming back through the mic, room noise or someone talking cannot
+cut it off or be taken as a new request. "Hey JARVIS" (heard by the wake word listener) stops it.
+Speaker: Gemini's 24 kHz 16-bit mono, queued and written to the default output device. Each reply is buffered PRIME_S before it starts, and again if the network falls behind, so a slow
 line gives a brief pause instead of choppy audio. flush() drops whatever has not been played yet, so an
 interruption is instant."""
 from __future__ import annotations
 
-import array
 import base64
 import logging
-import math
 import queue
 import threading
 import time
@@ -25,13 +23,6 @@ SPEAKER_RATE = 24000
 BYTES_PER_S = SPEAKER_RATE * 2
 PRIME_S = 0.35  # audio held back before a reply starts playing, to ride out network jitter
 PRIME_WAIT_S = 0.6  # never hold back longer than this, even if the reply is shorter
-BARGE_IN_MIN = 260.0  # while JARVIS talks, the mic must be at least this loud (RMS) to count as the user
-BARGE_IN_OVER_ECHO = 3.0  # ... and this many times louder than what the mic hears of JARVIS itself
-
-
-def _rms(chunk: bytes) -> float:
-    a = array.array("h", chunk)
-    return math.sqrt(sum(x * x for x in a) / len(a)) if a else 0.0
 
 
 class LiveAudio:
@@ -42,7 +33,6 @@ class LiveAudio:
         self._speaker: threading.Thread | None = None
         self._generation = 0
         self._playing_until = 0.0  # when the audio written so far finishes coming out of the speakers
-        self._echo = 0.0  # how loud the mic hears JARVIS's own voice
 
     @property
     def mic_on(self) -> bool:
@@ -64,14 +54,8 @@ class LiveAudio:
             self.flush()
 
     def gate(self, chunk: bytes) -> bytes:
-        """What to send for this mic frame: itself, or silence if JARVIS is talking and this is not the user."""
-        if not self.talking:
-            return chunk
-        level = _rms(chunk)
-        if level >= max(BARGE_IN_MIN, self._echo * BARGE_IN_OVER_ECHO):
-            return chunk  # the user is talking over JARVIS
-        self._echo += (level - self._echo) * 0.1
-        return bytes(len(chunk))
+        """What to send for this mic frame: itself, or silence while JARVIS is talking."""
+        return bytes(len(chunk)) if self.talking else chunk
 
     def _stream_mic(self, stop: threading.Event) -> None:
         import sounddevice as sd

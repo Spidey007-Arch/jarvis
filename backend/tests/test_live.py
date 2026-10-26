@@ -114,5 +114,66 @@ class Reconnect(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(saved, ["Your memory is ..."])
 
 
+class Continuity(unittest.IsolatedAsyncioTestCase):
+    async def run_session(self, script, label=None, recent="conv-earlier", during=None):
+        session = FakeSession(script, fail=None)
+        connect = FakeConnect([session])
+        client = pytypes.SimpleNamespace(aio=pytypes.SimpleNamespace(live=pytypes.SimpleNamespace(connect=connect)),
+                                         models=pytypes.SimpleNamespace(list=lambda: []))
+        pushed, saved, asked = [], [], []
+
+        async def push(m):
+            pushed.append(m["type"])
+
+        async def call(*a, **k):
+            return {}
+
+        def recent_conversation(age):
+            asked.append(age)
+            return recent
+
+        v = live.LiveVoice(api_key=lambda: "k", push_agent=push, call_agent=call, emit=lambda e: None,
+                           system_prompt=lambda: "", tools=[], run_tool=None,
+                           save_turn=lambda c, u, r, label=None: saved.append((c, u, r)) or (c or "conv-new"),
+                           recent_conversation=recent_conversation)
+        with mock.patch("google.genai.Client", return_value=client), mock.patch.object(live, "IDLE_S", 0.6):
+            await v.start("wake", label=label)
+            if during:
+                await during(v)
+            await asyncio.wait_for(v._task, 10)
+        return v, saved, pushed, connect
+
+    async def test_a_new_session_continues_the_recent_conversation(self) -> None:
+        v, saved, _, connect = await self.run_session([
+            content(input_transcription=types.Transcription(text="And tomorrow?")),
+            content(output_transcription=types.Transcription(text="Rain, sir.")),
+            content(turn_complete=True),
+        ])
+        self.assertEqual(saved, [("conv-earlier", "And tomorrow?", "Rain, sir.")])
+        self.assertEqual(v.conversation_id, "conv-earlier")
+        cfg = connect.configs[0]
+        self.assertEqual(cfg.realtime_input_config.activity_handling, types.ActivityHandling.NO_INTERRUPTION)
+
+    async def test_the_briefing_starts_its_own(self) -> None:
+        _, saved, _, _ = await self.run_session([content(output_transcription=types.Transcription(text="Good evening.")),
+                                                 content(turn_complete=True)], label="Start-up briefing")
+        self.assertEqual(saved[0][0], None)
+
+    async def test_hey_jarvis_drops_the_rest_of_the_reply(self) -> None:
+        audio = types.LiveServerMessage(server_content=types.LiveServerContent(
+            model_turn=types.Content(parts=[types.Part(inline_data=types.Blob(data=b"\0" * 480, mime_type="audio/pcm"))])))
+
+        async def barge_early(v):
+            await asyncio.sleep(0.005)
+            await v.barge()
+
+        _, saved, pushed, _ = await self.run_session(
+            [content(output_transcription=types.Transcription(text="Let me explain at length"))] + [audio] * 5 + [content(turn_complete=True)],
+            during=barge_early)
+        self.assertNotIn("speaker", pushed)
+        self.assertIn("speaker_flush", pushed)
+        self.assertEqual(saved[0][2], "Let me explain at length ...")
+
+
 if __name__ == "__main__":
     unittest.main()

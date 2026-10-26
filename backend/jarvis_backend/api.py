@@ -405,10 +405,22 @@ def build_router(svc: Services, require_auth: Callable[..., None]) -> APIRouter:
             audit.warning("tool failed", extra={"fields": {"tool": spec.name, "error": str(e)}})
             return {"ok": False, "error": str(e)}
 
+    def _recent_conversation(max_age_s: float) -> str | None:
+        row = svc.db.one("SELECT id FROM conversations WHERE updated_at > ? ORDER BY updated_at DESC LIMIT 1", [time.time() - max_age_s])
+        return row["id"] if row else None
+
     def _live_prompt() -> str:
-        context = _situation("")
+        conv = svc.live.conversation_id if svc.live else None
+        context = _situation(conv or "")
         context["voice"] = True
-        return build_system_prompt(svc.settings.public(), svc.memory.core(), [], tools_enabled=True, context=context)
+        prompt = build_system_prompt(svc.settings.public(), svc.memory.core(), [], tools_enabled=True, context=context)
+        if conv:  # a continued conversation: Gemini starts each session blank, so give it what was said
+            rows = svc.db.all("SELECT role, content FROM messages WHERE conversation_id=? AND role IN ('user','model') "
+                              "ORDER BY created_at DESC LIMIT 12", [conv])
+            lines = [f"{'User' if r['role'] == 'user' else 'You'}: {r['content'][:400]}" for r in reversed(rows)]
+            if lines:
+                prompt += ("\n\nThis conversation so far (continue it; do not greet again or repeat yourself):\n" + "\n".join(lines))
+        return prompt
 
     def _live_save(conv_id: str | None, user: str, reply: str, label: str | None = None) -> str:
         now = time.time()
@@ -435,6 +447,7 @@ def build_router(svc: Services, require_auth: Callable[..., None]) -> APIRouter:
         run_tool=_live_tool,
         save_turn=_live_save,
         after_turn=lambda user, reply, conv: spawn(_remember(user, reply, svc.memory.core(), conv)),
+        recent_conversation=_recent_conversation,
     )
 
     briefing_state = {"done": False}

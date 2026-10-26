@@ -10,20 +10,23 @@ import datetime as dt
 import difflib
 import getpass
 import json
+import mimetypes
 import os
 import platform
 import re
 import shutil
 import subprocess
 import time
+import urllib.error
 import urllib.parse
+import urllib.request
 import winreg
 from pathlib import Path
 from typing import Any, Callable
 
 import psutil
 
-from . import __version__, live_audio, voice, webdrive, win
+from . import __version__, live_audio, mailchat, voice, webdrive, win
 
 
 class ActionError(Exception):
@@ -329,6 +332,100 @@ def web_type(args: dict[str, Any]) -> dict[str, Any]:
     return webdrive.type_into(_num(args, "n"), _str(args, "text"), bool(args.get("submit")))
 
 
+# ======================= Gmail and WhatsApp (read-only) =======================
+
+@action
+def gmail_list(args: dict[str, Any]) -> dict[str, Any]:
+    return mailchat.gmail_list(_str(args, "query", False), int(args.get("limit") or 15))
+
+
+@action
+def gmail_open(args: dict[str, Any]) -> dict[str, Any]:
+    return mailchat.gmail_open(_num(args, "n"))
+
+
+@action
+def whatsapp_chats(args: dict[str, Any]) -> dict[str, Any]:
+    return mailchat.whatsapp_chats(bool(args.get("unread_only")), int(args.get("limit") or 15))
+
+
+@action
+def whatsapp_read(args: dict[str, Any]) -> dict[str, Any]:
+    return mailchat.whatsapp_read(_str(args, "chat"), int(args.get("limit") or 20))
+
+
+# ======================= downloads =======================
+
+# Never fetched: things that run code when opened. Everything downloaded is marked as coming from the
+# internet, so Windows SmartScreen and Office's Protected View still apply to what is allowed.
+_RUNNABLE = {"exe", "msi", "msix", "appx", "bat", "cmd", "com", "scr", "pif", "ps1", "psm1", "vbs", "vbe", "js", "jse", "wsf",
+             "wsh", "hta", "jar", "lnk", "reg", "cpl", "msc", "dll", "sys", "iso", "img", "vhd", "vhdx", "url", "scf", "inf", "application"}
+MAX_DOWNLOAD = 1024 * 1024 * 1024  # 1 GB
+
+
+def _download_name(url: str, disposition: str) -> str:
+    m = re.search(r"filename\*=UTF-8''([^;]+)|filename=\"?([^\";]+)\"?", disposition or "", re.I)
+    name = urllib.parse.unquote((m.group(1) or m.group(2)) if m else Path(urllib.parse.urlparse(url).path).name)
+    name = re.sub(r'[\\/:*?"<>|\x00-\x1f]+', "_", name).strip(" .") or "download"
+    return name[:150]
+
+
+@action
+def download_file(args: dict[str, Any]) -> dict[str, Any]:
+    """Download a document, image, video or audio file into Downloads\\JARVIS and (by default) open it."""
+    url = _str(args, "url")
+    if not re.match(r"^https?://", url, re.I):
+        raise ActionError(f"'{url}' is not a web address.")
+    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) JARVIS"})
+    try:
+        resp = urllib.request.urlopen(req, timeout=30)
+    except (urllib.error.URLError, OSError) as e:
+        raise ActionError(f"Could not download {url}: {e}") from e
+    with resp:
+        name = _download_name(resp.geturl(), resp.headers.get("Content-Disposition", ""))
+        ctype = (resp.headers.get_content_type() or "").lower()
+        ext = name.rsplit(".", 1)[-1].lower() if "." in name else ""
+        if not ext:
+            guess = mimetypes.guess_extension(ctype) or ""
+            ext = guess.lstrip(".")
+            name = name + guess
+        if ext in _RUNNABLE or ctype in ("application/x-msdownload", "application/x-msdos-program", "application/x-ms-installer"):
+            raise ActionError(f"'{name}' is a program or script. JARVIS does not download things that run code; the user can do that themselves.")
+        if ctype == "text/html" and ext in ("", "htm", "html"):
+            raise ActionError("That address is a web page, not a file. Use open_url to show it, or find the file's direct link.")
+        size = int(resp.headers.get("Content-Length") or 0)
+        if size > MAX_DOWNLOAD:
+            raise ActionError(f"'{name}' is {size / 1024**3:.1f} GB; JARVIS downloads files up to 1 GB.")
+        folder = Path.home() / "Downloads" / "JARVIS"
+        folder.mkdir(parents=True, exist_ok=True)
+        target = folder / name
+        stem, suffix, i = target.stem, target.suffix, 1
+        while target.exists():
+            target = folder / f"{stem} ({i}){suffix}"
+            i += 1
+        part = target.with_name(target.name + ".part")
+        done = 0
+        try:
+            with part.open("wb") as f:
+                while chunk := resp.read(256 * 1024):
+                    done += len(chunk)
+                    if done > MAX_DOWNLOAD:
+                        raise ActionError(f"'{name}' is over 1 GB; stopped.")
+                    f.write(chunk)
+            part.replace(target)
+        finally:
+            part.unlink(missing_ok=True)
+    try:  # Mark of the Web: Windows treats it as from the internet (SmartScreen, Protected View)
+        with open(str(target) + ":Zone.Identifier", "w", encoding="ascii") as z:
+            z.write(f"[ZoneTransfer]\nZoneId=3\nHostUrl={url.split('?')[0]}\n")
+    except OSError:
+        pass
+    opened = args.get("open", True) is not False
+    if opened:
+        os.startfile(str(target))
+    return {"saved": str(target), "size_mb": round(done / 1024**2, 2), "type": ctype, "opened": opened}
+
+
 # ======================= voice =======================
 
 @action
@@ -343,6 +440,8 @@ def attach_live(send: Any) -> live_audio.LiveAudio:
     global _LIVE
     _LIVE = live_audio.LiveAudio(send)
     voice.instance().live_busy = lambda: _LIVE.mic_on if _LIVE else False
+    voice.instance().live_talking = lambda: _LIVE.talking if _LIVE else False
+    voice.instance().on_barge = lambda: _LIVE.flush() if _LIVE else None
     return _LIVE
 
 

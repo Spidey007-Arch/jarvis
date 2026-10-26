@@ -278,6 +278,8 @@ class Voice:
         self.enabled = False
         self.mode = "live"  # live: the backend runs a Gemini Live session; local: Whisper + Piper here
         self.live_busy: Callable[[], bool] = lambda: False
+        self.live_talking: Callable[[], bool] = lambda: False  # JARVIS's live reply is coming out of the speakers
+        self.on_barge: Callable[[], None] = lambda: None  # stop that reply now
         self._wake: threading.Thread | None = None
         self._wake_stop = threading.Event()
         self._busy = threading.Lock()
@@ -332,6 +334,14 @@ class Voice:
                         data, _ = mic.read(CHUNK)
                         chunk = bytes(data)
                         now = time.monotonic()
+                        if self.live_busy() and self.live_talking():
+                            # JARVIS is talking: nothing the mic hears cuts it off, except "Hey JARVIS"
+                            gate.reset()
+                            if detector.heard(chunk) is not None:
+                                log.info("wake word heard over the reply: stopping it")
+                                self.on_barge()
+                                self.emit({"event": "barge"})
+                            continue
                         if self._busy.locked() or self.live_busy() or now < self._quiet_until:
                             detector.reset()  # already taking a request: do not trigger on it
                             gate.reset()
