@@ -31,6 +31,9 @@ function ActionRow({ a, live, onAnswer }: { a: ActionEvent; live: boolean; onAns
     );
   }
   const status = a.status === "awaiting_confirmation" ? "declined" : a.status;
+  if (a.quiet) {
+    return <li className="act-quiet" title={a.error || undefined}>{a.label}{status === "failed" ? " (failed)" : ""}</li>;
+  }
   return (
     <li className={`act ${status}`} title={a.error || undefined}>
       <span className="act-icon">{status === "running" ? <i className="spin-dot" /> : ICON[status]}</span>

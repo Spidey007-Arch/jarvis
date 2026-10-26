@@ -1,6 +1,6 @@
 """Per-model request counts for the current quota day, and the limits Google's 429s reveal.
 
-Neither Google's API nor OmniRoute reports how much free-tier quota is left, so JARVIS keeps its own
+Neither Google's API nor most gateways report how much free-tier quota is left, so JARVIS keeps its own
 count. Google's daily quotas reset at midnight Pacific time; a 429 names the metric and its limit
 ("... limit: 20, model: gemini-3.6-flash"), which is how the real limits are learned. The same key
 backs both routes, so "gemini/x" through a gateway and "x" direct share one count."""

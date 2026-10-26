@@ -84,6 +84,22 @@ def lookup(name: str) -> dict[str, Any] | None:
     return next((a for a in catalog() if a["name"].lower() == n), None)
 
 
+def source_of(url: str, name: str = "") -> str:
+    """A short "which API" label for the chat: the catalog entry the URL belongs to, else its host."""
+    hit = lookup(name) if name else None
+    host = (urllib.parse.urlsplit(url if "//" in url else "https://" + url).hostname or "").lower().removeprefix("www.")
+    if hit is None and host:
+        root = ".".join(host.split(".")[-2:])
+        for a in catalog():
+            h = (urllib.parse.urlsplit(a["link"]).hostname or "").lower().removeprefix("www.")
+            if h == host:
+                hit = a
+                break
+            if hit is None and h and ".".join(h.split(".")[-2:]) == root:
+                hit = a  # same site, keep looking for an exact host
+    return f"{hit['name']} · {hit['category']}" if hit else (host or "an API")
+
+
 def parse_params(raw: Any) -> dict[str, Any]:
     """Query parameters given as a dict, a JSON object string or 'a=1&b=2'."""
     if isinstance(raw, dict):

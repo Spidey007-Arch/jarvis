@@ -75,10 +75,32 @@ LOCATE_PROMPT = (
 )
 
 
-def needs_approval(spec: ToolSpec, args: dict[str, Any]) -> bool:
+# Commands that remove, uninstall, end or reset something: the user says yes first, even with Full control.
+DANGER_COMMAND = re.compile(
+    r"(remove-item|\b(rm|rmdir|rd|del|erase|ri)\b|uninstall|stop-process|\bkill\b|taskkill|stop-service|disable-|restart-computer|"
+    r"stop-computer|shutdown|logoff|reg(\.exe)?\s+(delete|add)|set-itemproperty|remove-itemproperty|netsh|set-executionpolicy|"
+    r"git\s+(push\b.*(\s-f\b|--force)|reset\s+--hard|clean\s+-[a-z]*f)|drop\s+(table|database)|truncate\s+table|"
+    r"clear-recyclebin|format-volume)", re.I)
+
+
+SPOKEN_YES = re.compile(r"\b(yes|yeah|yep|yup|sure|do it|go ahead|go for it|confirm(ed)?|haan|han|ha|okay|ok|proceed|please do|absolutely)\b", re.I)
+SPOKEN_NO = re.compile(r"\b(no|nope|don'?t|stop|cancel|wait|nahi|mat|never ?mind)\b", re.I)
+
+
+def needs_approval(spec: ToolSpec, args: dict[str, Any], full_control: bool = False) -> bool:
+    """Whether the user must say yes before this runs. With Full control (the owner's own PC) only destructive or
+    irreversible steps ask; without it (the default for anyone else's install) every change asks."""
+    if spec.risk == "danger":
+        return True
+    if spec.name == "screen_click" and RISKY_CLICK.search(str(args.get("target", ""))):
+        return True
+    if spec.name == "run_command" and DANGER_COMMAND.search(str(args.get("command", ""))):
+        return True
     if spec.risk == "confirm":
-        return not (spec.name == "organize_folder" and args.get("dry_run", True) is not False)  # a dry run only reports a plan
-    return spec.name == "screen_click" and bool(RISKY_CLICK.search(str(args.get("target", ""))))
+        if spec.name == "organize_folder" and args.get("dry_run", True) is not False:
+            return False  # a dry run only reports a plan
+        return not full_control
+    return False
 
 
 def _trim(value: Any, limit: int = 6000) -> Any:
@@ -117,6 +139,7 @@ class SettingsIn(BaseModel):
     address: str | None = Field(default=None, max_length=40)
     proactive_alerts: bool | None = None
     startup_briefing: bool | None = None
+    full_control: bool | None = None
     provider: str | None = None
     api_key: str | None = Field(default=None, max_length=300)
     base_url: str | None = Field(default=None, max_length=300)
@@ -194,7 +217,8 @@ def build_router(svc: Services, require_auth: Callable[..., None]) -> APIRouter:
     @r.put("/settings")
     async def put_settings(body: SettingsIn) -> dict[str, Any]:
         changes = body.model_dump(exclude_unset=True)
-        profile = {k: changes.pop(k) for k in ("user_name", "address", "proactive_alerts", "startup_briefing") if k in changes}
+        profile = {k: changes.pop(k) for k in ("user_name", "address", "proactive_alerts", "startup_briefing",
+                                                   "full_control") if k in changes}
         if profile:
             svc.settings.update_profile(profile)
 
@@ -434,13 +458,17 @@ def build_router(svc: Services, require_auth: Callable[..., None]) -> APIRouter:
         args = {k: v for k, v in call.args.items() if not k.startswith("_")}
         cid = uuid.uuid4().hex[:10]
         entry: dict[str, Any] = {"id": cid, "tool": spec.name, "label": describe_call(spec, args), "status": "running"}
+        if spec.name == "call_api":  # a quiet "via <API> · <category>" line, not the raw link
+            entry.update(label="via " + public_apis.source_of(str(args.get("url", "")), str(args.get("use_key") or "")), quiet=True)
+        elif spec.name == "find_apis":
+            entry.update(label=f"searched the API index for {args.get('query') or args.get('category') or 'APIs'}", quiet=True)
         actions.append(entry)
 
         def emit(status: str, **extra: Any) -> None:
             entry.update(status=status, **extra)
             queue.put_nowait(("tool", dict(entry)))
 
-        if needs_approval(spec, args):
+        if needs_approval(spec, args, bool(svc.settings.get("full_control"))):
             fut: asyncio.Future = asyncio.get_running_loop().create_future()
             pending_confirmations[cid] = fut
             emit("awaiting_confirmation", detail=json.dumps(args, ensure_ascii=False))
@@ -477,14 +505,25 @@ def build_router(svc: Services, require_auth: Callable[..., None]) -> APIRouter:
         except Exception:  # noqa: BLE001 - extraction must never break chat; the failure is logged
             log.exception("memory extraction failed")
 
+    voice_pending: dict[str, int] = {}  # a call waiting for a spoken yes -> the voice turn it was asked in
+
     async def _live_tool(name: str, args: dict[str, Any]) -> dict[str, Any]:
-        """A tool call made by the live voice model. Risky actions still need a click on screen."""
+        """A tool call made by the live voice model. One that needs a yes runs only after the user says yes out loud
+        in a later turn (the voice gate already makes sure that is the owner speaking)."""
         spec = BY_NAME.get(name)
         if spec is None:
             return {"ok": False, "error": f"There is no tool named '{name}'."}
-        if needs_approval(spec, args):
-            return {"ok": False, "error": "This action needs the user's approval on screen, which a voice session cannot give. "
-                                          "Tell them to ask for it by typing in the JARVIS window so they can approve it."}
+        if needs_approval(spec, args, bool(svc.settings.get("full_control"))):
+            key = call_key(ToolCall(id="", name=name, args=args))
+            asked = voice_pending.get(key)
+            heard = svc.live.heard if svc.live else ""
+            if asked is None or svc.live.turns <= asked or not SPOKEN_YES.search(heard) or SPOKEN_NO.search(heard):
+                voice_pending.clear()
+                voice_pending[key] = svc.live.turns if svc.live else 0
+                return {"ok": False, "needs_confirmation": True,
+                        "error": f"Not done yet. Ask the user out loud, in one short sentence, to confirm: {describe_call(spec, args)}. "
+                                 "If they then say yes, call this tool again with exactly the same arguments; otherwise drop it."}
+            voice_pending.clear()
         audit.info("tool call", extra={"fields": {"tool": spec.name, "args": args, "via": "live"}})
         try:
             return {"ok": True, "result": _trim(await _run_tool(spec, args))}

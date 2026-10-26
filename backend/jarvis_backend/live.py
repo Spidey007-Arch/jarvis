@@ -10,7 +10,7 @@ conversation, so a pause or an interruption does not start a new one.
 
 A session opens on the wake word or push-to-talk and closes after IDLE_S of quiet, or when the user
 says something like "that's all". With an opening message (the start-up briefing) JARVIS speaks first.
-It talks to Google directly with the saved Gemini key (OmniRoute does not relay live audio). If Google drops the connection mid-conversation, it reconnects and resumes
+It talks to Google directly with the saved Gemini key. If Google drops the connection mid-conversation, it reconnects and resumes
 the same conversation with a session-resumption handle, and asks JARVIS to finish a cut-off reply."""
 from __future__ import annotations
 
@@ -57,6 +57,8 @@ class LiveVoice:
         self.system_prompt = system_prompt
         self.tools = tools
         self.run_tool = run_tool
+        self.heard = ""  # what the user said in the current turn, for spoken confirmations
+        self.turns = 0
         self.save_turn = save_turn
         self.after_turn = after_turn
         self.recent_conversation = recent_conversation
@@ -82,7 +84,7 @@ class LiveVoice:
         if self.active:
             return {"live": True, "already": True}
         if not self.api_key():
-            raise LiveError("Live voice needs a Google Gemini key saved in Settings (OmniRoute cannot relay live audio).")
+            raise LiveError("Live voice needs a Google Gemini key saved in Settings.")
         self._stop = asyncio.Event()
         self._mic = asyncio.Queue(maxsize=100)
         opened: asyncio.Future = asyncio.get_running_loop().create_future()
@@ -208,6 +210,7 @@ class LiveVoice:
                 nonlocal conv_id
                 user, reply = state["user"].strip(), state["jarvis"].strip()
                 state["user"] = state["jarvis"] = ""
+                self.turns += 1
                 if user or reply:
                     conv_id = self.save_turn(conv_id, user, reply, label)
                     self.conversation_id = conv_id
@@ -231,6 +234,7 @@ class LiveVoice:
                             responses = []
                             for fc in msg.tool_call.function_calls or []:
                                 self.emit({"event": "live_tool", "tool": fc.name})
+                                self.heard = state["user"]
                                 result = await self.run_tool(fc.name or "", dict(fc.args or {}))
                                 responses.append(types.FunctionResponse(id=fc.id, name=fc.name, response=result))
                             await session.send_tool_response(function_responses=responses)

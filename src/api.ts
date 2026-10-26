@@ -27,6 +27,7 @@ export interface Settings {
   address: string;
   proactive_alerts: boolean;
   startup_briefing: boolean;
+  full_control: boolean;
   provider: string;
   base_url: string;
   chat_model: string;
@@ -56,7 +57,7 @@ export interface ModelInfo {
   kind: "chat" | "embed";
 }
 
-export type SettingsUpdate = Partial<Pick<Settings, "user_name" | "address" | "proactive_alerts" | "startup_briefing" | "provider" | "base_url" | "chat_model" | "embed_model">> & {
+export type SettingsUpdate = Partial<Pick<Settings, "user_name" | "address" | "proactive_alerts" | "startup_briefing" | "full_control" | "provider" | "base_url" | "chat_model" | "embed_model">> & {
   api_key?: string;
 };
 
@@ -191,6 +192,7 @@ export interface ActionEvent {
   status: ActionStatus;
   error?: string;
   detail?: string;
+  quiet?: boolean; // an API lookup: shown as a light "via ..." line
 }
 
 export interface Message {

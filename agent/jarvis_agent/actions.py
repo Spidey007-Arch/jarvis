@@ -937,3 +937,156 @@ def notify(args: dict[str, Any]) -> dict[str, Any]:
     body = _str(args, "body", False)
     win.toast(title, body)
     return {"shown": True}
+
+
+# ======================= full control: shell, files, processes =======================
+# The backend decides what needs the user's yes first; these run what they are given, except a few commands
+# that would wreck Windows itself, which are refused outright.
+
+_WRECK = re.compile(
+    r"\bformat(\.com)?\s+[a-z]:|\b(clear-disk|initialize-disk|diskpart|bcdedit)\b|(vssadmin|wbadmin)\s+delete|cipher\s+/w|"
+    r"set-mppreference\b.*-disable|\breg(\.exe)?\s+delete\s+hklm|"
+    r"\b(remove-item|rd|rmdir|del|rm)\b.*c:\\windows\b|\b(remove-item|rd|rmdir|del|rm)\b[^|;]*\s['\"]?c:\\['\"*]?(\s|$)", re.I)
+MAX_OUTPUT = 12000
+
+
+def _backups() -> Path:
+    d = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "JARVIS" / "backups"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def _backup(p: Path) -> str | None:
+    """Keep the old copy of a file JARVIS is about to change, so every edit can be undone."""
+    if not p.is_file():
+        return None
+    dst = _backups() / f"{dt.datetime.now():%Y%m%d-%H%M%S}_{p.name}"
+    shutil.copy2(p, dst)
+    return str(dst)
+
+
+def _tail(text: str) -> str:
+    return text if len(text) <= MAX_OUTPUT else "…(earlier output cut)…\n" + text[-MAX_OUTPUT:]
+
+
+@action
+def run_command(args: dict[str, Any]) -> dict[str, Any]:
+    """Run a PowerShell (or cmd) command, like a developer at a terminal, and return its real output."""
+    command = _str(args, "command")
+    if _WRECK.search(command):
+        raise ActionError("That command could break Windows itself (formatting, boot config, wiping system folders), so I won't run it.")
+    cwd = _resolve(_str(args, "cwd", False) or str(Path.home()))
+    if not cwd.is_dir():
+        raise ActionError(f"{cwd} is not a folder.")
+    shell = (_str(args, "shell", False) or "powershell").lower()
+    argv = ["cmd.exe", "/d", "/c", command] if shell == "cmd" else \
+        ["powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", command]
+    flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    if args.get("background"):  # servers, watchers, long builds: start it and hand back the process id
+        log = _backups().parent / "logs" / f"cmd-{dt.datetime.now():%Y%m%d-%H%M%S}.log"
+        log.parent.mkdir(parents=True, exist_ok=True)
+        with open(log, "wb") as out:
+            proc = subprocess.Popen(argv, cwd=str(cwd), stdout=out, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, creationflags=flags)
+        return {"started": True, "pid": proc.pid, "output_log": str(log), "cwd": str(cwd)}
+    timeout = max(5, min(int(args.get("timeout") or 120), 600))
+    try:
+        done = subprocess.run(argv, cwd=str(cwd), capture_output=True, stdin=subprocess.DEVNULL, timeout=timeout, creationflags=flags)
+    except subprocess.TimeoutExpired as e:
+        out = (e.stdout or b"").decode("utf-8", "replace")
+        return {"exit_code": None, "timed_out": True, "seconds": timeout, "output": _tail(out),
+                "note": "Still running when the time ran out, so it was stopped. Use background=true for long jobs."}
+    return {"exit_code": done.returncode, "cwd": str(cwd),
+            "output": _tail(done.stdout.decode("utf-8", "replace").strip()),
+            "errors": _tail(done.stderr.decode("utf-8", "replace").strip())}
+
+
+@action
+def read_file(args: dict[str, Any]) -> dict[str, Any]:
+    """Read a text file with line numbers; offset/limit page through long ones."""
+    p = _resolve(_str(args, "path"))
+    if not p.is_file():
+        raise ActionError(f"{p} is not a file.")
+    raw = p.read_bytes()
+    if b"\0" in raw[:4096]:
+        raise ActionError(f"{p.name} is a binary file; open it with open_path instead.")
+    lines = raw.decode("utf-8", "replace").splitlines()
+    start = max(int(args.get("offset") or 1), 1)
+    count = max(1, min(int(args.get("limit") or 400), 2000))
+    chunk = lines[start - 1:start - 1 + count]
+    return {"path": str(p), "total_lines": len(lines), "from_line": start,
+            "text": _tail("\n".join(f"{start + i}\t{t}" for i, t in enumerate(chunk))),
+            "more": start - 1 + count < len(lines)}
+
+
+@action
+def write_file(args: dict[str, Any]) -> dict[str, Any]:
+    """Create or overwrite a text file (append=true adds to the end). The old version is backed up first."""
+    p = _resolve(_str(args, "path"))
+    _guard(p)
+    content = str(args.get("content") or "")
+    existed = p.exists()
+    if p.is_dir():
+        raise ActionError(f"{p} is a folder.")
+    backup = _backup(p)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    with open(p, "a" if args.get("append") else "w", encoding="utf-8", newline="") as f:
+        f.write(content)
+    return {"path": str(p), "created": not existed, "appended": bool(args.get("append")), "bytes": p.stat().st_size, "backup": backup}
+
+
+@action
+def edit_file(args: dict[str, Any]) -> dict[str, Any]:
+    """Replace an exact piece of text in a file, the way a code editor's find-and-replace does."""
+    p = _resolve(_str(args, "path"))
+    _guard(p)
+    if not p.is_file():
+        raise ActionError(f"{p} is not a file.")
+    old, new = str(args.get("old_text") or ""), str(args.get("new_text") or "")
+    if not old:
+        raise ActionError("old_text is empty; read the file and copy the exact text to replace.")
+    text = p.read_text(encoding="utf-8")
+    found = text.count(old)
+    if found == 0:
+        raise ActionError("old_text was not found in the file; read it again and copy the text exactly, including spaces.")
+    if found > 1 and not args.get("replace_all"):
+        raise ActionError(f"old_text appears {found} times; include more surrounding text, or set replace_all=true.")
+    backup = _backup(p)
+    p.write_text(text.replace(old, new) if args.get("replace_all") else text.replace(old, new, 1), encoding="utf-8", newline="")
+    return {"path": str(p), "replaced": found if args.get("replace_all") else 1, "backup": backup}
+
+
+@action
+def list_processes(args: dict[str, Any]) -> dict[str, Any]:
+    query = (_str(args, "query", False) or "").lower()
+    by = "memory_mb" if (_str(args, "sort", False) or "").lower().startswith("mem") else "cpu_percent"
+    rows = []
+    for p in psutil.process_iter(["pid", "name", "memory_info", "cpu_percent", "username"]):
+        name = p.info["name"] or ""
+        if query and query not in name.lower():
+            continue
+        mem = p.info["memory_info"]
+        rows.append({"pid": p.info["pid"], "name": name, "memory_mb": round(mem.rss / 2**20) if mem else 0,
+                     "cpu_percent": p.info["cpu_percent"] or 0.0})
+    rows.sort(key=lambda r: r[by], reverse=True)
+    return {"count": len(rows), "sorted_by": by, "processes": rows[:max(1, min(int(args.get("limit") or 25), 100))]}
+
+
+@action
+def kill_process(args: dict[str, Any]) -> dict[str, Any]:
+    """End a process by pid (or every process with a name, through close_app's protections)."""
+    if not args.get("pid"):
+        return close_app({"name": _str(args, "name")})
+    try:
+        p = psutil.Process(int(args["pid"]))
+        name = p.name()
+    except (psutil.Error, ValueError) as e:
+        raise ActionError(f"No process with id {args['pid']}.") from e
+    if name.lower().removesuffix(".exe") in {"explorer", "winlogon", "csrss", "lsass", "services", "svchost", "system", "dwm", "smss", "wininit"} \
+            or p.pid in (os.getpid(), os.getppid()):
+        raise ActionError(f"Ending {name} could destabilise Windows or JARVIS itself, so I won't.")
+    p.terminate()
+    try:
+        p.wait(timeout=5)
+    except psutil.TimeoutExpired:
+        p.kill()
+    return {"ended": name, "pid": p.pid}

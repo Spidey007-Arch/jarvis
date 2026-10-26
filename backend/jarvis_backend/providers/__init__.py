@@ -6,14 +6,14 @@ from typing import Any
 from .base import Provider, ProviderError
 
 PRESETS: dict[str, dict[str, Any]] = {
-    "omniroute": {
-        "name": "OmniRoute",
+    "gateway": {
+        "name": "Local AI gateway (OpenAI-compatible)",
         "needs_key": False,
-        "base_url": "http://127.0.0.1:20128/v1",  # not localhost: on Windows that tries IPv6 first and OmniRoute listens on IPv4
-        "key_hint": "Start OmniRoute (run `omniroute`, or its Docker image), then paste a gateway key from its dashboard's API Keys page if you created one. Hosted instance? Set the base URL to https://your-domain/v1.",
+        "base_url": "http://127.0.0.1:20128/v1",  # not localhost: on Windows that tries IPv6 first
+        "key_hint": "Start your OpenAI-compatible gateway, set its base URL, and paste its key if it uses one.",
         "embeddings": True,
         "featured": True,
-        "badge": "FREE GATEWAY",
+        "badge": "SELF-HOSTED",
     },
     "gemini": {
         "name": "Google Gemini",

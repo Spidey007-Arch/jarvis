@@ -442,6 +442,7 @@ label { display: flex; flex-direction: column; gap: 5px; font-size: 11px; letter
   padding: 5px 11px 5px 7px; border-radius: 999px; animation: rise 0.25s ease both;
   background: color-mix(in srgb, var(--core) 9%, transparent); border: 1px solid color-mix(in srgb, var(--core) 22%, transparent);
 }
+.act-quiet { font-size: 11px; font-weight: 300; opacity: 0.5; letter-spacing: 0.02em; padding-left: 2px; }
 .act-icon { width: 18px; height: 18px; border-radius: 50%; display: grid; place-items: center; font-size: 11px; flex: none; }
 .act.done .act-icon { background: color-mix(in srgb, var(--ok) 25%, transparent); color: var(--ok); }
 .act.failed { border-color: rgba(255, 107, 107, 0.45); }

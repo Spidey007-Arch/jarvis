@@ -140,12 +140,12 @@ class ProviderProtocolTests(unittest.TestCase):
         omni = [{"name": n, "kind": "chat"} for n in ("auto/best-chaos", "auto/best-chat", "auto/fast", "ddgw/gpt-5.4-mini")]
         self.assertEqual(OpenAICompatProvider.pick_chat(omni), "auto/best-chat")
 
-    def test_omniroute_preset_uses_local_gateway(self):
+    def test_gateway_preset_uses_local_server(self):
         from jarvis_backend.providers import PRESETS, make_provider
-        p = make_provider("omniroute", "", "")
+        p = make_provider("gateway", "", "")
         try:
             self.assertEqual(p.base, "http://127.0.0.1:20128/v1")
-            self.assertFalse(PRESETS["omniroute"]["needs_key"])
+            self.assertFalse(PRESETS["gateway"]["needs_key"])
         finally:
             asyncio.run(p.aclose())
 
@@ -378,7 +378,7 @@ class ToolResultRoleTests(unittest.TestCase):
     def test_openai_compatible(self) -> None:
         from jarvis_backend.providers.openai_compat import OpenAICompatProvider, _OpenAITools
 
-        s = _OpenAITools(OpenAICompatProvider("omniroute", "http://127.0.0.1:9"), "sys", [("user", "hi")], [])
+        s = _OpenAITools(OpenAICompatProvider("gateway", "http://127.0.0.1:9"), "sys", [("user", "hi")], [])
         before = len(s.messages)
         s.add_results(self.calls())
         added = s.messages[before:]
@@ -423,7 +423,7 @@ class WaitingAndModelListTests(unittest.TestCase):
             asyncio.run(_timed(asyncio.sleep(1), 0.01))
         self.assertEqual(cm.exception.status, NO_REPLY)
         self.assertTrue(cm.exception.transient, "a slow reply must still fall back to the next model")
-        text = str(describe(cm.exception, "omniroute", "gemini/gemini-3.8-flash"))
+        text = str(describe(cm.exception, "gateway", "gemini/gemini-3.8-flash"))
         self.assertIn("sent no reply within 0s", text)
         self.assertNotIn("overloaded", text)
         self.assertNotIn("504", text)
@@ -479,7 +479,7 @@ class MidTaskFallbackTests(unittest.TestCase):
 
         class FakeLLM(LLM):
             chat_model = "gemini/gemini-3.6-flash"
-            provider_id = "omniroute"
+            provider_id = "gateway"
 
         llm = object.__new__(FakeLLM)
         llm._cooldown, llm._failures, llm.usage = {}, {}, None

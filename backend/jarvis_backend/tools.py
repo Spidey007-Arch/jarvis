@@ -2,7 +2,8 @@
 
 risk:
   "auto"    - runs immediately (read-only or easily undone)
-  "confirm" - the user must press Allow in the chat before it runs
+  "confirm" - asks the user first, unless the owner turned on Full control in Settings
+  "danger"  - always asks the user first, Full control or not
 """
 from __future__ import annotations
 
@@ -124,10 +125,33 @@ TOOLS: list[ToolSpec] = [
              risk="confirm", agent_action="delete_path", label="Delete {path} (to Recycle Bin)"),
     ToolSpec("organize_folder", "Sort loose files in a folder into category subfolders (Images, Documents, Videos, Audio, Archives, Installers, Code, Other). Call with dry_run=true first to preview, then dry_run=false to do it.",
              obj({"path": S, "dry_run": B}, ["path", "dry_run"]), risk="confirm", agent_action="organize_folder", label="Organize {path}"),
+    # Full control, like a developer at their own terminal: commands, files, processes.
+    ToolSpec("run_command", "Run a PowerShell command on this PC and get its real output: anything a power user would do in a terminal "
+             "(git, python, npm, winget install/upgrade, pip, building or running code, system queries, editing settings via commands, "
+             "managing services). cwd is the folder to run in (default: home); shell 'cmd' for cmd.exe syntax; timeout seconds "
+             "(default 120, max 600); background=true starts a long-running process (a server, a watcher) and returns its pid and log. "
+             "Commands that delete, uninstall, kill or reset ask the user first; ones that would break Windows are refused.",
+             obj({"command": S, "cwd": S, "shell": S, "timeout": I, "background": B}, ["command"]),
+             risk="confirm", agent_action="run_command", timeout=620, label="Run: {command}"),
+    ToolSpec("read_file", "Read a text or code file with line numbers. offset is the first line (default 1), limit the number of lines "
+             "(default 400). Read before you edit.",
+             obj({"path": S, "offset": I, "limit": I}, ["path"]), agent_action="read_file", label="Reading {path}"),
+    ToolSpec("write_file", "Create a text or code file, or replace its whole content (append=true adds to the end). The old version is "
+             "backed up first, so it can be restored.",
+             obj({"path": S, "content": S, "append": B}, ["path", "content"]), risk="confirm", agent_action="write_file",
+             label="Write {path}"),
+    ToolSpec("edit_file", "Change part of a file: replace old_text (copied exactly from read_file, without the line numbers, and unique "
+             "in the file) with new_text; replace_all=true for every occurrence. The old version is backed up first.",
+             obj({"path": S, "old_text": S, "new_text": S, "replace_all": B}, ["path", "old_text", "new_text"]),
+             risk="confirm", agent_action="edit_file", label="Edit {path}"),
+    ToolSpec("list_processes", "List running processes with pid, memory and CPU, heaviest first (sort: cpu or memory); query filters by name.",
+             obj({"query": S, "sort": S, "limit": I}), agent_action="list_processes", label="Checking processes"),
+    ToolSpec("kill_process", "End a running process by pid (from list_processes), or every process with an executable name.",
+             obj({"pid": I, "name": S}), risk="confirm", agent_action="kill_process", label="End process {name}{pid}"),
     ToolSpec("lock_screen", "Lock the PC immediately.", obj(), agent_action="lock_screen", label="Locking the PC"),
     ToolSpec("sleep_pc", "Put the PC to sleep.", obj(), risk="confirm", agent_action="sleep_pc", label="Put the PC to sleep"),
     ToolSpec("power", "Schedule a restart or shutdown after delay_seconds (default 60), or cancel a pending one. action: restart, shutdown, cancel.",
-             obj({"action": S, "delay_seconds": I}, ["action"]), risk="confirm", agent_action="power", label="Power: {action}"),
+             obj({"action": S, "delay_seconds": I}, ["action"]), risk="danger", agent_action="power", label="Power: {action}"),
     ToolSpec("open_settings", "Open a Windows Settings page (display, sound, bluetooth, wifi, network, battery, power, storage, apps, default apps, notifications, windows update, privacy, personalization, themes, mouse, keyboard, time, language, accounts, about, printers, focus, night light) or 'task manager' / 'control panel'.",
              obj({"page": S}), agent_action="open_settings", label="Opening settings"),
     ToolSpec("set_reminder", "Set a reminder that pops up as a Windows notification at a local date-time. due must be ISO format YYYY-MM-DDTHH:MM in the user's local time.",
@@ -140,7 +164,8 @@ TOOLS: list[ToolSpec] = [
 STEPWISE_TOOLS = frozenset({"press_keys", "type_text", "volume", "media", "brightness", "web_click", "web_type", "screen_click", "screen_scroll"})
 # Read-only looks whose answer can change after other actions.
 OBSERVE_TOOLS = frozenset({"look_at_screen", "system_status", "clipboard_get", "list_folder", "find_files", "list_reminders", "web_read",
-                           "gmail_list", "gmail_open", "whatsapp_chats", "whatsapp_read", "find_apis", "call_api"})
+                           "gmail_list", "gmail_open", "whatsapp_chats", "whatsapp_read", "find_apis", "call_api",
+                           "read_file", "list_processes", "run_command"})
 
 BY_NAME = {t.name: t for t in TOOLS}
 

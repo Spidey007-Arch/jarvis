@@ -11,21 +11,34 @@ It remembers you across conversations, speaks in a composed, dryly witty voice, 
 
 | Provider | Key needed | Memory search | Tested |
 |---|---|---|---|
-| **★ OmniRoute (recommended: free, self-hosted gateway to hundreds of models)** | Gateway key if you created one ([OmniRoute](https://github.com/cheaper-inference/OmniRoute)) | Semantic or keyword | Protocol tests |
 | Google Gemini | Yes ([AI Studio](https://aistudio.google.com), free tier available) | Semantic (embeddings) | Live |
 | OpenAI | Yes ([platform.openai.com](https://platform.openai.com/api-keys)) | Semantic (embeddings) | Protocol tests |
 | Anthropic Claude | Yes ([console.anthropic.com](https://console.anthropic.com)) | Keyword (Claude has no embeddings API) | Protocol tests |
 | OpenRouter (hundreds of models) | Yes ([openrouter.ai/keys](https://openrouter.ai/keys)) | Semantic or keyword | Protocol tests |
 | Ollama (local, free) | No ([ollama.com](https://ollama.com)) | Semantic with e.g. `nomic-embed-text` | Protocol tests |
-| Any OpenAI-compatible API (Groq, DeepSeek, Together, Mistral, LM Studio, ...) | Depends | Semantic or keyword | Protocol tests |
+| Any OpenAI-compatible API or self-hosted gateway (Groq, DeepSeek, Together, Mistral, LM Studio, ...) | Depends | Semantic or keyword | Protocol tests |
 
 "Live" means verified end to end against the real service. "Protocol tests" means the request/response handling is tested against a local server that speaks that provider's API; reports from real use are welcome.
 
 If a model is overloaded or rate-limited, JARVIS automatically tries another model from the same provider and tells you which one answered.
 
+## What needs an API key
+
+JARVIS ships with no keys. Add your own in **Settings**; everything is stored encrypted on your PC.
+
+| Feature | Needs |
+|---|---|
+| Chat, memory, PC actions, screen reading, vision clicking | A key for any supported AI provider above (or a local Ollama, no key) |
+| Live speech-to-speech voice | A Google Gemini key (Gemini Live). Without it, the offline voice (Parakeet/Whisper + Piper) is used |
+| Web research | The chosen AI provider |
+| ~2,200 public APIs (weather, crypto, news, sports, ...) | Most need no key; for the rest, save that service's key in **Settings → API keys** |
+| Offline voice, wake word, speaker verification | No key (local models) |
+
 ## Features
 
-- **Acts on your PC.** Open apps and sites, search or research the web with sources, report system health, control volume, media and brightness, read what's on screen, manage files, lock/sleep/restart, open Windows settings, and set reminders. Risky actions (delete, move, close apps, power) need your Allow in the chat first, and every action reports its real result.
+- **Acts on your PC.** Open apps and sites, search or research the web with sources, report system health, control volume, media and brightness, read what's on screen and click in any app, manage files, lock/sleep/restart, open Windows settings, and set reminders. Every action reports its real result.
+- **Works like a coding assistant.** Runs PowerShell commands (git, python, npm, winget...), reads, writes and edits files (with automatic backups), and lists or ends processes.
+- **You decide how much it may do.** By default every change asks for your Allow (or a spoken "yes"). On your own PC, **Settings → Full control** lets it act without asking; deleting, uninstalling, killing processes, power actions and sending or paying still ask. Commands that would break Windows are always refused.
 - **Behaves like JARVIS.** Composed, dryly witty, infers what you mean, warns before sweeping or risky actions, stays calm when you're under pressure, and picks up earlier threads. It also speaks up on its own about low battery, a nearly full drive or sustained overload (can be turned off).
 - **Long-term memory.** After each message, durable facts about you (name, preferences, goals, projects, people, events, how you like answers) are extracted, updated when they change, and forgotten on request. Small talk is ignored. Review, edit, delete, export and import everything in the Memory panel.
 - **Living interface.** An interactive particle field and an animated core that reacts to what JARVIS is doing (idle, listening, thinking, speaking), with the chat floating in front.

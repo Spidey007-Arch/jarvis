@@ -55,7 +55,7 @@ class ApiTests(unittest.TestCase):
 
     def test_providers_listed(self):
         ids = [p["id"] for p in self.client.get("/api/providers", headers=AUTH).json()]
-        self.assertEqual(ids, ["omniroute", "gemini", "openai", "anthropic", "openrouter", "ollama", "custom"])
+        self.assertEqual(ids, ["gateway", "gemini", "openai", "anthropic", "openrouter", "ollama", "custom"])
 
     def test_switch_provider_without_key_asks_for_key(self):
         r = self.client.put("/api/settings", headers=AUTH, json={"provider": "anthropic"})

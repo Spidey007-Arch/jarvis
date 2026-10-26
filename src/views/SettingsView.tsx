@@ -122,8 +122,8 @@ export default function SettingsView({ conn, onChanged }: { conn: Connection | n
   if (!conn) return <div className="view-msg">Waiting for the backend to come online…</div>;
   if (!s || !preset) return <div className="view-msg">Loading settings…</div>;
 
-  const showBaseUrl = ["ollama", "custom", "omniroute"].includes(preset.id);
-  const showKey = preset.needs_key || ["custom", "omniroute"].includes(preset.id);
+  const showBaseUrl = ["ollama", "custom", "gateway"].includes(preset.id);
+  const showKey = preset.needs_key || ["custom", "gateway"].includes(preset.id);
   const canConnect = !busy && (preset.needs_key ? !!key.trim() || (s.has_api_key && baseUrl !== s.base_url) : !!baseUrl.trim());
   const Note = ({ k }: { k: Section }) => (notes[k] ? <p className={notes[k]!.tone}>{notes[k]!.text}</p> : null);
 
@@ -344,6 +344,20 @@ export default function SettingsView({ conn, onChanged }: { conn: Connection | n
               }
             />
             <span>Start-up briefing: system health, open apps and processes, spoken when JARVIS opens</span>
+          </label>
+          <label className="switch">
+            <input
+              type="checkbox"
+              checked={!!s.full_control}
+              disabled={busy}
+              onChange={(e) =>
+                save("profile", { full_control: e.target.checked },
+                  e.target.checked
+                    ? "Full control is on: JARVIS runs commands, edits files and manages processes without asking. Deleting, uninstalling, killing, power and sending still ask."
+                    : "Full control is off: JARVIS asks before every change.")
+              }
+            />
+            <span>Full control of this PC (only on your own PC): run commands, write and edit files, manage processes without asking each time</span>
           </label>
           <div className="field-row">
             <button

@@ -27,12 +27,14 @@ DEFAULTS: dict[str, Any] = {
     "proactive_alerts": True,
     "voice_enabled": True,
     "startup_briefing": True,  # JARVIS speaks first on launch: system health, open apps and processes
+    "full_control": False,  # the owner's own PC: changes run without asking; only destructive steps ask. Off for everyone else.
     "voice_mode": "live",  # live: Gemini Live speech-to-speech; local: wake word + Whisper + Piper, offline
     "provider": "gemini",
     "provider_config": {},
     "secrets": {},
 }
-PROFILE_FIELDS = ("user_name", "address", "proactive_alerts", "voice_enabled", "voice_mode", "startup_briefing")
+PROFILE_FIELDS = ("user_name", "address", "proactive_alerts", "voice_enabled", "voice_mode", "startup_briefing",
+                  "full_control")
 PROVIDER_FIELDS = ("chat_model", "embed_model", "base_url")
 
 
@@ -170,7 +172,7 @@ class SettingsStore:
             "chat_model": cfg["chat_model"],
             "embed_model": cfg["embed_model"],
             "has_api_key": bool(key),
-            # Gateways and local servers (OmniRoute, Ollama) work without a key.
+            # Gateways and local servers (self-hosted gateways, Ollama) work without a key.
             "ready": (bool(key) or not PRESETS[pid]["needs_key"]) and bool(cfg["chat_model"]),
             "api_key_hint": f"…{key[-4:]}" if len(key) >= 8 else "",
             "providers_with_keys": keyed,

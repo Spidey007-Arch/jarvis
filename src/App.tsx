@@ -69,7 +69,7 @@ function Gauge({ label, value }: { label: string; value: number | undefined }) {
 
 const clock = (epoch: number) => new Date(epoch * 1000).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 
-/** Today's free-tier usage as JARVIS counted it. Neither Google nor OmniRoute reports remaining
+/** Today's free-tier usage as JARVIS counted it. Neither Google nor most gateways report remaining
  *  quota, so limits appear once a provider's own quota error has named them. */
 function QuotaStrip({ conn, activity }: { conn: Connection | null; activity: Activity }) {
   const [q, setQ] = useState<Quota | null>(null);

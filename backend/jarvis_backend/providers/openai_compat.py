@@ -35,7 +35,7 @@ def _error_text(r: httpx.Response, body: bytes | None = None) -> str:
 
 
 def _gateway_gemini(models: list[dict[str, Any]]) -> tuple[str, list[dict[str, Any]]] | None:
-    """Gateways (OmniRoute, OpenRouter) list upstream models as 'provider/model'. When Gemini models are
+    """Gateways (e.g. OpenRouter) list upstream models as 'provider/model'. When Gemini models are
     among them, return their prefix and the list without it, so the native Gemini rules can choose."""
     prefixes = {n.split("/", 1)[0] for n in (m["name"] for m in models) if n.count("/") == 1 and n.split("/", 1)[1].startswith("gemini-")}
     if not prefixes:
@@ -58,7 +58,7 @@ class OpenAICompatProvider(Provider):
 
     async def _post(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:
         if path == "/chat/completions":
-            payload = {"stream": False, **payload}  # some gateways (OmniRoute) stream unless told not to
+            payload = {"stream": False, **payload}  # some gateways stream unless told not to
         try:
             r = await self.http.post(f"{self.base}{path}", json=payload)
         except (httpx.HTTPError, *NETWORK_EXCEPTIONS) as e:
@@ -162,7 +162,7 @@ class OpenAICompatProvider(Provider):
 
             if name := GeminiProvider.pick_chat(gw[1]):
                 return f"{gw[0]}/{name}"
-        # Gateways (OpenRouter, OmniRoute) expose routing models that pick the best available upstream.
+        # Gateways (e.g. OpenRouter) expose routing models that pick the best available upstream.
         for routed in ("auto", "auto/best-chat", "auto/chat", "auto/best-fast", "openrouter/auto"):
             if routed in chat:
                 return routed
