@@ -8,7 +8,8 @@ Both sides are transcribed, and every finished exchange is saved as a normal con
 A session opens on the wake word or push-to-talk and closes after IDLE_S of quiet, or when the user
 says something like "that's all". With an opening message (the start-up briefing) JARVIS speaks first,
 and the microphone is held back until it has finished so its own voice cannot interrupt it. It talks to Google directly with the saved Gemini key (OmniRoute
-does not relay live audio)."""
+does not relay live audio). If Google drops the connection mid-conversation, it reconnects and resumes
+the same conversation with a session-resumption handle, and asks JARVIS to finish a cut-off reply."""
 from __future__ import annotations
 
 import asyncio
@@ -23,6 +24,8 @@ log = logging.getLogger("jarvis.live")
 MODELS = ("gemini-3.8-live", "gemini-3.1-flash-live-preview", "gemini-2.5-flash-native-audio-latest")
 VOICE = "Charon"  # a deep, composed male voice
 IDLE_S = 15.0
+RECONNECTS = 3  # a dropped connection is reopened (and the conversation resumed) this many times
+STALL_S = 6.0  # mid-reply with nothing from Google this long: treat the connection as dead and reconnect
 _BYE = re.compile(r"\b(that'?s all|that will be all|that'?ll be all|goodbye|good night|bye jarvis|stop listening|thank you,? that'?s it)\b", re.I)
 
 
@@ -56,6 +59,7 @@ class LiveVoice:
         self._mic: asyncio.Queue[bytes] = asyncio.Queue(maxsize=100)  # ~4 s; older audio is dropped on a slow line
         self._stop = asyncio.Event()
         self._available: list[str] | None = None
+        self._handle: str | None = None  # Google's handle for resuming this conversation after a drop
 
     @property
     def active(self) -> bool:
@@ -106,7 +110,7 @@ class LiveVoice:
                 self._available = list(MODELS)
         return self._available
 
-    def _config(self, types: Any, voice: bool) -> Any:
+    def _config(self, types: Any, voice: bool, resume: bool = False) -> Any:
         decls = [types.FunctionDeclaration(name=t["name"], description=t["description"], parameters_json_schema=t["parameters"]) for t in self.tools]
         kw: dict[str, Any] = dict(
             response_modalities=["AUDIO"],
@@ -115,21 +119,24 @@ class LiveVoice:
             input_audio_transcription=types.AudioTranscriptionConfig(),
             output_audio_transcription=types.AudioTranscriptionConfig(),
         )
+        if resume:
+            kw["session_resumption"] = types.SessionResumptionConfig(handle=self._handle)
         if voice:
             kw["speech_config"] = types.SpeechConfig(voice_config=types.VoiceConfig(prebuilt_voice_config=types.PrebuiltVoiceConfig(voice_name=VOICE)))
         return types.LiveConnectConfig(**kw)
 
-    async def _connect(self, client: Any, types: Any) -> tuple[Any, Any, str]:
+    async def _connect(self, client: Any, types: Any, models: list[str] | None = None) -> tuple[Any, Any, str]:
         last: Exception | None = None
-        for model in self._models(client):
-            for voice in (True, False):  # some models refuse a voice choice; then use their default
+        for model in models or self._models(client):
+            # some models refuse a voice choice or session resumption; then go without
+            for voice, resume in ((True, True), (True, False), (False, True), (False, False)):
                 try:
-                    cm = client.aio.live.connect(model=model, config=self._config(types, voice))
+                    cm = client.aio.live.connect(model=model, config=self._config(types, voice, resume))
                     session = await asyncio.wait_for(cm.__aenter__(), 20)
                     return cm, session, model
                 except Exception as e:  # noqa: BLE001
                     last = e
-                    log.warning("live connect failed", extra={"fields": {"model": model, "voice": voice, "error": str(e)[:200]}})
+                    log.warning("live connect failed", extra={"fields": {"model": model, "voice": voice, "resume": resume, "error": str(e)[:200]}})
         raise LiveError(f"Could not open a live voice session: {last}")
 
     async def _send_text(self, session: Any, types: Any, text: str) -> None:
@@ -143,6 +150,7 @@ class LiveVoice:
         from google.genai import types
 
         conv_id: str | None = None
+        self._handle = None
         try:
             client = genai.Client(api_key=self.api_key())
             self.emit({"event": "live_connecting", "origin": origin})
@@ -153,7 +161,8 @@ class LiveVoice:
             return
         opened.set_result(None)
         log.info("live session open", extra={"fields": {"model": model, "origin": origin}})
-        state = {"last": time.monotonic(), "playing_until": 0.0, "user": said, "jarvis": "", "bye": False, "opening": bool(opening), "done": False}
+        state = {"last": time.monotonic(), "playing_until": 0.0, "user": said, "jarvis": "", "bye": False, "opening": bool(opening), "done": False, "reconnecting": False, "heard_at": time.monotonic()}
+        reconnects = 0
         try:
             await self.call_agent("live_mic", {"on": True}, timeout=10)
             self.emit({"event": "live_start", "model": model, "origin": origin})
@@ -167,14 +176,34 @@ class LiveVoice:
                     chunk = await self._mic.get()
                     if state["opening"]:
                         if not state["done"] or time.monotonic() < state["playing_until"]:
-                            continue  # JARVIS is still giving the briefing; don't let it hear itself
-                        state["opening"] = False
+                            # JARVIS is still speaking its opening; don't let it hear itself, but keep the
+                            # stream flowing: Google drops a connection that goes quiet mid-reply
+                            chunk = bytes(len(chunk))
+                        else:
+                            state["opening"] = False
                     await session.send_realtime_input(audio=types.Blob(data=chunk, mime_type="audio/pcm;rate=16000"))
 
-            async def receive() -> None:
+            def finish_turn() -> None:
                 nonlocal conv_id
+                user, reply = state["user"].strip(), state["jarvis"].strip()
+                state["user"] = state["jarvis"] = ""
+                if user or reply:
+                    conv_id = self.save_turn(conv_id, user, reply, label)
+                    self.emit({"event": "live_turn", "conversation_id": conv_id})
+                    if self.after_turn and user and reply:
+                        self.after_turn(user, reply, conv_id)
+                if _BYE.search(user):
+                    state["bye"] = True
+
+            async def receive() -> None:
                 while True:
                     async for msg in session.receive():
+                        state["heard_at"] = time.monotonic()
+                        upd = msg.session_resumption_update
+                        if upd and upd.resumable and upd.new_handle:
+                            self._handle = upd.new_handle
+                        if msg.go_away:
+                            log.info("live: server will close the connection soon", extra={"fields": {"time_left": str(msg.go_away.time_left)}})
                         sc = msg.server_content
                         if msg.tool_call:
                             responses = []
@@ -187,6 +216,7 @@ class LiveVoice:
                         if not sc:
                             continue
                         if sc.interrupted:
+                            log.info("live: reply interrupted by audio from the microphone")
                             await self.push_agent({"type": "speaker_flush"})
                             state["playing_until"] = 0.0
                         if sc.input_transcription and sc.input_transcription.text:
@@ -195,6 +225,7 @@ class LiveVoice:
                             self.emit({"event": "user_text", "text": state["user"].strip()})
                         if sc.output_transcription and sc.output_transcription.text:
                             state["jarvis"] += sc.output_transcription.text
+                            state["done"] = False
                             self.emit({"event": "jarvis_text", "text": state["jarvis"].strip()})
                         if sc.model_turn:
                             for part in sc.model_turn.parts or []:
@@ -204,35 +235,72 @@ class LiveVoice:
                                     now = time.monotonic()
                                     state["playing_until"] = max(state["playing_until"], now) + len(pcm) / 48000.0
                                     state["last"] = now
+                                    state["done"] = False
                         if sc.turn_complete:
                             state["done"] = True
-                            user, reply = state["user"].strip(), state["jarvis"].strip()
-                            state["user"] = state["jarvis"] = ""
-                            if user or reply:
-                                conv_id = self.save_turn(conv_id, user, reply, label)
-                                self.emit({"event": "live_turn", "conversation_id": conv_id})
-                                if self.after_turn and user and reply:
-                                    self.after_turn(user, reply, conv_id)
-                            if _BYE.search(user):
-                                state["bye"] = True
+                            finish_turn()
 
-            async def watch() -> None:
+            async def stall() -> None:
+                while True:
+                    await asyncio.sleep(1.0)
+                    if not state["done"] and state["jarvis"] and time.monotonic() - state["heard_at"] > STALL_S:
+                        raise LiveError("Google stopped sending mid-reply")
+
+            async def watch() -> str:
                 while not self._stop.is_set():
                     await asyncio.sleep(0.5)
                     now = time.monotonic()
                     speaking = now < state["playing_until"]
                     if state["bye"] and not speaking:
-                        return
+                        return "goodbye"
+                    if state["reconnecting"] or (not state["done"] and state["jarvis"]):
+                        continue  # mid-reply: stall() handles a reply that never finishes
                     if not speaking and now - max(state["last"], state["playing_until"]) > IDLE_S:
-                        return
+                        return "quiet"
+                return "stopped"  # the mic button, the pill, or a stop request
 
-            tasks = [asyncio.create_task(send()), asyncio.create_task(receive()), asyncio.create_task(watch())]
-            done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
-            for t in pending:
-                t.cancel()
-            for t in done:
-                if t.exception():
-                    raise t.exception()  # type: ignore[misc]
+            watcher = asyncio.create_task(watch())
+            try:
+                while True:
+                    state["heard_at"] = time.monotonic()
+                    talk = [asyncio.create_task(send()), asyncio.create_task(receive()), asyncio.create_task(stall())]
+                    done, _ = await asyncio.wait([*talk, watcher], return_when=asyncio.FIRST_COMPLETED)
+                    for t in talk:
+                        t.cancel()
+                    if watcher in done:
+                        break  # quiet for a while, or the user said goodbye
+                    err = next((t.exception() for t in done if t is not watcher and not t.cancelled() and t.exception()), None)
+                    if err is None or reconnects >= RECONNECTS or self._stop.is_set():
+                        if err:
+                            raise err
+                        break
+                    # Google dropped the connection: reopen it and carry on with the same conversation.
+                    reconnects += 1
+                    state["reconnecting"] = True  # a stall before the drop, or the reconnect itself, is not the user going quiet
+                    cut_off = not state["done"] and bool(state["jarvis"].strip())
+                    log.warning("live connection dropped; reconnecting",
+                                extra={"fields": {"attempt": reconnects, "resumable": bool(self._handle), "error": str(err)[:200]}})
+                    self.emit({"event": "live_connecting", "origin": "reconnect"})
+                    if cut_off:
+                        state["jarvis"] += " ..."
+                        finish_turn()
+                    try:
+                        await cm.__aexit__(None, None, None)
+                    except Exception:  # noqa: BLE001 - already closed
+                        pass
+                    while not self._mic.empty():
+                        self._mic.get_nowait()  # audio from the gap is stale
+                    try:
+                        cm, session, model = await self._connect(client, types, [model])
+                    finally:
+                        state["last"], state["reconnecting"] = time.monotonic(), False
+                    self.emit({"event": "live_start", "model": model, "origin": "reconnect"})
+                    if cut_off:
+                        state["opening"], state["done"] = True, False  # let it finish without hearing itself
+                        await self._send_text(session, types, "[The connection dropped while you were speaking. Finish what you were saying, briefly"
+                                              + (", without repeating what was already said.]" if self._handle else ".]"))
+            finally:
+                watcher.cancel()
         except Exception as e:  # noqa: BLE001
             log.exception("live session failed")
             self.emit({"event": "error", "message": f"Live voice stopped: {e}"})
@@ -246,4 +314,5 @@ class LiveVoice:
             except Exception:  # noqa: BLE001
                 pass
             self.emit({"event": "live_end", "conversation_id": conv_id})
-            log.info("live session closed")
+            ended = watcher.result() if "watcher" in locals() and watcher.done() and not watcher.cancelled() else "error"
+            log.info("live session closed", extra={"fields": {"reconnects": reconnects, "why": ended}})
