@@ -185,8 +185,26 @@ TOOLS: list[ToolSpec] = [
              obj({"page": S}), agent_action="open_settings", label="Opening settings"),
     ToolSpec("set_reminder", "Set a reminder that JARVIS says out loud at a local date-time. due must be ISO format YYYY-MM-DDTHH:MM in the user's local time.",
              obj({"text": S, "due": S}, ["text", "due"]), label="Setting a reminder"),
-    ToolSpec("list_reminders", "List pending reminders.", obj(), label="Checking reminders"),
-    ToolSpec("cancel_reminder", "Cancel a pending reminder by its id.", obj({"id": S}, ["id"]), label="Cancelling a reminder"),
+    ToolSpec("set_alarm", "Set an alarm JARVIS says out loud: at is a time today (HH:MM, 24-hour; tomorrow if already past) or "
+             "an ISO date-time YYYY-MM-DDTHH:MM; label is optional (e.g. 'gym').",
+             obj({"at": S, "label": S}, ["at"]), label="Setting an alarm for {at}"),
+    ToolSpec("set_timer", "Start a countdown timer that JARVIS announces when it ends: minutes and/or seconds, optional label "
+             "(e.g. 'tea', 'pasta').", obj({"minutes": I, "seconds": I, "label": S}), label="Starting a timer"),
+    ToolSpec("list_reminders", "List pending reminders, alarms and timers (timers show the time left).", obj(), label="Checking reminders"),
+    ToolSpec("cancel_reminder", "Cancel a pending reminder, alarm or timer by its id.", obj({"id": S}, ["id"]), label="Cancelling a reminder"),
+    # System extras
+    ToolSpec("hardware_info", "Graphics card (name, load, memory, temperature) and temperatures of this PC, best effort.",
+             obj(), agent_action="hardware_info", timeout=40, label="Checking the hardware"),
+    ToolSpec("autostart", "Whether JARVIS starts when the user signs in to Windows: action status, enable or disable.",
+             obj({"action": S}, ["action"]), agent_action="autostart", label="Start with Windows: {action}"),
+    ToolSpec("copy_path", "Copy a file or folder to another folder or name. Never overwrites.",
+             obj({"source": S, "destination": S}, ["source", "destination"]), risk="confirm", agent_action="copy_path",
+             label="Copy {source} to {destination}"),
+    ToolSpec("recent_files", "Files the user opened recently, newest first; optional extension (e.g. 'pdf') or name query. Use for "
+             "'the file I was working on', 'that PDF from yesterday'.",
+             obj({"extension": S, "query": S, "limit": I}), agent_action="recent_files", timeout=40, label="Checking recent files"),
+    ToolSpec("recent_downloads", "The newest finished files in the Downloads folder (programs flagged). Use for 'what did I just "
+             "download', 'open the file I downloaded'.", obj({"limit": I}), agent_action="recent_downloads", label="Checking downloads"),
 ]
 
 # Repeating these is normal (another key press, the next track), never a loop.
@@ -195,7 +213,8 @@ STEPWISE_TOOLS = frozenset({"press_keys", "type_text", "volume", "media", "brigh
 # Read-only looks whose answer can change after other actions.
 OBSERVE_TOOLS = frozenset({"look_at_screen", "system_status", "clipboard_get", "list_folder", "find_files", "list_reminders", "web_read",
                            "gmail_list", "gmail_open", "whatsapp_chats", "whatsapp_read", "find_apis", "call_api",
-                           "read_file", "list_processes", "run_command", "find_controls", "read_window", "list_windows"})
+                           "read_file", "list_processes", "run_command", "find_controls", "read_window", "list_windows",
+                           "hardware_info", "recent_files", "recent_downloads"})
 
 BY_NAME = {t.name: t for t in TOOLS}
 

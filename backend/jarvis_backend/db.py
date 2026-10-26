@@ -48,7 +48,7 @@ CREATE TABLE IF NOT EXISTS reminders (
     text       TEXT NOT NULL,
     due_at     REAL NOT NULL,
     created_at REAL NOT NULL,
-    status     TEXT NOT NULL,                          -- pending | done | cancelled
+    status     TEXT NOT NULL,                          -- pending | done | cancelled | missed
     fired_at   REAL
 );
 CREATE INDEX IF NOT EXISTS idx_rem_due ON reminders(status, due_at);
@@ -71,6 +71,8 @@ class DB:
             cols = {r[1] for r in self._conn.execute("PRAGMA table_info(messages)")}
             if "actions" not in cols:  # added in milestone 3: what JARVIS did while answering
                 self._conn.execute("ALTER TABLE messages ADD COLUMN actions TEXT")
+            if "kind" not in {r[1] for r in self._conn.execute("PRAGMA table_info(reminders)")}:  # alarms and timers
+                self._conn.execute("ALTER TABLE reminders ADD COLUMN kind TEXT NOT NULL DEFAULT 'reminder'")
 
     def all(self, sql: str, params: Iterable[Any] = ()) -> list[dict[str, Any]]:
         with self._lock:

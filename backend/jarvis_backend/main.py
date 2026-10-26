@@ -240,6 +240,9 @@ def create_app(port: int, token: str | None = None) -> FastAPI:
                 elif kind == "mic":
                     if services.live:
                         services.live.feed(msg.get("pcm", ""))
+                elif kind == "event":  # something the agent noticed on its own (a finished download, ...)
+                    if services.agent_event:
+                        services.agent_event(msg)
                 elif kind == "voice":
                     bridge.voice_event(msg)
                     if msg.get("event") == "wake" and services.live and services.voice_mode() == "live":

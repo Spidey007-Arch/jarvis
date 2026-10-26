@@ -7,7 +7,7 @@ import logging
 import re
 import time
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
@@ -52,6 +52,8 @@ class Services:
     monitor: Monitor
     live: Any = None  # LiveVoice, created with the router (it needs the router's tool runner)
     offline_voice_until: float = 0.0  # Live voice paused until then: the connection was too slow for it
+    agent_event: Callable[[dict[str, Any]], None] | None = None  # set by the router: events the agent reports on its own
+    recent_downloads: list[dict[str, Any]] = field(default_factory=list)  # browser downloads noticed this session, newest last
 
     def voice_mode(self) -> str:
         """The voice engine to use now: the chosen one, except offline while the line is too slow for Live."""
@@ -103,6 +105,8 @@ def needs_approval(spec: ToolSpec, args: dict[str, Any], full_control: bool = Fa
         return True
     if spec.name == "click_text" and RISKY_CLICK.search(str(args.get("text", ""))):
         return True
+    if spec.name == "autostart" and str(args.get("action", "status")).lower() != "status":
+        return not full_control  # a lasting change to how Windows starts
     if spec.name == "window_control" and str(args.get("action", "")).lower() == "close":
         return not full_control  # the app may lose unsaved work (it usually asks first)
     if spec.name == "run_command" and DANGER_COMMAND.search(str(args.get("command", ""))):
@@ -461,6 +465,11 @@ def build_router(svc: Services, require_auth: Callable[..., None]) -> APIRouter:
                 raise ToolFailure(str(e)) from e
         if spec.name == "set_reminder":
             return svc.reminders.add(str(args.get("text", "")), str(args.get("due", "")))
+        if spec.name == "set_alarm":
+            return svc.reminders.add_alarm(str(args.get("at", "")), str(args.get("label") or ""))
+        if spec.name == "set_timer":
+            secs = int(args.get("minutes") or 0) * 60 + int(args.get("seconds") or 0)
+            return svc.reminders.add_timer(secs, str(args.get("label") or ""))
         if spec.name == "list_reminders":
             return {"pending": svc.reminders.pending()}
         if spec.name == "cancel_reminder":
@@ -616,6 +625,29 @@ def build_router(svc: Services, require_auth: Callable[..., None]) -> APIRouter:
         svc.offline_voice_until = time.time() + OFFLINE_FOR_S
         log.warning("switching to the offline voice for %d minutes: %s", OFFLINE_FOR_S // 60, reason)
         spawn(_go_offline(user, acted, origin))
+
+    async def _say(text: str) -> None:
+        """Say something unprompted, unless a live conversation is talking (it would talk over it)."""
+        if not svc.settings.get("voice_enabled") or (svc.live and svc.live.active):
+            return
+        try:
+            await svc.bridge.call("speak", {"text": text, "queue": True}, timeout=60)
+        except (AgentUnavailable, AgentError) as e:
+            log.warning("could not say %r: %s", text[:40], e)
+
+    def _on_agent_event(msg: dict[str, Any]) -> None:
+        if msg.get("event") == "download_done":
+            item = {k: msg.get(k) for k in ("name", "path", "size_kb", "program", "finished")}
+            svc.recent_downloads.append(item)
+            del svc.recent_downloads[:-20]
+            log.info("download finished", extra={"fields": {"size_kb": item["size_kb"], "program": item["program"]}})
+            name = re.sub(r"[_\-]+", " ", Path(str(item["name"])).stem)[:60]
+            line = f"Your download {name} has finished."
+            if item["program"]:
+                line += " It's a program, so I won't open it unless you ask."
+            spawn(_say(line))
+
+    svc.agent_event = _on_agent_event
 
     svc.live = LiveVoice(
         api_key=lambda: svc.settings.api_key("gemini"),

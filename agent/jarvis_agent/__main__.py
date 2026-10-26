@@ -14,7 +14,7 @@ import websockets
 from jarvis_common import logs
 
 from . import __version__
-from . import voice
+from . import extras, voice
 from .actions import attach_live
 from .live_audio import LiveAudio
 from .actions import SCREENSHOT_TTL_S, ActionError, purge_old_screenshots, run, warm_app_index
@@ -194,6 +194,7 @@ async def amain() -> int:
     global _loop, _outbox
     _loop, _outbox = asyncio.get_running_loop(), asyncio.Queue(maxsize=200)
     voice.attach(emit_voice)
+    extras.DownloadWatcher(lambda e: send_backend({"type": "event", **e})).start()
     global live
     live = attach_live(send_backend)
     psutil.cpu_percent(interval=None)  # prime the counter so the first reading is meaningful

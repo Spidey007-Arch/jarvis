@@ -1092,4 +1092,4 @@ def kill_process(args: dict[str, Any]) -> dict[str, Any]:
     return {"ended": name, "pid": p.pid}
 
 
-from . import uictl  # noqa: E402,F401 - registers its actions (window and control tools)
+from . import extras, uictl  # noqa: E402,F401 - register their actions (system extras, window and control tools)
