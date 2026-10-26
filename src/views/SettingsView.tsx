@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { ApiError, ModelInfo, ProviderPreset, Settings, SettingsUpdate, VoiceStatus, getModels, getProviders, getSettings, getVoice, putSettings, setVoice, setVoiceMode } from "../api";
+import { ApiError, ModelInfo, ProviderPreset, Settings, SettingsUpdate, VoiceStatus, enrollVoice, forgetVoice, getModels, getProviders, getSettings, getVoice, putSettings, setVoice, setVoiceMode } from "../api";
 import type { Connection } from "../shell";
 
 type Note = { tone: "ok" | "bad"; text: string } | null;
@@ -58,6 +58,30 @@ export default function SettingsView({ conn, onChanged }: { conn: Connection | n
     if (!conn) return;
     getVoice(conn).then(setVoiceStatus).catch((e) => note("voice", { tone: "bad", text: (e as Error).message }));
   }, [conn]);
+
+  const [enrolling, setEnrolling] = useState(0); // seconds left while recording the user's voice
+  const teachVoice = async () => {
+    if (!conn) return;
+    note("voice", null);
+    setEnrolling(15);
+    const tick = window.setInterval(() => setEnrolling((n) => Math.max(1, n - 1)), 1000);
+    try {
+      const r = await enrollVoice(conn);
+      note("voice", { tone: "ok", text: `Got it. Only your voice wakes JARVIS now (${r.pieces} samples, match ${Math.round((r.consistency ?? 0) * 100)}%).` });
+      setVoiceStatus(await getVoice(conn));
+    } catch (e) {
+      note("voice", { tone: "bad", text: (e as Error).message });
+    } finally {
+      window.clearInterval(tick);
+      setEnrolling(0);
+    }
+  };
+  const forget = async () => {
+    if (!conn) return;
+    await forgetVoice(conn).catch((e) => note("voice", { tone: "bad", text: (e as Error).message }));
+    setVoiceStatus(await getVoice(conn).catch(() => voice));
+    note("voice", { tone: "ok", text: "Voiceprint deleted. Anyone saying “Jarvis” can wake it again." });
+  };
 
   const toggleVoice = async (on: boolean) => {
     if (!conn) return;
@@ -180,7 +204,7 @@ export default function SettingsView({ conn, onChanged }: { conn: Connection | n
           <h2>Voice</h2>
           <label className="switch">
             <input type="checkbox" checked={!!voice?.enabled} disabled={voiceBusy || !voice} onChange={(e) => toggleVoice(e.target.checked)} />
-            <span>Listen for “Hey JARVIS” (wake word), then answer out loud</span>
+            <span>Wake when I say “Jarvis” (e.g. “Jarvis, open Spotify”), then answer out loud</span>
           </label>
           <div className="chips" role="radiogroup" aria-label="Voice engine">
             {(["live", "local"] as const).map((m) => (
@@ -208,6 +232,36 @@ export default function SettingsView({ conn, onChanged }: { conn: Connection | n
                 ? "Runs entirely on this PC: openWakeWord hears “Hey JARVIS”, Whisper turns speech into text, Piper speaks (British voice)."
                 : `Voice files still downloading or missing: ${voice.missing.join(", ") || "programs not unpacked yet"}.`}
           </p>
+          {voice?.speaker_model && (
+            <div className="enroll">
+              <div className="enroll-head">
+                <strong>Only my voice</strong>
+                <span className={`badge ${voice.voiceprint ? "ok" : ""}`}>{voice.voiceprint ? "ON" : "NOT SET UP"}</span>
+              </div>
+              {enrolling > 0 ? (
+                <blockquote className="enroll-read">
+                  <span className="enroll-count">{enrolling}s · read this aloud, normally, close to the mic</span>
+                  The quick brown fox jumps over the lazy dog. I am setting up my assistant so that it listens to me and
+                  nobody else. Today I might ask it to check the weather, play some music, read my messages or open a file
+                  on my computer. One, two, three, four, five, six, seven, eight, nine, ten.
+                </blockquote>
+              ) : (
+                <p className="dim small">
+                  {voice.voiceprint
+                    ? "JARVIS answers only your voice: other people, the TV and background talk are ignored, even if they say “Jarvis”."
+                    : "Teach JARVIS your voice (15 seconds of reading aloud) so it ignores everyone else. Stays on this PC."}
+                </p>
+              )}
+              <div className="field-row">
+                <button disabled={enrolling > 0 || voiceBusy} onClick={teachVoice}>
+                  {enrolling > 0 ? "LISTENING…" : voice.voiceprint ? "RE-TEACH MY VOICE" : "TEACH JARVIS MY VOICE"}
+                </button>
+                {voice.voiceprint && enrolling === 0 && (
+                  <button className="ghost" onClick={forget}>FORGET</button>
+                )}
+              </div>
+            </div>
+          )}
           <Note k="voice" />
         </section>
         <section className="card">

@@ -104,6 +104,74 @@ def windows_hidden(pid: int, settle: float = 0.25) -> Iterator[None]:
             user32.ShowWindow(h, SW_SHOWNA)  # same size and maximized state, without stealing focus
 
 
+user32.SetThreadDpiAwarenessContext.argtypes = [ctypes.c_void_p]
+user32.SetThreadDpiAwarenessContext.restype = ctypes.c_void_p
+
+
+@contextmanager
+def physical_pixels() -> Iterator[None]:
+    """Measure the screen in real pixels (per-monitor DPI aware), the same units as a screenshot."""
+    old = user32.SetThreadDpiAwarenessContext(ctypes.c_void_p(-4))
+    try:
+        yield
+    finally:
+        if old:
+            user32.SetThreadDpiAwarenessContext(old)
+
+
+def windows_at(pid: int, x: int, y: int) -> list[int]:
+    """Which of a process's visible windows cover screen point (x, y), in physical pixels."""
+    hits = []
+    with physical_pixels():
+        for h in visible_windows_of(pid) if pid else []:
+            r = wintypes.RECT()
+            if user32.GetWindowRect(h, ctypes.byref(r)) and r.left <= x < r.right and r.top <= y < r.bottom:
+                hits.append(h)
+    return hits
+
+
+# ---------------- mouse ----------------
+
+MOUSEEVENTF_MOVE, MOUSEEVENTF_ABSOLUTE, MOUSEEVENTF_VIRTUALDESK = 0x0001, 0x8000, 0x4000
+_BUTTONS = {"left": (0x0002, 0x0004), "right": (0x0008, 0x0010), "middle": (0x0020, 0x0040)}
+MOUSEEVENTF_WHEEL = 0x0800
+user32.mouse_event.argtypes = [wintypes.DWORD, wintypes.DWORD, wintypes.DWORD, wintypes.DWORD, ctypes.c_size_t]
+user32.GetSystemMetrics.argtypes = [ctypes.c_int]
+
+
+def virtual_screen() -> tuple[int, int, int, int]:
+    """Left, top, width, height of the whole desktop across all monitors, in physical pixels."""
+    with physical_pixels():
+        return tuple(user32.GetSystemMetrics(i) for i in (76, 77, 78, 79))  # type: ignore[return-value]
+
+
+def mouse_move(fx: float, fy: float) -> None:
+    """Move to a point given as fractions (0..1) of the whole desktop. Absolute input is normalized to
+    0..65535 across the virtual desktop, so it lands on the same pixel whatever the display scaling."""
+    nx = int(round(max(0.0, min(1.0, fx)) * 65535))
+    ny = int(round(max(0.0, min(1.0, fy)) * 65535))
+    user32.mouse_event(MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_VIRTUALDESK, nx, ny, 0, 0)
+
+
+def mouse_click(fx: float, fy: float, button: str = "left", double: bool = False) -> None:
+    down, up = _BUTTONS.get(button, _BUTTONS["left"])
+    mouse_move(fx, fy)
+    time.sleep(0.08)  # let hover effects and focus catch up, as a hand would
+    for _ in range(2 if double else 1):
+        user32.mouse_event(down, 0, 0, 0, 0)
+        time.sleep(0.03)
+        user32.mouse_event(up, 0, 0, 0, 0)
+        time.sleep(0.06)
+
+
+def mouse_scroll(clicks: int, fx: float | None = None, fy: float | None = None) -> None:
+    """Scroll by wheel clicks (positive is up), over a point if given."""
+    if fx is not None and fy is not None:
+        mouse_move(fx, fy)
+        time.sleep(0.05)
+    user32.mouse_event(MOUSEEVENTF_WHEEL, 0, 0, ctypes.c_uint32(int(clicks) * 120).value, 0)
+
+
 # ---------------- keyboard ----------------
 
 KEYEVENTF_KEYUP = 0x0002

@@ -60,6 +60,26 @@ class ToolFailure(Exception):
 TOOL_SCHEMAS = [t.schema() for t in TOOLS]
 audit = logging.getLogger("jarvis.automation")
 
+# A click on a control like these needs the user's Allow first (and cannot happen from a voice session).
+RISKY_CLICK = re.compile(
+    r"\b(send|pay|payment|buy|purchase|order|checkout|check out|delete|remove|uninstall|erase|format|wipe|submit|post|publish|tweet|"
+    r"transfer|withdraw|confirm|accept|agree|allow|grant|sign ?out|log ?out|shut ?down|restart|discard|unsubscribe|reset|install|"
+    r"forward|reply all|empty trash|clear (all|history|data))\b", re.I)
+
+LOCATE_PROMPT = (
+    'You are looking at a screenshot of the user\'s Windows desktop. Find this on it: "{target}".\n'
+    'Reply with JSON only, no other text: {{"found": true, "point": [y, x], "label": "<the control\'s visible text, or a short name '
+    'if it has none>", "kind": "button|link|field|icon|menu|tab|item|other"}}, where point is the centre of that element as integers '
+    'normalized to 0-1000 (y first, from the top; x from the left). If it is not visible, or you are not sure which element is meant, '
+    'reply {{"found": false, "reason": "<what you see instead>"}}.'
+)
+
+
+def needs_approval(spec: ToolSpec, args: dict[str, Any]) -> bool:
+    if spec.risk == "confirm":
+        return not (spec.name == "organize_folder" and args.get("dry_run", True) is not False)  # a dry run only reports a plan
+    return spec.name == "screen_click" and bool(RISKY_CLICK.search(str(args.get("target", ""))))
+
 
 def _trim(value: Any, limit: int = 6000) -> Any:
     """Keep tool results small enough for the model's context."""
@@ -310,6 +330,32 @@ def build_router(svc: Services, require_auth: Callable[..., None]) -> APIRouter:
         fut.set_result(body.approve)
         return {"ok": True}
 
+    async def _locate_on_screen(target: str) -> dict[str, Any]:
+        """Find a control on screen with the vision model: a fresh screenshot (deleted at once), and a point
+        in fractions of the screen that the agent turns into a click."""
+        shot = await svc.bridge.call("capture_screen", {}, timeout=20)
+        path = Path(shot["path"])
+        try:
+            image = path.read_bytes()
+        finally:
+            path.unlink(missing_ok=True)
+        answer = await svc.llm.describe_image(LOCATE_PROMPT.format(target=target.replace('"', "'")), image, light=True)
+        m = re.search(r"\{.*\}", answer or "", re.S)
+        try:
+            spot = json.loads(m.group(0)) if m else {}
+        except ValueError:
+            spot = {}
+        if not spot.get("found"):
+            raise ToolFailure(f"I can't see '{target}' on the screen" + (f": {spot['reason']}" if spot.get("reason") else ".")
+                              + " Open or scroll to it first, or describe it differently.")
+        try:
+            y, x = (float(v) for v in spot["point"])
+        except (KeyError, TypeError, ValueError) as e:
+            raise ToolFailure("The vision model did not give a usable position; try again.") from e
+        if not (0 <= x <= 1000 and 0 <= y <= 1000):
+            raise ToolFailure("The vision model gave a position off the screen; try again.")
+        return {"x": x / 1000, "y": y / 1000, "label": str(spot.get("label") or "")[:80], "kind": spot.get("kind")}
+
     async def _run_tool(spec: ToolSpec, args: dict[str, Any]) -> Any:
         if spec.agent_action:
             return await svc.bridge.call(spec.agent_action, args, timeout=spec.timeout)
@@ -329,6 +375,27 @@ def build_router(svc: Services, require_auth: Callable[..., None]) -> APIRouter:
                 image,
             )
             return {"answer": answer}
+        if spec.name == "screen_click":
+            target = str(args.get("target", "")).strip()
+            if not target:
+                raise ToolFailure("Say what to click, e.g. 'the Send button in WhatsApp'.")
+            spot = await _locate_on_screen(target)
+            label = spot.get("label") or target
+            if RISKY_CLICK.search(label) and not RISKY_CLICK.search(target):
+                raise ToolFailure(f"That control is '{label}', which sends, pays, deletes or changes something. Nothing was clicked. "
+                                  f"If the user wants it, call screen_click again with target naming '{label}' so they are asked to approve it.")
+            done = await svc.bridge.call("mouse_click", {"x": spot["x"], "y": spot["y"], "button": args.get("button") or "left",
+                                                          "double": bool(args.get("double"))}, timeout=15)
+            return {"clicked": label, "kind": spot.get("kind"), "at": done.get("clicked"),
+                    "next": "Check the result with look_at_screen before the next step if anything is uncertain."}
+        if spec.name == "screen_scroll":
+            direction = str(args.get("direction") or "down").lower()
+            clicks = max(1, min(int(args.get("amount") or 5), 30)) * (1 if direction == "up" else -1)
+            where: dict[str, Any] = {"clicks": clicks}
+            if args.get("over"):
+                spot = await _locate_on_screen(str(args["over"]))
+                where.update(x=spot["x"], y=spot["y"])
+            return await svc.bridge.call("mouse_scroll", where, timeout=15)
         if spec.name == "set_reminder":
             return svc.reminders.add(str(args.get("text", "")), str(args.get("due", "")))
         if spec.name == "list_reminders":
@@ -351,8 +418,7 @@ def build_router(svc: Services, require_auth: Callable[..., None]) -> APIRouter:
             entry.update(status=status, **extra)
             queue.put_nowait(("tool", dict(entry)))
 
-        previewing = spec.name == "organize_folder" and args.get("dry_run", True) is not False
-        if spec.risk == "confirm" and not previewing:  # a dry run only reports a plan, so it needs no permission
+        if needs_approval(spec, args):
             fut: asyncio.Future = asyncio.get_running_loop().create_future()
             pending_confirmations[cid] = fut
             emit("awaiting_confirmation", detail=json.dumps(args, ensure_ascii=False))
@@ -394,8 +460,7 @@ def build_router(svc: Services, require_auth: Callable[..., None]) -> APIRouter:
         spec = BY_NAME.get(name)
         if spec is None:
             return {"ok": False, "error": f"There is no tool named '{name}'."}
-        previewing = spec.name == "organize_folder" and args.get("dry_run", True) is not False
-        if spec.risk == "confirm" and not previewing:
+        if needs_approval(spec, args):
             return {"ok": False, "error": "This action needs the user's approval on screen, which a voice session cannot give. "
                                           "Tell them to ask for it by typing in the JARVIS window so they can approve it."}
         audit.info("tool call", extra={"fields": {"tool": spec.name, "args": args, "via": "live"}})
@@ -552,6 +617,23 @@ def build_router(svc: Services, require_auth: Callable[..., None]) -> APIRouter:
             raise HTTPException(status_code=503, detail=str(e)) from e
         svc.settings.update_profile({"voice_enabled": bool(state.get("enabled"))})
         return state
+
+    @r.post("/voice/enroll")
+    async def voice_enroll() -> dict[str, Any]:
+        """Record the user reading aloud for 15 s and make their voiceprint: then only their voice wakes JARVIS."""
+        if svc.live and svc.live.active:
+            await svc.live.stop()
+        try:
+            return await svc.bridge.call("voice_enroll", {"seconds": 15}, timeout=45)
+        except (AgentUnavailable, AgentError) as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+
+    @r.delete("/voice/enroll")
+    async def voice_forget() -> dict[str, Any]:
+        try:
+            return await svc.bridge.call("voice_forget", timeout=10)
+        except (AgentUnavailable, AgentError) as e:
+            raise HTTPException(status_code=503, detail=str(e)) from e
 
     @r.post("/voice/speak")
     async def voice_speak(body: SpeakIn) -> dict[str, Any]:

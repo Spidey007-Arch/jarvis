@@ -110,6 +110,14 @@ export interface VoiceStatus {
   ready: boolean;
   missing: string[];
   error?: string;
+  speaker_model?: boolean; // the speaker-recognition model is downloaded
+  voiceprint?: boolean; // the user's voice is enrolled: only it wakes JARVIS
+}
+export interface Enrollment {
+  enrolled: boolean;
+  pieces?: number;
+  consistency?: number;
+  threshold?: number;
 }
 export const getVoiceEvents = (c: Connection, after: number, signal?: AbortSignal) =>
   call<VoiceEvent[]>(c, `/api/voice/events?after=${after}`, { signal });
@@ -122,6 +130,9 @@ export const startBriefing = (c: Connection) => call<{ started: boolean; mode?: 
 export const getVoice = (c: Connection) => call<VoiceStatus>(c, "/api/voice");
 export const setVoice = (c: Connection, enabled: boolean) =>
   call<VoiceStatus>(c, "/api/voice", { method: "POST", body: JSON.stringify({ enabled }) });
+/** Records 15 s of the user reading aloud and makes their voiceprint. */
+export const enrollVoice = (c: Connection) => call<Enrollment>(c, "/api/voice/enroll", { method: "POST", body: "{}" });
+export const forgetVoice = (c: Connection) => call<Enrollment>(c, "/api/voice/enroll", { method: "DELETE" });
 export const speak = (c: Connection, text: string) => call<{ spoken: boolean }>(c, "/api/voice/speak", { method: "POST", body: JSON.stringify({ text }) });
 export const stopSpeaking = (c: Connection) => call<{ stopped: boolean }>(c, "/api/voice/stop", { method: "POST", body: "{}" });
 

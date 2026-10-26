@@ -1,10 +1,10 @@
 """Voice: wake word, listening, transcription and speech, all on this PC.
 
-- Waking: "Hey JARVIS" is caught instantly by openWakeWord's neural models (see wakeword.py). Besides
-  that, any speech is cut out of the microphone stream (SpeechGate) and transcribed here; JARVIS wakes
-  when it hears its name or a greeting ("Jarvis", "hello", "you there?"), or, while the PC itself is
-  silent, anything said at all. While a video or music is playing the name or a greeting is needed,
-  so JARVIS does not answer the TV.
+- Waking: only when the user says its name. "Hey JARVIS" is caught instantly by openWakeWord's neural
+  models (see wakeword.py); besides that, speech is cut out of the microphone stream (SpeechGate) and
+  transcribed here, and JARVIS wakes only if the name is in it ("Jarvis, open Spotify", "what's the time,
+  Jarvis?"). Background talk, the TV and greetings without the name are ignored. With a voiceprint
+  enrolled (speaker.py), the speaker must also be the user.
 - Listening: the default microphone at 16 kHz until about a second of silence.
 - Transcription: whisper.cpp with the base English model.
 - Speech: Piper with a British male voice; saying the wake word while JARVIS talks stops it.
@@ -40,7 +40,6 @@ GATE_PREROLL_S = 0.5
 GATE_END_S = 0.7
 GATE_MAX_S = 8.0
 GATE_MIN_LEVEL = 110.0  # laptop mic arrays can be very quiet
-MEDIA_PEAK = 0.02  # output louder than this means the PC is playing something
 
 FILES = {
     "whisper_zip": "whisper-bin-x64.zip",
@@ -197,17 +196,9 @@ class SpeechGate:
 
 
 _NAME = re.compile(r"\b(jarvis|jarvys|jervis|jarvas|jarves|javis)\b", re.I)
-_GREETING = re.compile(
-    r"^(hello|hi|hey|hiya|yo|ok|okay|good (morning|afternoon|evening)|you there|are you there|wake up|listen)\b", re.I)
-
-
-def addressed(text: str, media_playing: bool) -> bool:
-    """Was this speech meant for JARVIS? Its name or a greeting always counts; with nothing playing on
-    the PC, any real sentence does too."""
-    t = text.strip()
-    if _NAME.search(t) or _GREETING.search(t):
-        return True
-    return not media_playing and len(re.findall(r"[A-Za-z']{2,}", t)) >= 2
+def addressed(text: str) -> bool:
+    """Was this speech meant for JARVIS? Only if it names JARVIS: anything else is someone else's conversation."""
+    return bool(_NAME.search(text))
 
 
 def normalise(pcm: bytes, target_peak: int = 20000) -> bytes:
@@ -286,7 +277,7 @@ class Voice:
         self._stop_listening = threading.Event()
         self._speech: Path | None = None
         self._speech_token = 0
-        self.any_speech = True  # wake on any speech meant for JARVIS, not only "Hey JARVIS"
+        self.any_speech = True  # also wake on "Jarvis" anywhere in a sentence, not only "Hey JARVIS" at the start
         self._hearing = threading.Lock()  # one transcription at a time
         self._quiet_until = 0.0
 
@@ -324,8 +315,8 @@ class Voice:
             log.exception("wake word models could not load")
             self.emit({"event": "error", "message": f"Wake word could not start: {e}"})
             return
-        gate, meter = SpeechGate(), win.PlaybackMeter()
-        media_until = 0.0
+        gate = SpeechGate()
+        recent: list[bytes] = []  # the last ~1.6 s, to check who said "Hey JARVIS"
         log.info("listening for JARVIS (wake word%s)", " and any speech" if self.any_speech else "")
         while not stop.is_set():
             try:
@@ -346,9 +337,11 @@ class Voice:
                             detector.reset()  # already taking a request: do not trigger on it
                             gate.reset()
                             continue
-                        if meter.peak() > MEDIA_PEAK:
-                            media_until = now + 1.5  # playing now, or was a moment ago
+                        recent = (recent + [chunk])[-20:]
                         score = detector.heard(chunk)
+                        if score is not None and not self._is_user(b"".join(recent)):
+                            log.info("wake word heard (%.2f) in someone else's voice; ignored", score)
+                            score = None
                         if score is not None:
                             log.info("wake word heard (%.2f)", score)
                             gate.reset()
@@ -359,13 +352,12 @@ class Voice:
                             continue
                         pcm = gate.feed(chunk)
                         if pcm:
-                            threading.Thread(target=self._consider, args=(pcm, now < media_until), daemon=True).start()
+                            threading.Thread(target=self._consider, args=(pcm,), daemon=True).start()
             except Exception as e:  # noqa: BLE001 - device unplugged or busy: try again shortly
                 log.warning("microphone unavailable (%s); retrying in 3s", e)
                 stop.wait(3)
-        meter.close()
 
-    def _consider(self, pcm: bytes, media_playing: bool) -> None:
+    def _consider(self, pcm: bytes) -> None:
         """Transcribe an overheard utterance and wake if it was meant for JARVIS."""
         if not self._hearing.acquire(blocking=False):
             return
@@ -374,13 +366,16 @@ class Voice:
             if not setup.get("whisper"):
                 return  # without Whisper only "Hey JARVIS" wakes it
             raw = transcribe(to_wav(pcm), setup, strip_name=False)
-            if not raw or not addressed(raw, media_playing):
+            if not raw or not addressed(raw):
                 if raw:
-                    log.info("overheard speech, not for JARVIS (%d words, media %s)", len(raw.split()), media_playing)
+                    log.info("overheard speech without the name; ignored (%d words)", len(raw.split()))
+                return
+            if not self._is_user(pcm):
+                log.info("JARVIS was named, but not in the user's voice; ignored")
                 return
             if self._busy.locked() or self.live_busy():
                 return
-            log.info("woken by speech (media %s)", media_playing)
+            log.info("woken by speech naming JARVIS")
             self._quiet_until = time.monotonic() + 3.0
             if self.mode == "live":
                 self.emit({"event": "wake", "text": raw})  # the backend opens a live session that answers it
@@ -395,6 +390,42 @@ class Voice:
             log.exception("could not consider overheard speech")
         finally:
             self._hearing.release()
+
+    @staticmethod
+    def _is_user(pcm: bytes) -> bool:
+        """With a voiceprint enrolled, only the user's voice may wake JARVIS. Without one, anyone can."""
+        from . import speaker
+
+        v = speaker.verifier()
+        if v is None or not v.enrolled:
+            return True
+        try:
+            return v.is_user(pcm)
+        except Exception:  # noqa: BLE001 - too short to judge, or a model hiccup: not proven to be the user
+            return False
+
+    def enroll(self, seconds: float = 15.0) -> dict[str, Any]:
+        """Record the user reading aloud and make their voiceprint. Wakes are paused meanwhile."""
+        import sounddevice as sd
+
+        from . import speaker
+
+        v = speaker.verifier()
+        if v is None:
+            raise RuntimeError(f"The speaker model ({speaker.MODEL}) is not in the voice downloads folder.")
+        seconds = max(9.0, min(float(seconds), 30.0))
+        self._quiet_until = time.monotonic() + seconds + 2
+        self.emit({"event": "enrolling", "seconds": seconds})
+        frames = []
+        with sd.RawInputStream(samplerate=RATE, channels=1, dtype="int16", blocksize=1600) as mic:
+            end = time.monotonic() + seconds
+            while time.monotonic() < end:
+                data, _ = mic.read(1600)
+                frames.append(bytes(data))
+        try:
+            return v.enroll(b"".join(frames))
+        finally:
+            self._quiet_until = time.monotonic() + 1
 
     def on_wake(self, confidence: float = 1.0) -> None:
         if self.mode == "live":

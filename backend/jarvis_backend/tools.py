@@ -70,7 +70,16 @@ TOOLS: list[ToolSpec] = [
     ToolSpec("look_at_screen", "Take a screenshot and look at it to answer a question about what is currently on screen (errors, windows, content).",
              obj({"question": S}, ["question"]), timeout=90, label="Looking at the screen"),
     ToolSpec("screenshot", "Save a screenshot to Pictures\\JARVIS and return its path. It is deleted automatically after 3 minutes; tell the user.", obj(), agent_action="screenshot", label="Taking a screenshot"),
-    ToolSpec("clipboard_get", "Read the text currently on the clipboard.", obj(), agent_action="clipboard_get", label="Reading the clipboard"),
+    # Using any app by sight, like a person: look, click, type, scroll.
+    ToolSpec("screen_click", "Click something visible on screen, in any app, by describing it: e.g. 'the Search box in the Spotify window', "
+             "'the Play button', 'the chat named Mom in WhatsApp', 'File menu in Notepad'. JARVIS takes a fresh screenshot, finds it and "
+             "clicks its centre. button: left (default), right, middle; double=true to double-click. Then use type_text / press_keys to "
+             "type, and look_at_screen to check what happened. Clicks that send, pay, delete or confirm something ask the user first.",
+             obj({"target": S, "button": S, "double": B}, ["target"]), timeout=90, label="Clicking {target}"),
+    ToolSpec("screen_scroll", "Scroll the mouse wheel: direction up or down, amount in wheel steps (default 5), optionally over a described "
+             "area ('the chat list', 'the web page').",
+             obj({"direction": S, "amount": I, "over": S}), timeout=90, label="Scrolling {direction}"),
+    ToolSpec("clipboard_get","Read the text currently on the clipboard.", obj(), agent_action="clipboard_get", label="Reading the clipboard"),
     ToolSpec("clipboard_set", "Put text on the clipboard.", obj({"text": S}, ["text"]), agent_action="clipboard_set", label="Copying to clipboard"),
     ToolSpec("press_keys", "Press a keyboard shortcut in the focused window, e.g. [\"ctrl\",\"s\"], [\"win\",\"d\"], [\"alt\",\"tab\"].",
              obj({"keys": {"type": "array", "items": S}}, ["keys"]), agent_action="press_keys", label="Pressing {keys}"),
@@ -115,7 +124,7 @@ TOOLS: list[ToolSpec] = [
 ]
 
 # Repeating these is normal (another key press, the next track), never a loop.
-STEPWISE_TOOLS = frozenset({"press_keys", "type_text", "volume", "media", "brightness", "web_click", "web_type"})
+STEPWISE_TOOLS = frozenset({"press_keys", "type_text", "volume", "media", "brightness", "web_click", "web_type", "screen_click", "screen_scroll"})
 # Read-only looks whose answer can change after other actions.
 OBSERVE_TOOLS = frozenset({"look_at_screen", "system_status", "clipboard_get", "list_folder", "find_files", "list_reminders", "web_read",
                            "gmail_list", "gmail_open", "whatsapp_chats", "whatsapp_read"})

@@ -429,6 +429,24 @@ def download_file(args: dict[str, Any]) -> dict[str, Any]:
 # ======================= voice =======================
 
 @action
+def voice_enroll(args: dict[str, Any]) -> dict[str, Any]:
+    try:
+        return voice.instance().enroll(float(args.get("seconds") or 15))
+    except (RuntimeError, ValueError) as e:
+        raise ActionError(str(e)) from e
+
+
+@action
+def voice_forget(_: dict[str, Any]) -> dict[str, Any]:
+    from . import speaker
+
+    v = speaker.verifier()
+    if v:
+        v.forget()
+    return {"enrolled": False}
+
+
+@action
 def voice_set(args: dict[str, Any]) -> dict[str, Any]:
     return voice.instance().set_enabled(bool(args.get("enabled")), args.get("mode"))
 
@@ -455,8 +473,11 @@ def live_mic(args: dict[str, Any]) -> dict[str, Any]:
 
 @action
 def voice_status(_: dict[str, Any]) -> dict[str, Any]:
+    from . import speaker
+
     v = voice.instance()
-    return {"enabled": v.enabled, **voice.prepare()}
+    sv = speaker.verifier()
+    return {"enabled": v.enabled, **voice.prepare(), "speaker_model": sv is not None, "voiceprint": bool(sv and sv.enrolled)}
 
 
 @action
@@ -600,6 +621,49 @@ def capture_screen(_: dict[str, Any]) -> dict[str, Any]:
     os.close(fd)
     img.save(path, "JPEG", quality=80)
     return {"path": path, "width": img.width, "height": img.height}
+
+
+def _fraction(args: dict[str, Any], key: str) -> float:
+    try:
+        v = float(args[key])
+    except (KeyError, TypeError, ValueError) as e:
+        raise ActionError(f"'{key}' must be a fraction of the screen between 0 and 1.") from e
+    if not 0.0 <= v <= 1.0:
+        raise ActionError(f"'{key}' must be between 0 and 1.")
+    return v
+
+
+def _out_of_the_way(fx: float, fy: float):
+    """JARVIS's own window must not catch a click meant for the app behind it: hide it if it covers the point."""
+    import contextlib
+
+    pid = int(os.environ.get("JARVIS_PARENT_PID", "0") or 0)
+    left, top, w, h = win.virtual_screen()
+    if pid and win.windows_at(pid, left + int(fx * w), top + int(fy * h)):
+        return win.windows_hidden(pid, settle=0.15)
+    return contextlib.nullcontext()
+
+
+@action
+def mouse_click(args: dict[str, Any]) -> dict[str, Any]:
+    """Click at a point given as fractions of the whole screenshot (x from the left, y from the top)."""
+    fx, fy = _fraction(args, "x"), _fraction(args, "y")
+    button = str(args.get("button") or "left").lower()
+    if button not in ("left", "right", "middle"):
+        raise ActionError("button must be left, right or middle.")
+    with _out_of_the_way(fx, fy):
+        win.mouse_click(fx, fy, button, bool(args.get("double")))
+        time.sleep(0.25)
+    left, top, w, h = win.virtual_screen()
+    return {"clicked": {"x": left + int(fx * w), "y": top + int(fy * h)}, "button": button, "double": bool(args.get("double"))}
+
+
+@action
+def mouse_scroll(args: dict[str, Any]) -> dict[str, Any]:
+    clicks = int(args.get("clicks") or 5)
+    over = ("x" in args and "y" in args and args["x"] is not None)
+    win.mouse_scroll(clicks, _fraction(args, "x") if over else None, _fraction(args, "y") if over else None)
+    return {"scrolled": clicks}
 
 
 @action

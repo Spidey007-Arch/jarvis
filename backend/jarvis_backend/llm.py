@@ -403,6 +403,9 @@ class LLM:
         # Actions already ran; the caller reports them even though the model can't finish.
         raise AgentIncomplete(str(describe(err, self.provider_id, model))) from err
 
-    async def describe_image(self, prompt: str, image: bytes) -> str:
+    async def describe_image(self, prompt: str, image: bytes, light: bool = False) -> str:
+        """light: a quick, narrow look (finding a button to click) on the utility model, which has a higher
+        free-tier rate limit, so clicking around an app does not use up the main model's quota."""
         p = self.provider()
-        return await self._first_success(await self._chat_candidates(), lambda m: p.describe_image(m, prompt, image), timeout=60.0)
+        candidates = await (self._utility_candidates() if light else self._chat_candidates())
+        return await self._first_success(candidates, lambda m: p.describe_image(m, prompt, image), timeout=60.0)

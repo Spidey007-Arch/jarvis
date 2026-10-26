@@ -116,12 +116,11 @@ class WakeOnSpeech(unittest.TestCase):
         stream = tone(1.0, 20) + tone(0.08, 3000) + tone(2.0, 20)
         self.assertFalse(any(gate.feed(stream[i:i + 2560]) for i in range(0, len(stream), 2560)))
 
-    def test_who_is_it_for(self) -> None:
-        for text in ("Jarvis", "Jarvis, open Spotify", "Hello.", "hey there", "Good morning", "Are you there?", "okay what's the time"):
-            self.assertTrue(voice.addressed(text, media_playing=True), text)
-        self.assertTrue(voice.addressed("what's the weather like", media_playing=False))
-        self.assertFalse(voice.addressed("what's the weather like", media_playing=True))  # could be the TV
-        self.assertFalse(voice.addressed("um", media_playing=False))
+    def test_only_the_name_wakes_it(self) -> None:
+        for text in ("Jarvis", "Jarvis, open Spotify", "What's the time, Jarvis?", "Hey Jervis play music"):
+            self.assertTrue(voice.addressed(text), text)
+        for text in ("Hello.", "hey there", "Good morning", "what's the weather like", "open YouTube", "um", "Travis is here"):
+            self.assertFalse(voice.addressed(text), text)  # someone else's conversation, the TV, a greeting without the name
 
 
 if __name__ == "__main__":

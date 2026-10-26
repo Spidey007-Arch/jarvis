@@ -25,6 +25,64 @@ PRIME_S = 0.35  # audio held back before a reply starts playing, to ride out net
 PRIME_WAIT_S = 0.6  # never hold back longer than this, even if the reply is shorter
 
 
+class VoiceGate:
+    """Lets only the user's own speech through to the live conversation. Each burst of speech is held
+    back (silence is sent meanwhile) until there is JUDGE_S of it, or it ends; then it is checked against
+    the voiceprint. The user's speech is sent on at once and the rest of that burst streams live; anyone
+    else's (another person, the TV) is dropped until they stop."""
+
+    JUDGE_S = 1.2
+    ONSET_S = 0.16
+    END_S = 0.6
+    PREROLL = 6  # frames (240 ms) kept from before the onset, so the first syllable is not lost
+
+    def __init__(self, verifier: Any) -> None:
+        import array
+        import math
+
+        self.v = verifier
+        self._rms = lambda c: math.sqrt(sum(x * x for x in array.array("h", c)) / max(1, len(c) // 2))
+        self.floor = 60.0
+        self.state = "idle"  # idle -> judging -> pass | drop -> idle
+        self.held: list[bytes] = []
+        self.loud = self.quiet = 0.0
+
+    def feed(self, frame: bytes) -> list[bytes]:
+        secs = len(frame) / 2 / MIC_RATE
+        silent = bytes(len(frame))
+        level = self._rms(frame)
+        loud = level > max(110.0, self.floor * 2.5)
+        self.quiet = 0.0 if loud else self.quiet + secs
+        if self.state == "idle":
+            if not loud:
+                self.floor += (level - self.floor) * 0.05
+            self.loud = self.loud + secs if loud else 0.0
+            self.held = (self.held + [frame])[-self.PREROLL:]
+            if self.loud >= self.ONSET_S:
+                self.state = "judging"
+            return [silent]
+        if self.state == "judging":
+            self.held.append(frame)
+            ended = self.quiet >= self.END_S
+            if len(self.held) * secs < self.JUDGE_S and not ended:
+                return [silent]
+            try:
+                mine = self.v.is_user(b"".join(self.held))
+            except Exception:  # noqa: BLE001 - too short or a model hiccup: not proven to be the user
+                mine = False
+            held, self.held = self.held, []
+            if ended:
+                self.state = "idle"
+                return held if mine else [silent]
+            self.state = "pass" if mine else "drop"
+            return held if mine else [silent]
+        # pass or drop, until the speaker pauses
+        out = [frame] if self.state == "pass" else [silent]
+        if self.quiet >= self.END_S:
+            self.state, self.loud, self.held = "idle", 0.0, []
+        return out
+
+
 class LiveAudio:
     def __init__(self, send: Callable[[dict[str, Any]], None]) -> None:
         self.send = send
@@ -60,11 +118,19 @@ class LiveAudio:
     def _stream_mic(self, stop: threading.Event) -> None:
         import sounddevice as sd
 
+        from . import speaker
+
+        v = speaker.verifier()
+        voices = VoiceGate(v) if v and v.enrolled else None  # with a voiceprint, only the user's speech goes through
         try:
             with sd.RawInputStream(samplerate=MIC_RATE, channels=1, dtype="int16", blocksize=MIC_FRAME) as mic:
                 while not stop.is_set():
                     data, _ = mic.read(MIC_FRAME)
-                    self.send({"type": "mic", "pcm": base64.b64encode(self.gate(bytes(data))).decode()})
+                    frames = [self.gate(bytes(data))]
+                    if voices is not None:
+                        frames = voices.feed(frames[0])
+                    for f in frames:
+                        self.send({"type": "mic", "pcm": base64.b64encode(f).decode()})
         except Exception as e:  # noqa: BLE001
             log.exception("live microphone failed")
             self.send({"type": "voice", "event": "error", "message": f"Microphone failed: {e}"})

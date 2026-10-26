@@ -516,3 +516,14 @@ label { display: flex; flex-direction: column; gap: 5px; font-size: 11px; letter
 .voice-pill.transcribing .voice-bars i { animation-duration: 1.6s; opacity: 0.6; }
 @keyframes bars { 0%, 100% { transform: scaleY(0.25); } 50% { transform: scaleY(1); } }
 .app.act-listening .aurora { opacity: 0.8; }
+
+/* ---------- voiceprint enrollment ---------- */
+.enroll { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--edge); display: flex; flex-direction: column; gap: 8px; }
+.enroll-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.enroll .badge { font-size: 10px; letter-spacing: 0.14em; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--edge); color: var(--dim); }
+.enroll .badge.ok { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 50%, transparent); }
+.enroll-read {
+  margin: 0; padding: 10px 12px; border-left: 2px solid var(--core); border-radius: 8px; line-height: 1.6;
+  background: color-mix(in srgb, var(--core) 8%, transparent); color: var(--text); font-size: 13.5px;
+}
+.enroll-count { display: block; margin-bottom: 6px; font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--core); }
