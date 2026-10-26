@@ -114,6 +114,45 @@ class Reconnect(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(saved, ["Your memory is ..."])
 
 
+def audio(n: int) -> types.LiveServerMessage:
+    return content(model_turn=types.Content(parts=[types.Part(inline_data=types.Blob(data=bytes(n), mime_type="audio/pcm"))]))
+
+
+class SlowLine(unittest.IsolatedAsyncioTestCase):
+    async def run_reply(self, chunk: int) -> tuple[list, int]:
+        """A reply whose audio arrives in chunk-byte pieces every ~10 ms; returns on_slow calls and connections made."""
+        script = [content(input_transcription=types.Transcription(text="what's the weather")),
+                  *[audio(chunk) for _ in range(60)], content(turn_complete=True)]
+        connect = FakeConnect([FakeSession(script, fail=None), FakeSession([], fail=None)])
+        client = pytypes.SimpleNamespace(aio=pytypes.SimpleNamespace(live=pytypes.SimpleNamespace(connect=connect)),
+                                         models=pytypes.SimpleNamespace(list=lambda: []))
+
+        async def noop(*a, **k):
+            return {}
+
+        calls = []
+        v = live.LiveVoice(api_key=lambda: "k", push_agent=noop, call_agent=noop, emit=lambda e: None,
+                           system_prompt=lambda: "", tools=[], run_tool=None, save_turn=lambda c, u, r, label=None: "conv",
+                           on_slow=lambda *a: calls.append(a))
+        with mock.patch("google.genai.Client", return_value=client), mock.patch.object(live, "IDLE_S", 0.6), \
+                mock.patch.object(live, "SLOW_CHECK_S", 0.2):
+            await v.start("button")
+            await asyncio.wait_for(v._task, 10)
+        return calls, len(connect.configs)
+
+    async def test_audio_slower_than_real_time_hands_over_to_offline(self) -> None:
+        calls, connections = await self.run_reply(100)  # ~10 KB/s, playing needs 48
+        self.assertEqual(len(calls), 1)
+        reason, user, acted, origin = calls[0]
+        self.assertEqual((user, acted, origin), ("what's the weather", False, "button"))
+        self.assertIn("KB/s", reason)
+        self.assertEqual(connections, 1)  # no point reconnecting on the same slow line
+
+    async def test_a_fast_line_stays_live(self) -> None:
+        calls, _ = await self.run_reply(4000)
+        self.assertEqual(calls, [])
+
+
 class Continuity(unittest.IsolatedAsyncioTestCase):
     async def run_session(self, script, label=None, recent="conv-earlier", during=None):
         session = FakeSession(script, fail=None)

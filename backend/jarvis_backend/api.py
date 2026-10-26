@@ -51,6 +51,12 @@ class Services:
     reminders: Reminders
     monitor: Monitor
     live: Any = None  # LiveVoice, created with the router (it needs the router's tool runner)
+    offline_voice_until: float = 0.0  # Live voice paused until then: the connection was too slow for it
+
+    def voice_mode(self) -> str:
+        """The voice engine to use now: the chosen one, except offline while the line is too slow for Live."""
+        mode = self.settings.get("voice_mode") or "live"
+        return "local" if mode == "live" and time.time() < self.offline_voice_until else mode
 
 
 class ToolFailure(Exception):
@@ -58,6 +64,7 @@ class ToolFailure(Exception):
 
 
 TOOL_SCHEMAS = [t.schema() for t in TOOLS]
+OFFLINE_FOR_S = 30 * 60  # after Live proves too slow, use the offline voice this long before trying Live again
 audit = logging.getLogger("jarvis.automation")
 
 # A click on a control like these needs the user's Allow first (and cannot happen from a voice session).
@@ -563,6 +570,43 @@ def build_router(svc: Services, require_auth: Callable[..., None]) -> APIRouter:
         svc.db.run("UPDATE conversations SET updated_at=? WHERE id=?", [now, conv_id])
         return conv_id
 
+    async def _go_offline(user: str, acted: bool, origin: str) -> None:
+        """Live voice could not keep up: carry on with the offline voice (Parakeet hears, Piper speaks)."""
+        try:
+            await svc.bridge.call("voice_set", {"enabled": True, "mode": "local"}, timeout=30)
+        except (AgentUnavailable, AgentError) as e:
+            log.warning("could not switch the agent to the offline voice: %s", e)
+        redo = bool(user) and not acted  # an action already taken is not repeated
+        notice = "My connection's too slow for live voice right now, so I've switched to my offline voice."
+        if redo:
+            notice += " One moment."
+        try:
+            await svc.bridge.call("speak", {"text": notice}, timeout=60)
+        except (AgentUnavailable, AgentError) as e:
+            log.warning("could not announce the offline voice: %s", e)
+        if redo:  # answer what was asked, this time offline
+            svc.bridge.voice_event({"type": "voice", "event": "transcript", "text": user})
+        elif origin == "briefing":
+            status, _report = await _briefing_facts()
+            text = briefing.spoken(status, svc.reminders.pending(), (svc.settings.get("address") or "sir").strip(), datetime.now())
+            svc.bridge.voice_event({"type": "voice", "event": "briefing", "text": text})
+            try:
+                await svc.bridge.call("speak", {"text": text, "queue": True}, timeout=120)
+            except (AgentUnavailable, AgentError) as e:
+                log.warning("briefing: offline voice failed too: %s", e)
+        await asyncio.sleep(OFFLINE_FOR_S)
+        if time.time() >= svc.offline_voice_until and svc.voice_mode() == "live" and svc.settings.get("voice_enabled"):
+            try:  # time to give Live another chance
+                await svc.bridge.call("voice_set", {"enabled": True, "mode": "live"}, timeout=30)
+                log.info("trying live voice again")
+            except (AgentUnavailable, AgentError):
+                pass
+
+    def _live_too_slow(reason: str, user: str, acted: bool, origin: str) -> None:
+        svc.offline_voice_until = time.time() + OFFLINE_FOR_S
+        log.warning("switching to the offline voice for %d minutes: %s", OFFLINE_FOR_S // 60, reason)
+        spawn(_go_offline(user, acted, origin))
+
     svc.live = LiveVoice(
         api_key=lambda: svc.settings.api_key("gemini"),
         push_agent=svc.bridge.push,
@@ -574,6 +618,7 @@ def build_router(svc: Services, require_auth: Callable[..., None]) -> APIRouter:
         save_turn=_live_save,
         after_turn=lambda user, reply, conv: spawn(_remember(user, reply, svc.memory.core(), conv)),
         recent_conversation=_recent_conversation,
+        on_slow=_live_too_slow,
     )
 
     briefing_state = {"done": False}
@@ -613,7 +658,7 @@ def build_router(svc: Services, require_auth: Callable[..., None]) -> APIRouter:
         now = datetime.now()
         if svc.live.active:
             return {"started": False, "reason": "a voice conversation is already open"}
-        if (svc.settings.get("voice_mode") or "live") == "live":
+        if svc.voice_mode() == "live":
             try:
                 await svc.live.start("briefing", opening=briefing.opening_prompt(report, address, now), label="Start-up briefing", wait=True)
                 return {"started": True, "mode": "live"}
@@ -640,7 +685,7 @@ def build_router(svc: Services, require_auth: Callable[..., None]) -> APIRouter:
     async def voice_listen() -> dict[str, Any]:
         """Push-to-talk: open a live conversation (or, in local mode, take one request) without the wake word.
         Pressing it again during a live conversation ends it."""
-        if (svc.settings.get("voice_mode") or "live") == "live":
+        if svc.voice_mode() == "live":
             if svc.live.active:
                 await svc.live.stop()
                 return {"live": False}
@@ -656,6 +701,7 @@ def build_router(svc: Services, require_auth: Callable[..., None]) -> APIRouter:
     @r.post("/voice/mode")
     async def voice_mode(body: VoiceModeIn) -> dict[str, Any]:
         svc.settings.update_profile({"voice_mode": body.mode})
+        svc.offline_voice_until = 0.0  # the user chose: try it now
         if svc.settings.get("voice_enabled"):
             try:
                 await svc.bridge.call("voice_set", {"enabled": True, "mode": body.mode}, timeout=30)
@@ -673,7 +719,7 @@ def build_router(svc: Services, require_auth: Callable[..., None]) -> APIRouter:
     @r.post("/voice")
     async def voice_toggle(body: VoiceIn) -> dict[str, Any]:
         try:
-            state = await svc.bridge.call("voice_set", {"enabled": body.enabled, "mode": svc.settings.get("voice_mode") or "live"}, timeout=30)
+            state = await svc.bridge.call("voice_set", {"enabled": body.enabled, "mode": svc.voice_mode()}, timeout=30)
         except (AgentUnavailable, AgentError) as e:
             raise HTTPException(status_code=503, detail=str(e)) from e
         svc.settings.update_profile({"voice_enabled": bool(state.get("enabled"))})

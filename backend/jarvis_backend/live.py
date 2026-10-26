@@ -11,7 +11,9 @@ conversation, so a pause or an interruption does not start a new one.
 A session opens on the wake word or push-to-talk and closes after IDLE_S of quiet, or when the user
 says something like "that's all". With an opening message (the start-up briefing) JARVIS speaks first.
 It talks to Google directly with the saved Gemini key. If Google drops the connection mid-conversation, it reconnects and resumes
-the same conversation with a session-resumption handle, and asks JARVIS to finish a cut-off reply."""
+the same conversation with a session-resumption handle, and asks JARVIS to finish a cut-off reply.
+If the line is too slow for live audio (a reply arrives slower than it plays, or the connection drops twice),
+the session ends and on_slow is called, so JARVIS can carry on with the offline voice instead."""
 from __future__ import annotations
 
 import asyncio
@@ -28,12 +30,19 @@ VOICE = "Charon"  # a deep, composed male voice
 IDLE_S = 15.0
 RECONNECTS = 3  # a dropped connection is reopened (and the conversation resumed) this many times
 CONTINUE_S = 10 * 60  # a new session within this long of the last exchange carries on that conversation
+SLOW_CHECK_S = 3.0  # how long into a reply before judging whether its audio keeps up
+SLOW_RATIO = 0.8  # audio arriving slower than this fraction of real time breaks up while it plays
+BYTES_PER_S = 48000  # Gemini's 24 kHz 16-bit mono
 STALL_S = 6.0  # mid-reply with nothing from Google this long: treat the connection as dead and reconnect
 _BYE = re.compile(r"\b(that'?s all|that will be all|that'?ll be all|goodbye|good night|bye jarvis|stop listening|thank you,? that'?s it)\b", re.I)
 
 
 class LiveError(Exception):
     pass
+
+
+class SlowLine(LiveError):
+    """The connection cannot carry live audio in real time."""
 
 
 class LiveVoice:
@@ -49,6 +58,7 @@ class LiveVoice:
         save_turn: Callable[[str | None, str, str, str | None], str],
         after_turn: Callable[[str, str, str], None] | None = None,
         recent_conversation: Callable[[float], str | None] = lambda _age: None,
+        on_slow: Callable[[str, str, bool, str], None] | None = None,
     ) -> None:
         self.api_key = api_key
         self.push_agent = push_agent
@@ -62,6 +72,7 @@ class LiveVoice:
         self.save_turn = save_turn
         self.after_turn = after_turn
         self.recent_conversation = recent_conversation
+        self.on_slow = on_slow  # (reason, what the user just said, whether a tool already ran for it, origin)
         self.conversation_id: str | None = None  # the conversation this session adds to (its history goes in the prompt)
         self._barged = False  # the user said "Hey JARVIS" over the reply: drop the rest of it
         self._task: asyncio.Task | None = None
@@ -184,8 +195,10 @@ class LiveVoice:
             return
         opened.set_result(None)
         log.info("live session open", extra={"fields": {"model": model, "origin": origin}})
-        state = {"last": time.monotonic(), "playing_until": 0.0, "user": said, "jarvis": "", "bye": False, "opening": bool(opening), "done": False, "reconnecting": False, "heard_at": time.monotonic()}
+        state = {"last": time.monotonic(), "playing_until": 0.0, "user": said, "jarvis": "", "bye": False, "opening": bool(opening), "done": False, "reconnecting": False, "heard_at": time.monotonic(),
+                 "reply_t0": 0.0, "reply_bytes": 0, "acted": False}
         reconnects = 0
+        slow: SlowLine | None = None
         try:
             await self.call_agent("live_mic", {"on": True}, timeout=10)
             self.emit({"event": "live_start", "model": model, "origin": origin})
@@ -235,6 +248,7 @@ class LiveVoice:
                             for fc in msg.tool_call.function_calls or []:
                                 self.emit({"event": "live_tool", "tool": fc.name})
                                 self.heard = state["user"]
+                                state["acted"] = True
                                 result = await self.run_tool(fc.name or "", dict(fc.args or {}))
                                 responses.append(types.FunctionResponse(id=fc.id, name=fc.name, response=result))
                             await session.send_tool_response(function_responses=responses)
@@ -259,6 +273,14 @@ class LiveVoice:
                                     if self._barged:
                                         continue  # the user stopped this reply
                                     pcm = part.inline_data.data
+                                    now = time.monotonic()
+                                    if not state["reply_t0"]:
+                                        state["reply_t0"] = now
+                                    state["reply_bytes"] += len(pcm)
+                                    took = now - state["reply_t0"]
+                                    if took >= SLOW_CHECK_S and state["reply_bytes"] < SLOW_RATIO * BYTES_PER_S * took:
+                                        raise SlowLine(f"reply audio arrived at {state['reply_bytes'] / took / 1000:.0f} KB/s; "
+                                                       f"playing it needs {BYTES_PER_S / 1000:.0f} KB/s")
                                     await self.push_agent({"type": "speaker", "pcm": base64.b64encode(pcm).decode()})
                                     now = time.monotonic()
                                     state["playing_until"] = max(state["playing_until"], now) + len(pcm) / 48000.0
@@ -266,6 +288,7 @@ class LiveVoice:
                                     state["done"] = False
                         if sc.turn_complete:
                             state["done"] = True
+                            state["reply_t0"], state["reply_bytes"] = 0.0, 0
                             if self._barged:
                                 self._barged = False
                                 state["playing_until"] = 0.0
@@ -303,6 +326,9 @@ class LiveVoice:
                     if watcher in done:
                         break  # quiet for a while, or the user said goodbye
                     err = next((t.exception() for t in done if t is not watcher and not t.cancelled() and t.exception()), None)
+                    if isinstance(err, SlowLine) or (err is not None and reconnects >= 1):
+                        slow = err if isinstance(err, SlowLine) else SlowLine(f"the connection dropped twice ({str(err)[:80]})")
+                        break  # this line can't carry live audio: hand over to the offline voice
                     if err is None or reconnects >= RECONNECTS or self._stop.is_set():
                         if err:
                             raise err
@@ -348,4 +374,10 @@ class LiveVoice:
                 pass
             self.emit({"event": "live_end", "conversation_id": conv_id})
             ended = watcher.result() if "watcher" in locals() and watcher.done() and not watcher.cancelled() else "error"
+            if slow is not None:
+                ended = "too slow"
             log.info("live session closed", extra={"fields": {"reconnects": reconnects, "why": ended}})
+            if slow is not None and self.on_slow:
+                log.warning("live voice too slow on this connection: %s", slow)
+                await self.push_agent({"type": "speaker_flush"})  # the half-arrived reply would only stutter on
+                self.on_slow(str(slow), state["user"].strip() if not state["done"] else "", state["acted"], origin)

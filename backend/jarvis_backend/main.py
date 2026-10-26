@@ -199,7 +199,7 @@ def create_app(port: int, token: str | None = None) -> FastAPI:
         """A restarted agent forgets that the wake word was on; turn it back on."""
         await asyncio.sleep(1.0)
         try:
-            state = await bridge.call("voice_set", {"enabled": True, "mode": settings.get("voice_mode") or "live"}, timeout=30)
+            state = await bridge.call("voice_set", {"enabled": True, "mode": services.voice_mode()}, timeout=30)
             log.info("voice restored", extra={"fields": {"enabled": state.get("enabled"), "missing": state.get("missing")}})
         except Exception as e:  # noqa: BLE001
             log.warning("could not restore voice: %s", e)
@@ -242,7 +242,7 @@ def create_app(port: int, token: str | None = None) -> FastAPI:
                         services.live.feed(msg.get("pcm", ""))
                 elif kind == "voice":
                     bridge.voice_event(msg)
-                    if msg.get("event") == "wake" and services.live and (settings.get("voice_mode") or "live") == "live":
+                    if msg.get("event") == "wake" and services.live and services.voice_mode() == "live":
                         asyncio.create_task(_start_live("wake", (msg.get("text") or "").strip() or None))
                     elif msg.get("event") == "barge" and services.live:
                         asyncio.create_task(services.live.barge())
