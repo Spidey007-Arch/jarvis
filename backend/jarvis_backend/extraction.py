@@ -60,6 +60,8 @@ Rules:
 - UPDATE (op "update" with target_id) when a fact replaces an existing memory listed below, e.g. a changed
   preference or a project that moved to a new stage. Write the full new fact, not a diff.
 - DELETE (op "delete" with target_id) when the user says something is no longer true or asks to forget it.
+- A CORRECTION ("no, it's X", "actually...", "not anymore", "I meant...", or JARVIS getting a fact wrong and the
+  user fixing it) is always an UPDATE of the memory it corrects, never a new memory next to the old one.
 - IGNORE greetings, small talk, filler, questions to JARVIS, one-off requests, and anything about JARVIS itself.
 - Never store secrets: passwords, API keys, card or account numbers, government IDs.
 - subject: a short, stable lowercase key so related facts group together, e.g. "name", "preferred address",

@@ -176,6 +176,26 @@ class MemoryTests(unittest.TestCase):
         r = self.store.maintenance(now=time.time() + 100 * mem.DAY)
         self.assertEqual(r["purged"], 1)
 
+    def test_a_correction_replaces_the_old_fact(self):
+        run(self.store.apply_ops([self.op(type="identity", subject="city", content="Lives in Mumbai.")], "c1"))
+        run(self.store.apply_ops([self.op(type="identity", subject="city", content="Lives in Pune.")], "c2"))
+        self.assertEqual([m["content"] for m in self.store.list(type_="identity")], ["Lives in Pune."])
+        self.assertEqual(len(self.store.list(status="superseded")), 1)
+
+    def test_unused_facts_fade_and_then_expire(self):
+        run(self.store.apply_ops([
+            self.op(type="preference", subject="snacks", content="Likes masala chai.", importance=0.5),
+            self.op(type="identity", subject="name", content="Is called Parth.", importance=0.95),
+        ], "c1"))
+        self.db.run("UPDATE memories SET updated_at=?, last_accessed_at=NULL", [time.time() - 200 * mem.DAY])
+        self.assertGreaterEqual(self.store.maintenance()["faded"], 1)
+        by = {m["subject"]: m["importance"] for m in self.store.list()}
+        self.assertAlmostEqual(by["snacks"], 0.45, places=2)
+        self.assertEqual(by["name"], 0.95)  # who the user is never fades
+        self.db.run("UPDATE memories SET importance=0.1, updated_at=? WHERE subject='snacks'", [time.time() - 400 * mem.DAY])
+        self.store.maintenance()
+        self.assertEqual({m["subject"] for m in self.store.list()}, {"name"})
+
     def test_export_import_and_lazy_embedding(self):
         run(self.store.apply_ops([self.op(content="Prefers dark themes everywhere.")], "c1"))
         data = self.store.export()

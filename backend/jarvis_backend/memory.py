@@ -34,6 +34,13 @@ RETENTION_DAYS = 90     # how long superseded / retracted / summarized history i
 EVENT_STALE_DAYS = 365  # low-importance events nobody has needed for a year expire
 RECENCY_HALF_LIFE_DAYS = 45
 DAY = 86400.0
+FADE_AFTER_DAYS = 180   # a fact nobody has used or confirmed for this long starts to fade
+FADE_FACTOR = 0.9       # ...losing this share of its importance each daily maintenance pass
+FADED_EXPIRE_DAYS = 365  # a faded fact (importance below 0.15) unused for a year expires
+# Topics that hold one value at a time: a new fact replaces the old one instead of sitting next to it.
+SINGLE_VALUED = ("name", "preferred address", "nickname", "age", "birthday", "location", "city", "hometown", "home",
+                 "job", "occupation", "employer", "company", "role", "school", "college", "university", "phone", "email",
+                 "relationship status", "timezone", "language")
 
 
 class Embedder(Protocol):
@@ -209,6 +216,13 @@ class MemoryStore:
                 best, best_sim = r, s
         return best if best_sim >= DEDUP_LEX else None
 
+    def _same_single_fact(self, type_: str, subject: str) -> dict[str, Any] | None:
+        """The current fact on a one-value topic (their city, job, favorite X...): a new one is a correction."""
+        if subject in SINGLE_VALUED or subject.startswith(("favorite ", "favourite ", "current ")):
+            return self.db.one("SELECT * FROM memories WHERE status='active' AND type=? AND subject=? ORDER BY updated_at DESC LIMIT 1",
+                               [type_, subject])
+        return None
+
     # ---------- writes ----------
 
     def _insert(self, type_: str, subject: str, content: str, importance: float, source: str, vec: list[float] | None) -> str:
@@ -256,7 +270,7 @@ class MemoryStore:
                 vec = (await self.llm.embed([_text(subject, content)], "RETRIEVAL_DOCUMENT"))[0] if self.llm.can_embed else None
 
                 if not target_row:
-                    target_row = self._near_duplicate(type_, subject, content, vec)
+                    target_row = self._near_duplicate(type_, subject, content, vec) or self._same_single_fact(type_, subject)
                 if target_row and target_row["content"].strip() == content and target_row["subject"] == subject:
                     self.db.run(
                         "UPDATE memories SET importance=MAX(importance, ?), updated_at=? WHERE id=?",
@@ -311,11 +325,24 @@ class MemoryStore:
             " AND COALESCE(last_accessed_at, updated_at) < ?",
             [now, now - EVENT_STALE_DAYS * DAY],
         )
+        # Facts nobody has used or confirmed in months fade, and very faded ones eventually expire. Identity and
+        # how the user likes to be treated never fade.
+        stale = now - FADE_AFTER_DAYS * DAY
+        faded = self.db.run(
+            "UPDATE memories SET importance=MAX(0.05, importance*?) WHERE status='active' AND type NOT IN (?, ?)"
+            " AND COALESCE(last_accessed_at, updated_at) < ? AND updated_at < ?",
+            [FADE_FACTOR, *CORE_TYPES, stale, stale],
+        )
+        expired += self.db.run(
+            "UPDATE memories SET status='expired', updated_at=? WHERE status='active' AND type NOT IN (?, ?) AND importance < 0.15"
+            " AND COALESCE(last_accessed_at, updated_at) < ?",
+            [now, *CORE_TYPES, now - FADED_EXPIRE_DAYS * DAY],
+        )
         purged = self.db.run(
             "DELETE FROM memories WHERE status IN ('superseded','summarized','retracted','expired') AND updated_at < ?",
             [now - RETENTION_DAYS * DAY],
         )
-        return {"expired": expired, "purged": purged}
+        return {"expired": expired, "faded": faded, "purged": purged}
 
     # ---------- manual management (Settings > Memory) ----------
 
