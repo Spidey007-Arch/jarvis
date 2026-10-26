@@ -129,6 +129,19 @@ class Piper:
         self.proc = None
 
 
+def open_output(rate: int) -> Any:
+    """A started output stream on Windows' current default device. It goes through the Sound Mapper, which
+    resolves the default each time a stream opens, so after Bluetooth earbuds switch mode or headphones are
+    plugged in, reopening reaches the new device instead of one that no longer exists."""
+    import sounddevice as sd
+
+    mapper = next((i for i, d in enumerate(sd.query_devices())
+                   if d["max_output_channels"] and d["name"].startswith("Microsoft Sound Mapper")), None)
+    out = sd.RawOutputStream(samplerate=rate, channels=1, dtype="int16", latency="high", device=mapper)
+    out.start()
+    return out
+
+
 def _close(stream: Any) -> None:
     if stream is not None:
         try:
@@ -226,18 +239,29 @@ class Speaker:
                     self.emit({"event": "speaking"})
                 if out is None or rate != out_rate:
                     _close(out)
-                    out, out_rate = sd.RawOutputStream(samplerate=rate, channels=1, dtype="int16", latency="high"), rate
-                    out.start()
+                    out, out_rate = open_output(rate), rate
                 block = int(rate * STEP_S) * 2
-                underruns = 0
-                for i in range(0, len(pcm), block):
+                underruns = reopened = 0
+                i = 0
+                while i < len(pcm):
                     if gen != self._gen:
                         out.abort()  # stopped: drop what is still buffered, now
                         out = _close(out)
                         break
                     piece = pcm[i:i + block]
+                    try:
+                        underruns += bool(out.write(piece))
+                    except sd.PortAudioError as e:
+                        if reopened >= 2:
+                            raise
+                        reopened += 1  # the device vanished mid-sentence: pick up wherever Windows sends sound now
+                        log.warning("sound device changed while speaking (%s); reopening", e)
+                        _close(out)
+                        time.sleep(0.4)
+                        out = open_output(rate)
+                        continue
                     self.levels.feed("jarvis", piece, rate)
-                    underruns += bool(out.write(piece))
+                    i += block
                 if underruns:
                     log.warning("speech ran dry %d times in one sentence (the CPU is very busy)", underruns)
             except Exception:  # noqa: BLE001

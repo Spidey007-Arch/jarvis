@@ -175,34 +175,50 @@ class LiveAudio:
     def _play_loop(self) -> None:
         import sounddevice as sd
 
+        from .speech import open_output
+
         win.boost_thread()
+        out = None
         try:
-            with sd.RawOutputStream(samplerate=SPEAKER_RATE, channels=1, dtype="int16", latency="high") as out:
-                primed = False
-                while True:
-                    try:
-                        chunk = self._play.get(timeout=0.05 if primed else 5.0)
-                    except queue.Empty:
-                        if not primed:
-                            return  # quiet for a while: release the device; the next reply reopens it
-                        if time.monotonic() < self._playing_until - 0.05:
-                            continue  # still playing what was written; more may come
-                        primed = False  # ran dry (reply over, or the network is behind): buffer again
-                        continue
-                    gen = self._generation
+            out = open_output(SPEAKER_RATE)
+            primed = False
+            while True:
+                try:
+                    chunk = self._play.get(timeout=0.05 if primed else 5.0)
+                except queue.Empty:
                     if not primed:
-                        chunk = self._prime(chunk)
-                        primed = True
-                    # write in small pieces so a flush stops playback within ~40 ms
-                    step = SPEAKER_RATE // 25 * 2
-                    for i in range(0, len(chunk), step):
-                        if gen != self._generation:
-                            break
-                        piece = chunk[i:i + step]
-                        if self.levels is not None:
-                            self.levels.feed("jarvis", piece, SPEAKER_RATE)
+                        return  # quiet for a while: release the device; the next reply reopens it
+                    if time.monotonic() < self._playing_until - 0.05:
+                        continue  # still playing what was written; more may come
+                    primed = False  # ran dry (reply over, or the network is behind): buffer again
+                    continue
+                gen = self._generation
+                if not primed:
+                    chunk = self._prime(chunk)
+                    primed = True
+                # write in small pieces so a flush stops playback within ~40 ms
+                step = SPEAKER_RATE // 25 * 2
+                for i in range(0, len(chunk), step):
+                    if gen != self._generation:
+                        break
+                    piece = chunk[i:i + step]
+                    if self.levels is not None:
+                        self.levels.feed("jarvis", piece, SPEAKER_RATE)
+                    try:
                         out.write(piece)
-                        now = time.monotonic()
-                        self._playing_until = max(self._playing_until, now) + len(piece) / BYTES_PER_S
+                    except sd.PortAudioError as e:  # the device vanished (Bluetooth mode switch, unplugged): reopen once
+                        log.warning("sound device changed while speaking (%s); reopening", e)
+                        out.close()
+                        time.sleep(0.4)
+                        out = open_output(SPEAKER_RATE)
+                        out.write(piece)
+                    now = time.monotonic()
+                    self._playing_until = max(self._playing_until, now) + len(piece) / BYTES_PER_S
         except Exception:  # noqa: BLE001
             log.exception("live speaker failed")
+        finally:
+            if out is not None:
+                try:
+                    out.close()
+                except Exception:  # noqa: BLE001
+                    pass
