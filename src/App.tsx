@@ -3,7 +3,7 @@ import Reactor from "./Reactor";
 import type { Activity } from "./fx/activity";
 import { useTelemetry } from "./telemetry";
 import { Connection, Overall, ShellStatus, getConnection, getStatus, insideShell, onStatus } from "./shell";
-import { Alert, Quota, VoiceEvent, getAlerts, getQuota, getSettings, getVoiceEvents, getVoiceSeq, startBriefing, stopSpeaking } from "./api";
+import { Quota, VoiceEvent, getQuota, getSettings, getVoiceEvents, getVoiceSeq, startBriefing, stopSpeaking } from "./api";
 import ChatView from "./views/ChatView";
 import HistoryPanel from "./views/HistoryPanel";
 import MemoryView from "./views/MemoryView";
@@ -255,7 +255,6 @@ export default function App() {
   const [conversation, setConversation] = useState<string | null>(null);
   const [historyVersion, setHistoryVersion] = useState(0);
   const tel = useTelemetry(conn, "backend");
-  const [alert, setAlert] = useState<Alert | null>(null);
   const [wake, setWake] = useState(1);
   const [voice, setVoiceState] = useState<VoiceState>("off");
   const [reload, setReload] = useState(0);
@@ -264,30 +263,6 @@ export default function App() {
     setReload((n) => n + 1);
     setHistoryVersion((v) => v + 1);
   }, []); // bumps replay the aurora sweep: on launch and on every new chat
-
-  // Proactive alerts from the backend monitor: show the newest one for a while.
-  useEffect(() => {
-    if (!conn) return;
-    let since = Date.now() / 1000;
-    const id = window.setInterval(async () => {
-      try {
-        const fresh = await getAlerts(conn, since);
-        if (fresh.length) {
-          since = fresh[fresh.length - 1].at;
-          setAlert(fresh[fresh.length - 1]);
-        }
-      } catch {
-        /* backend restarting; the status chip already shows that */
-      }
-    }, 10000);
-    return () => window.clearInterval(id);
-  }, [conn]);
-
-  useEffect(() => {
-    if (!alert) return;
-    const t = window.setTimeout(() => setAlert(null), 20000);
-    return () => window.clearTimeout(t);
-  }, [alert]);
 
   useEffect(() => {
     if (!shell) return;
@@ -371,13 +346,6 @@ export default function App() {
           <QuotaStrip conn={conn} activity={coreActivity} />
         </div>
       </header>
-
-      {alert && (
-        <div className="alert-toast glass" role="alert" onClick={() => setAlert(null)}>
-          <span className="alert-kind">{alert.kind.toUpperCase()}</span>
-          {alert.message}
-        </div>
-      )}
 
       <nav className="rail" aria-label="Panels">
         {(Object.keys(ICONS) as Exclude<Drawer, null>[]).map((d) => (

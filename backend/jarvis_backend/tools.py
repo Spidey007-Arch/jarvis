@@ -154,7 +154,7 @@ TOOLS: list[ToolSpec] = [
              obj({"action": S, "delay_seconds": I}, ["action"]), risk="danger", agent_action="power", label="Power: {action}"),
     ToolSpec("open_settings", "Open a Windows Settings page (display, sound, bluetooth, wifi, network, battery, power, storage, apps, default apps, notifications, windows update, privacy, personalization, themes, mouse, keyboard, time, language, accounts, about, printers, focus, night light) or 'task manager' / 'control panel'.",
              obj({"page": S}), agent_action="open_settings", label="Opening settings"),
-    ToolSpec("set_reminder", "Set a reminder that pops up as a Windows notification at a local date-time. due must be ISO format YYYY-MM-DDTHH:MM in the user's local time.",
+    ToolSpec("set_reminder", "Set a reminder that JARVIS says out loud at a local date-time. due must be ISO format YYYY-MM-DDTHH:MM in the user's local time.",
              obj({"text": S, "due": S}, ["text", "due"]), label="Setting a reminder"),
     ToolSpec("list_reminders", "List pending reminders.", obj(), label="Checking reminders"),
     ToolSpec("cancel_reminder", "Cancel a pending reminder by its id.", obj({"id": S}, ["id"]), label="Cancelling a reminder"),

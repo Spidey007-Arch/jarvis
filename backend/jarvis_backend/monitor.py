@@ -1,7 +1,7 @@
 """Protective initiative: watch the PC and speak up when something needs the user's attention.
 
-Readings come from the desktop agent's heartbeats. Alerts are delivered as Windows
-notifications and kept for the UI. Each kind of alert has its own cooldown so JARVIS
+Readings come from the desktop agent's heartbeats. Alerts are spoken aloud (no
+notifications) and kept for the briefing. Each kind of alert has its own cooldown so JARVIS
 mentions a problem once, not every few seconds.
 """
 from __future__ import annotations
@@ -67,6 +67,6 @@ class Monitor:
                 self.alerts.append({"at": time.time(), "kind": kind, "message": message})
                 log.info("proactive alert", extra={"fields": {"kind": kind}})
                 try:
-                    await self.bridge.call("notify", {"title": "JARVIS", "body": message}, timeout=20)
+                    await self.bridge.call("speak", {"text": message, "queue": True}, timeout=20)
                 except (AgentUnavailable, AgentError) as e:
-                    log.warning("could not show alert notification: %s", e)
+                    log.warning("could not speak alert: %s", e)

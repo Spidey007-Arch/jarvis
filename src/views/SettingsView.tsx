@@ -122,6 +122,9 @@ export default function SettingsView({ conn, onChanged }: { conn: Connection | n
   if (!conn) return <div className="view-msg">Waiting for the backend to come online…</div>;
   if (!s || !preset) return <div className="view-msg">Loading settings…</div>;
 
+  // Only the gateway, the provider in use and providers with a saved key are listed; the rest sit behind "Use another provider".
+  const shown = presets.filter((p) => p.id === "gateway" || p.id === s.provider || s.providers_with_keys.includes(p.id));
+  const hidden = presets.filter((p) => !shown.includes(p));
   const showBaseUrl = ["ollama", "custom", "gateway"].includes(preset.id);
   const showKey = preset.needs_key || ["custom", "gateway"].includes(preset.id);
   const canConnect = !busy && (preset.needs_key ? !!key.trim() || (s.has_api_key && baseUrl !== s.base_url) : !!baseUrl.trim());
@@ -135,7 +138,7 @@ export default function SettingsView({ conn, onChanged }: { conn: Connection | n
         <h2>AI provider</h2>
         <p className="dim small">Bring your own key. Keys are encrypted with Windows DPAPI and never leave this PC except to call the provider.</p>
         <div className="providers" role="radiogroup" aria-label="AI provider">
-          {presets.map((p) => (
+          {shown.map((p) => (
             <button
               key={p.id}
               role="radio"
@@ -153,6 +156,25 @@ export default function SettingsView({ conn, onChanged }: { conn: Connection | n
             </button>
           ))}
         </div>
+        {hidden.length > 0 && (
+          <details className="more-providers">
+            <summary>Use another provider</summary>
+            <select
+              value=""
+              disabled={busy}
+              aria-label="Other AI providers"
+              onChange={(e) => {
+                const p = presets.find((x) => x.id === e.target.value);
+                if (p) save("provider", { provider: p.id }, `Switched to ${p.name}. Paste its key below.`, true);
+              }}
+            >
+              <option value="">Choose…</option>
+              {hidden.map((p) => (
+                <option key={p.id} value={p.id}>{p.name}</option>
+              ))}
+            </select>
+          </details>
+        )}
         <p className="dim small">{preset.key_hint}</p>
 
         {showBaseUrl && (

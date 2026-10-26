@@ -1,4 +1,4 @@
-"""Reminders: stored in SQLite, delivered as Windows notifications by the desktop agent."""
+"""Reminders: stored in SQLite, spoken aloud by the desktop agent (no notifications)."""
 from __future__ import annotations
 
 import asyncio
@@ -49,12 +49,12 @@ class Reminders:
         return {"cancelled": rid}
 
     async def run(self) -> None:
-        """Deliver due reminders. If the agent is offline, keep them pending and retry."""
+        """Deliver due reminders. If the agent is offline or cannot speak yet, keep them pending and retry."""
         while True:
             due = self.db.all("SELECT * FROM reminders WHERE status='pending' AND due_at <= ?", [time.time()])
             for r in due:
                 try:
-                    await self.bridge.call("notify", {"title": "JARVIS reminder", "body": r["text"]}, timeout=20)
+                    await self.bridge.call("speak", {"text": f"Just a reminder: {r['text']}", "queue": True}, timeout=20)
                     self.db.run("UPDATE reminders SET status='done', fired_at=? WHERE id=?", [time.time(), r["id"]])
                     log.info("reminder delivered", extra={"fields": {"id": r["id"]}})
                 except (AgentUnavailable, AgentError) as e:

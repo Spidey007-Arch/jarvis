@@ -296,7 +296,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
   transition: transform 0.42s cubic-bezier(0.22, 0.9, 0.24, 1), width 0.35s ease, visibility 0s 0.42s;
 }
 .drawer.wide { width: min(calc(var(--rail-space) + 700px), 100%); }
-.drawer.xwide { width: min(calc(var(--rail-space) + 900px), 100%); }
+.drawer.xwide { width: min(calc(var(--rail-space) + 680px), 100%); }
 .drawer.open { visibility: visible; transform: none; transition: transform 0.42s cubic-bezier(0.22, 0.9, 0.24, 1), width 0.35s ease; }
 .drawer::before { /* scanning top edge */
   content: ""; position: absolute; top: 0; left: 0; right: 0; height: 1px;
@@ -341,12 +341,10 @@ label { display: flex; flex-direction: column; gap: 5px; font-size: 11px; letter
 .settings { display: grid; gap: 12px; align-items: start; }
 .settings-side { display: grid; gap: 12px; min-width: 0; }
 .settings select { min-width: 0; width: 100%; text-overflow: ellipsis; }
-/* Wide enough for two columns: the provider on the left, models and profile stacked on the right. */
-.drawer.xwide .drawer-body { container-type: inline-size; }
-@container (min-width: 700px) {
-  .settings { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
-  .settings > .banner { grid-column: 1 / -1; }
-}
+.settings { max-width: 640px; margin: 0 auto; width: 100%; } /* one column, cards stacked */
+.more-providers { margin-top: 8px; }
+.more-providers summary { cursor: pointer; font-size: 12px; opacity: 0.6; }
+.more-providers select { margin-top: 6px; }
 .card { padding: 14px; border-radius: 14px; background: rgba(0, 10, 18, 0.35); border: 1px solid color-mix(in srgb, var(--core) 14%, transparent); }
 .card h2 { margin: 0 0 6px; font-size: 11px; letter-spacing: 0.24em; color: var(--core); font-weight: 600; text-transform: uppercase; }
 .card p { margin: 6px 0 0; font-size: 12.5px; }
@@ -425,7 +423,7 @@ label { display: flex; flex-direction: column; gap: 5px; font-size: 11px; letter
 }
 
 /* provider picker */
-.providers { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 6px; margin: 10px 0 4px; }
+.providers { display: grid; grid-template-columns: 1fr; gap: 6px; margin: 10px 0 4px; }
 .drawer .prov {
   display: flex; justify-content: space-between; align-items: center; text-align: left;
   background: rgba(0, 10, 18, 0.45); border: 1px solid color-mix(in srgb, var(--core) 16%, transparent);
