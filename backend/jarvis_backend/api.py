@@ -16,7 +16,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
-from . import briefing
+from . import briefing, public_apis
 from .db import DB
 from .extraction import EXTRACT_SCHEMA, extract_prompt
 from .bridge import AgentBridge, AgentError, AgentUnavailable
@@ -136,6 +136,11 @@ class ChatIn(BaseModel):
 
 class VoiceIn(BaseModel):
     enabled: bool
+
+
+class ServiceKeyIn(BaseModel):
+    service: str = Field(min_length=1, max_length=80)
+    key: str = Field(min_length=1, max_length=500)
 
 
 class VoiceModeIn(BaseModel):
@@ -396,6 +401,22 @@ def build_router(svc: Services, require_auth: Callable[..., None]) -> APIRouter:
                 spot = await _locate_on_screen(str(args["over"]))
                 where.update(x=spot["x"], y=spot["y"])
             return await svc.bridge.call("mouse_scroll", where, timeout=15)
+        if spec.name == "find_apis":
+            return public_apis.find(str(args.get("query") or ""), str(args.get("category") or ""), bool(args.get("no_key_only")),
+                                    int(args.get("limit") or 12), has_key=lambda n: bool(svc.settings.service_key(n)))
+        if spec.name == "call_api":
+            key, use = "", str(args.get("use_key") or "").strip()
+            if use:
+                key = svc.settings.service_key(use)
+                if not key:
+                    raise ToolFailure(f"No key is saved for '{use}'. The user can add one in Settings > API keys "
+                                      f"(saved: {', '.join(svc.settings.service_keys()) or 'none'}).")
+            params = public_apis.parse_params(args.get("params"))
+            try:
+                return await public_apis.call(str(args.get("url", "")), params, key, str(args.get("key_param") or ""),
+                                              str(args.get("key_header") or ""))
+            except public_apis.APIError as e:
+                raise ToolFailure(str(e)) from e
         if spec.name == "set_reminder":
             return svc.reminders.add(str(args.get("text", "")), str(args.get("due", "")))
         if spec.name == "list_reminders":
@@ -634,6 +655,24 @@ def build_router(svc: Services, require_auth: Callable[..., None]) -> APIRouter:
             return await svc.bridge.call("voice_forget", timeout=10)
         except (AgentUnavailable, AgentError) as e:
             raise HTTPException(status_code=503, detail=str(e)) from e
+
+    @r.get("/apikeys")
+    async def api_keys() -> dict[str, Any]:
+        """Which public APIs have a saved key (never the keys themselves), and the catalog size."""
+        apis = public_apis.catalog()
+        return {"saved": svc.settings.service_keys(), "catalog": len(apis), "need_key": sorted({a["name"] for a in apis if a["auth"] == "apiKey"})}
+
+    @r.put("/apikeys")
+    async def save_api_key(body: ServiceKeyIn) -> dict[str, Any]:
+        if not public_apis.lookup(body.service):
+            raise HTTPException(status_code=400, detail=f"'{body.service}' is not in the public APIs list.")
+        svc.settings.set_service_key(body.service, body.key.strip())
+        return {"saved": svc.settings.service_keys()}
+
+    @r.delete("/apikeys/{service}")
+    async def delete_api_key(service: str) -> dict[str, Any]:
+        svc.settings.set_service_key(service, "")
+        return {"saved": svc.settings.service_keys()}
 
     @r.post("/voice/speak")
     async def voice_speak(body: SpeakIn) -> dict[str, Any]:

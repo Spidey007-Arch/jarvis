@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import ApiKeysCard from "./ApiKeysCard";
 import { ApiError, ModelInfo, ProviderPreset, Settings, SettingsUpdate, VoiceStatus, enrollVoice, forgetVoice, getModels, getProviders, getSettings, getVoice, putSettings, setVoice, setVoiceMode } from "../api";
 import type { Connection } from "../shell";
 
@@ -264,6 +265,7 @@ export default function SettingsView({ conn, onChanged }: { conn: Connection | n
           )}
           <Note k="voice" />
         </section>
+        <ApiKeysCard conn={conn} />
         <section className="card">
           <h2>Models</h2>
           {!models ? (

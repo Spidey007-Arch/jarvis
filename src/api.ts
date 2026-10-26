@@ -133,6 +133,16 @@ export const setVoice = (c: Connection, enabled: boolean) =>
 /** Records 15 s of the user reading aloud and makes their voiceprint. */
 export const enrollVoice = (c: Connection) => call<Enrollment>(c, "/api/voice/enroll", { method: "POST", body: "{}" });
 export const forgetVoice = (c: Connection) => call<Enrollment>(c, "/api/voice/enroll", { method: "DELETE" });
+export interface ApiKeys {
+  saved: string[]; // public APIs with a saved key (names only)
+  catalog: number; // how many APIs JARVIS can call
+  need_key: string[]; // APIs that take an API key, for the name picker
+}
+export const getApiKeys = (c: Connection) => call<ApiKeys>(c, "/api/apikeys");
+export const saveApiKey = (c: Connection, service: string, key: string) =>
+  call<{ saved: string[] }>(c, "/api/apikeys", { method: "PUT", body: JSON.stringify({ service, key }) });
+export const deleteApiKey = (c: Connection, service: string) =>
+  call<{ saved: string[] }>(c, `/api/apikeys/${encodeURIComponent(service)}`, { method: "DELETE" });
 export const speak = (c: Connection, text: string) => call<{ spoken: boolean }>(c, "/api/voice/speak", { method: "POST", body: JSON.stringify({ text }) });
 export const stopSpeaking = (c: Connection) => call<{ stopped: boolean }>(c, "/api/voice/stop", { method: "POST", body: "{}" });
 

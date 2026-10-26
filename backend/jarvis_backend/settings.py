@@ -137,6 +137,25 @@ class SettingsStore:
                 self._data["secrets"].pop(name, None)
             self._save()
 
+    # Keys for public APIs (weather, news, ...), kept apart from AI provider keys and never shown to the model.
+    def service_key(self, service: str) -> str:
+        with self._lock:
+            return self._data["secrets"].get(f"service_key:{service.strip().lower()}", "")
+
+    def set_service_key(self, service: str, value: str) -> None:
+        with self._lock:
+            name = f"service_key:{service.strip().lower()}"
+            if value:
+                self._data["secrets"][name] = value
+            else:
+                self._data["secrets"].pop(name, None)
+            self._save()
+
+    def service_keys(self) -> list[str]:
+        """Names of the public APIs that have a saved key (not the keys)."""
+        with self._lock:
+            return sorted(k.split(":", 1)[1] for k in self._data["secrets"] if k.startswith("service_key:"))
+
     def public(self) -> dict[str, Any]:
         pid = self.provider
         cfg = self.provider_cfg(pid)

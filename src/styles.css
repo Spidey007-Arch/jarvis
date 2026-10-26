@@ -527,3 +527,9 @@ label { display: flex; flex-direction: column; gap: 5px; font-size: 11px; letter
   background: color-mix(in srgb, var(--core) 8%, transparent); color: var(--text); font-size: 13.5px;
 }
 .enroll-count { display: block; margin-bottom: 6px; font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--core); }
+
+/* ---------- public API keys ---------- */
+.keys { list-style: none; margin: 8px 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.keys li { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 10px; border: 1px solid var(--edge); border-radius: 8px; }
+.keys-add { flex-wrap: wrap; }
+.keys-add input { flex: 1 1 160px; min-width: 0; }

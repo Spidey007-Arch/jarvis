@@ -70,6 +70,19 @@ TOOLS: list[ToolSpec] = [
     ToolSpec("look_at_screen", "Take a screenshot and look at it to answer a question about what is currently on screen (errors, windows, content).",
              obj({"question": S}, ["question"]), timeout=90, label="Looking at the screen"),
     ToolSpec("screenshot", "Save a screenshot to Pictures\\JARVIS and return its path. It is deleted automatically after 3 minutes; tell the user.", obj(), agent_action="screenshot", label="Taking a screenshot"),
+    # Every API in github.com/public-apis/public-apis: weather, news, finance, crypto, sports, games, science, ...
+    ToolSpec("find_apis", "Search the catalog of ~2,200 free public APIs (the public-apis list) by topic, e.g. 'weather forecast', "
+             "'crypto prices', 'cricket scores', 'jokes', 'currency exchange', 'nasa', 'dictionary', 'recipes', 'movies'. Returns name, "
+             "what it does, whether it needs a key, and its docs URL. Optional category (e.g. Weather, Finance, Sports & Fitness) and "
+             "no_key_only=true for APIs usable right now.",
+             obj({"query": S, "category": S, "no_key_only": B, "limit": I}), label="Looking up APIs for {query}"),
+    ToolSpec("call_api", "Make a read-only GET request to a public API endpoint (or read its docs page to learn the endpoints) and get "
+             "the JSON or text back. params are query parameters, as JSON ({\"q\": \"Pune\", \"units\": \"metric\"}) or "
+             "'q=Pune&units=metric' (or put them in the URL). For an API whose key the user saved, set use_key to the API's name "
+             "and say where it goes: key_param (query parameter name, e.g. 'appid', 'apiKey') or key_header (e.g. 'X-Api-Key'); "
+             "you never see the key. Only the public internet is reachable.",
+             obj({"url": S, "params": S, "use_key": S, "key_param": S, "key_header": S}, ["url"]),
+             timeout=45, label="Calling {url}"),
     # Using any app by sight, like a person: look, click, type, scroll.
     ToolSpec("screen_click", "Click something visible on screen, in any app, by describing it: e.g. 'the Search box in the Spotify window', "
              "'the Play button', 'the chat named Mom in WhatsApp', 'File menu in Notepad'. JARVIS takes a fresh screenshot, finds it and "
@@ -127,7 +140,7 @@ TOOLS: list[ToolSpec] = [
 STEPWISE_TOOLS = frozenset({"press_keys", "type_text", "volume", "media", "brightness", "web_click", "web_type", "screen_click", "screen_scroll"})
 # Read-only looks whose answer can change after other actions.
 OBSERVE_TOOLS = frozenset({"look_at_screen", "system_status", "clipboard_get", "list_folder", "find_files", "list_reminders", "web_read",
-                           "gmail_list", "gmail_open", "whatsapp_chats", "whatsapp_read"})
+                           "gmail_list", "gmail_open", "whatsapp_chats", "whatsapp_read", "find_apis", "call_api"})
 
 BY_NAME = {t.name: t for t in TOOLS}
 
