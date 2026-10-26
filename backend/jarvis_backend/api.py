@@ -149,6 +149,7 @@ class VoiceModeIn(BaseModel):
 
 class SpeakIn(BaseModel):
     text: str = Field(min_length=1, max_length=4000)
+    queue: bool = False  # follow what is already being said (a reply spoken as it streams)
 
 
 class ConversationPatch(BaseModel):
@@ -677,7 +678,7 @@ def build_router(svc: Services, require_auth: Callable[..., None]) -> APIRouter:
     @r.post("/voice/speak")
     async def voice_speak(body: SpeakIn) -> dict[str, Any]:
         try:
-            return await svc.bridge.call("speak", {"text": body.text}, timeout=120)
+            return await svc.bridge.call("speak", {"text": body.text, "queue": body.queue}, timeout=120)
         except (AgentUnavailable, AgentError) as e:
             raise HTTPException(status_code=503, detail=str(e)) from e
 

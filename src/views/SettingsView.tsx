@@ -230,7 +230,7 @@ export default function SettingsView({ conn, onChanged }: { conn: Connection | n
             {!voice
               ? "Checking voice…"
               : voice.ready
-                ? "Runs entirely on this PC: openWakeWord hears “Hey JARVIS”, Whisper turns speech into text, Piper speaks (British voice)."
+                ? `Offline mode runs entirely on this PC: openWakeWord hears “Hey JARVIS”, ${voice.asr?.startsWith("NVIDIA") ? "NVIDIA Parakeet" : "Whisper"} turns speech into text, Piper speaks (British voice).`
                 : `Voice files still downloading or missing: ${voice.missing.join(", ") || "programs not unpacked yet"}.`}
           </p>
           {voice?.speaker_model && (

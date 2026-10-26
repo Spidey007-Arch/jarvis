@@ -55,10 +55,12 @@ Voice runs entirely on your PC. Download these free files into `%LOCALAPPDATA%\J
 | `piper_windows_amd64.zip` | [Piper 2023.11.14-2](https://github.com/rhasspy/piper/releases/tag/2023.11.14-2) |
 | `en_GB-alan-medium.onnx` and `.onnx.json` | [Piper voices](https://huggingface.co/rhasspy/piper-voices/tree/main/en/en_GB/alan/medium) |
 | `melspectrogram.onnx`, `embedding_model.onnx`, `hey_jarvis_v0.1.onnx` | [openWakeWord v0.5.1](https://github.com/dscripka/openWakeWord/releases/tag/v0.5.1) |
+| `sherpa-onnx-nemo-parakeet_tdt_ctc_110m-en-36000-int8.tar.bz2` (optional, recommended) | [sherpa-onnx ASR models](https://github.com/k2-fsa/sherpa-onnx/releases/tag/asr-models): NVIDIA Parakeet speech recognition, far more accurate than Whisper base. The larger `sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8.tar.bz2` also works and is used if present. |
+| `wespeaker_en_voxceleb_resnet34_LM.onnx` (optional) | [sherpa-onnx speaker models](https://github.com/k2-fsa/sherpa-onnx/releases/tag/speaker-recongition-models): lets **Settings → Voice → Teach JARVIS my voice** make it answer only you. |
 
-Also install two Python packages into the app's environment: `pip install numpy onnxruntime`.
+Also install the Python packages into the app's environment: `pip install numpy onnxruntime sherpa-onnx`.
 
-Say **"Hey JARVIS"**, wait for the chime, then your request. Saying it again while JARVIS talks stops it.
+Say **"Jarvis"** with your request ("Jarvis, open Spotify"). Saying "Hey JARVIS" while it talks stops it. Replies are always spoken, typed or not.
 
 ## Run from source
 

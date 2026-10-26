@@ -533,3 +533,9 @@ label { display: flex; flex-direction: column; gap: 5px; font-size: 11px; letter
 .keys li { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 10px; border: 1px solid var(--edge); border-radius: 8px; }
 .keys-add { flex-wrap: wrap; }
 .keys-add input { flex: 1 1 160px; min-width: 0; }
+
+/* ---------- core: voice ripple, sound bars ---------- */
+.reactor .bars rect { fill: var(--core); transform-box: fill-box; transform-origin: center bottom; transform: scaleY(0.08); }
+.reactor .bars.user rect { fill: #e8fbff; }
+.reactor .ripple circle { stroke: var(--core); }
+.reactor .ripple.user circle { stroke: #e8fbff; }

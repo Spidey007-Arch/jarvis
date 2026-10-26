@@ -31,11 +31,14 @@ function arc(r: number, from: number, span: number): string {
 }
 
 const range = (n: number) => Array.from({ length: n }, (_, i) => i);
+const BARS = 64;
 
 /** The arc reactor. Every moving part is its own layer moved by CSS transform/opacity, so the glow
  *  filters are painted once and the compositor does the rest. Outer instrument rings turn at their
  *  own speeds and spin up with activity, a light chases round the coils while JARVIS thinks, the
- *  lens turns in the hub, the core surges with each streamed chunk and fires a shockwave on send. */
+ *  lens turns in the hub, the core surges with each streamed chunk and fires a shockwave on send.
+ *  While anyone talks, the real loudness of the voice ("jarvis:levels", 50 ms apart) drives the core,
+ *  a ripple ring and a ring of sound bars; while JARVIS thinks, comets orbit the hub and a scanner sweeps. */
 export default function Reactor({ activity, label }: { activity: Activity; label: string }) {
   const halo = useRef<SVGSVGElement>(null);
   const coilsLit = useRef<SVGSVGElement>(null);
@@ -48,12 +51,25 @@ export default function Reactor({ activity, label }: { activity: Activity; label
   const lens = useRef<SVGSVGElement>(null);
   const core = useRef<SVGSVGElement>(null);
   const waves = useRef<SVGGElement>(null);
+  const bars = useRef<SVGSVGElement>(null);
+  const ripple = useRef<SVGSVGElement>(null);
+  const think = useRef<SVGSVGElement>(null);
+  const scan = useRef<SVGSVGElement>(null);
   const activityRef = useRef(activity);
   activityRef.current = activity;
 
   useEffect(() => {
     const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    const angle = { chase: 0, tick: 0, a: 0, b: 0, c: 0, inner: 0, lens: 0 };
+    const angle = { chase: 0, tick: 0, a: 0, b: 0, c: 0, inner: 0, lens: 0, think: 0, scan: 0 };
+    // voice levels waiting to be shown, each at its own moment, so the core moves in time with the voice
+    const levelQueue: { at: number; v: number; who: string }[] = [];
+    let voice = 0;
+    let voiceTarget = 0;
+    let voiceWho = "jarvis";
+    let lastLevelAt = 0;
+    let thinking = 0;
+    const barEls = () => (bars.current ? Array.from(bars.current.querySelectorAll<SVGRectElement>("rect")) : []);
+    let barCache: SVGRectElement[] = [];
     let chaseSpeed = CHASE.idle;
     let light = LIGHT.idle;
     let drive = DRIVE.idle;
@@ -87,6 +103,18 @@ export default function Reactor({ activity, label }: { activity: Activity; label
       angle.inner = (angle.inner - 9 * d * dt) % 360;
       angle.lens = (angle.lens + 16 * d * dt) % 360;
 
+      while (levelQueue.length && levelQueue[0].at <= now) {
+        const l = levelQueue.shift()!;
+        voiceTarget = l.v;
+        voiceWho = l.who;
+        lastLevelAt = now;
+      }
+      if (now - lastLevelAt > 160) voiceTarget = 0;  // the voice stopped
+      voice += (voiceTarget - voice) * Math.min(dt * (voiceTarget > voice ? 22 : 9), 1);
+      thinking += ((act === "thinking" ? 1 : 0) - thinking) * Math.min(dt * 3, 1);
+      angle.think = (angle.think + 150 * dt) % 360;
+      angle.scan = (angle.scan - 70 * dt) % 360;
+
       const pulse = act === "thinking" ? Math.sin(now / 160) * 0.5 + 0.5 : Math.sin(now / 1100) * 0.5 + 0.5;
       const flicker = 0.94 + Math.sin(now / 47) * 0.03 + Math.sin(now / 131) * 0.03; // plasma, never still
       if (chase.current) {
@@ -101,15 +129,48 @@ export default function Reactor({ activity, label }: { activity: Activity; label
       spin(lens.current, angle.lens);
       if (coilsLit.current) coilsLit.current.style.opacity = Math.min(1, light * (0.75 + pulse * 0.35) + energy * 0.5).toFixed(2);
       if (core.current) {
-        core.current.style.transform = `scale(${(1 + pulse * (act === "thinking" ? 0.12 : 0.05) + energy * 0.35).toFixed(3)})`;
+        core.current.style.transform = `scale(${(1 + pulse * (act === "thinking" ? 0.12 : 0.05) + energy * 0.35 + voice * 0.32).toFixed(3)})`;
         core.current.style.opacity = (act === "offline" ? 0.35 : flicker).toFixed(3);
       }
-      if (halo.current) halo.current.style.opacity = Math.min(1, 0.45 + light * 0.5 + energy * 0.4).toFixed(2);
+      if (halo.current) halo.current.style.opacity = Math.min(1, 0.45 + light * 0.5 + energy * 0.4 + voice * 0.5).toFixed(2);
+      if (ripple.current) {
+        ripple.current.style.opacity = Math.min(1, voice * 1.6).toFixed(2);
+        ripple.current.style.transform = `scale(${(1 + voice * 0.14).toFixed(3)})`;
+        ripple.current.classList.toggle("user", voiceWho === "user");
+      }
+      if (bars.current) {
+        bars.current.style.opacity = Math.min(1, voice * 2.2).toFixed(2);
+        bars.current.classList.toggle("user", voiceWho === "user");
+        if (voice > 0.01) {
+          if (barCache.length !== BARS) barCache = barEls();
+          const t = now / 1000;
+          for (let i = 0; i < barCache.length; i++) {
+            // a lively spectrum from one loudness value: each bar wobbles at its own rate
+            const shape = 0.3 + 0.7 * Math.abs(Math.sin(i * 0.83 + t * (5 + (i % 7))) * Math.cos(i * 0.31 - t * 3.1));
+            barCache[i].style.transform = `scaleY(${(0.08 + voice * shape * 1.1).toFixed(3)})`;
+          }
+        }
+      }
+      if (think.current) {
+        think.current.style.opacity = thinking.toFixed(2);
+        think.current.style.transform = `rotate(${angle.think.toFixed(2)}deg)`;
+      }
+      if (scan.current) {
+        scan.current.style.opacity = (thinking * 0.9).toFixed(2);
+        scan.current.style.transform = `rotate(${angle.scan.toFixed(2)}deg)`;
+      }
       if (!document.hidden) raf = requestAnimationFrame(frame);
     };
 
     const onPulse = () => {
       energy = Math.min(1, energy + 0.3);
+    };
+    const onLevels = (e: Event) => {
+      const { who, v } = (e as CustomEvent<{ who: string; v: number[] }>).detail;
+      // a batch covers the last 250 ms: play it back over the next 250 ms
+      const start = Math.max(performance.now(), levelQueue.length ? levelQueue[levelQueue.length - 1].at + 50 : 0);
+      v.forEach((x, i) => levelQueue.push({ at: start + i * 50, v: x, who }));
+      if (levelQueue.length > 40) levelQueue.splice(0, levelQueue.length - 40);  // never fall behind the voice
     };
     const onSend = () => {
       energy = 1;
@@ -132,11 +193,13 @@ export default function Reactor({ activity, label }: { activity: Activity; label
 
     if (!reduced) raf = requestAnimationFrame(frame);
     window.addEventListener("jarvis:pulse", onPulse);
+    window.addEventListener("jarvis:levels", onLevels);
     window.addEventListener("jarvis:send", onSend);
     document.addEventListener("visibilitychange", onVis);
     return () => {
       cancelAnimationFrame(raf);
       window.removeEventListener("jarvis:pulse", onPulse);
+      window.removeEventListener("jarvis:levels", onLevels);
       window.removeEventListener("jarvis:send", onSend);
       document.removeEventListener("visibilitychange", onVis);
     };
@@ -226,6 +289,19 @@ export default function Reactor({ activity, label }: { activity: Activity; label
           </clipPath>
         </defs>
         <circle cx="200" cy="200" r="198" fill="url(#halo)" />
+      </svg>
+
+      {/* sound bars: the voice's loudness, all round the reactor */}
+      <svg ref={bars} className="layer bars" viewBox="0 0 400 400" style={{ opacity: 0 }}>
+        {range(BARS).map((i) => (
+          <g key={i} transform={`rotate(${(i * 360) / BARS} 200 200)`}>
+            <rect x="198.6" y="-42" width="2.8" height="26" rx="1.4" />
+          </g>
+        ))}
+      </svg>
+      <svg ref={ripple} className="layer spin ripple" viewBox="0 0 400 400" style={{ opacity: 0 }}>
+        <circle cx="200" cy="200" r="203" fill="none" strokeWidth="2.5" filter="url(#softglow)" />
+        <circle cx="200" cy="200" r="108" fill="none" strokeWidth="1.5" opacity="0.8" />
       </svg>
 
       {/* outermost HUD: segmented arcs and a dotted track, turning slowly */}
@@ -374,6 +450,23 @@ export default function Reactor({ activity, label }: { activity: Activity; label
 
       <svg className="layer" viewBox="0 0 400 400">
         <g ref={waves} filter="url(#glow)" />
+      </svg>
+
+      {/* thinking: three comets orbit the hub, and a scanner sweeps the coil bed */}
+      <svg ref={scan} className="layer spin" viewBox="0 0 400 400" style={{ opacity: 0 }}>
+        <path d={sector(104, 166, 26)} fill="url(#sweep)" opacity="0.55" />
+        <path d={arc(170, 0, 26)} fill="none" stroke="#e8fbff" strokeWidth="1.6" strokeLinecap="round" />
+      </svg>
+      <svg ref={think} className="layer spin" viewBox="0 0 400 400" style={{ opacity: 0 }}>
+        <g fill="none" strokeLinecap="round" filter="url(#softglow)">
+          {[0, 120, 240].map((deg, i) => (
+            <g key={deg} transform={`rotate(${deg} 200 200)`}>
+              <path d={arc(64 + i * 7, 0, 70)} stroke="var(--core)" strokeWidth="3" opacity="0.25" />
+              <path d={arc(64 + i * 7, 40, 30)} stroke="var(--core)" strokeWidth="3" opacity="0.6" />
+              <path d={arc(64 + i * 7, 62, 8)} stroke="#ffffff" strokeWidth="3.4" />
+            </g>
+          ))}
+        </g>
       </svg>
 
       {/* the lens over the core: spokes and an aperture ring that turn */}

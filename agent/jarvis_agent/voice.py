@@ -7,7 +7,8 @@
   enrolled (speaker.py), the speaker must also be the user.
 - Listening: the default microphone at 16 kHz until about a second of silence.
 - Transcription: whisper.cpp with the base English model.
-- Speech: Piper with a British male voice; saying the wake word while JARVIS talks stops it.
+- Speech: Piper with a British male voice, kept loaded and spoken sentence by sentence (speech.py);
+  saying the wake word while JARVIS talks stops it.
 
 The programs and models live in <data>/voice, unpacked from <data>/voice/downloads on first use."""
 from __future__ import annotations
@@ -27,14 +28,14 @@ import zipfile
 from pathlib import Path
 from typing import Any, Callable
 
-from . import win
+from . import speech, win
 
 log = logging.getLogger("jarvis.voice")
 
 RATE = 16000
 MAX_UTTERANCE_S = 15.0
 NO_SPEECH_S = 5.0  # give up if nothing is said this long after the wake word
-END_SILENCE_S = 1.0
+END_SILENCE_S = 0.75  # a pause this long ends the request (was 1 s: every reply started later)
 GATE_ONSET_S = 0.24  # this much continuous sound starts an utterance
 GATE_PREROLL_S = 0.5
 GATE_END_S = 0.7
@@ -114,7 +115,7 @@ def _rms(chunk: bytes) -> float:
     return math.sqrt(sum(x * x for x in a) / len(a)) if a else 0.0
 
 
-def record_utterance(stop: threading.Event) -> bytes | None:
+def record_utterance(stop: threading.Event, on_audio: Callable[[bytes], None] | None = None) -> bytes | None:
     """Record from the default microphone until the speaker pauses. None if nothing was said."""
     import sounddevice as sd
 
@@ -129,6 +130,8 @@ def record_utterance(stop: threading.Event) -> bytes | None:
         while not stop.is_set():
             data, _ = stream.read(block)
             data = bytes(data)
+            if on_audio:
+                on_audio(data)
             level = _rms(data)
             elapsed = time.monotonic() - started
             if elapsed < 0.3:
@@ -201,6 +204,12 @@ def addressed(text: str) -> bool:
     return bool(_NAME.search(text))
 
 
+def asr_ready() -> bool:
+    from . import asr
+
+    return asr.recognizer() is not None
+
+
 def normalise(pcm: bytes, target_peak: int = 20000) -> bytes:
     """Bring quiet speech up to a healthy level (at most 30x) so Whisper hears it clearly."""
     a = array.array("h", pcm)
@@ -232,6 +241,12 @@ def clean_transcript(text: str, strip_name: bool = True) -> str:
 
 
 def transcribe(wav: bytes, setup: dict[str, Any], strip_name: bool = True) -> str:
+    """NVIDIA Parakeet when its model is unpacked (asr.py), otherwise Whisper."""
+    from . import asr
+
+    model = asr.recognizer()
+    if model is not None:
+        return clean_transcript(model.transcribe(wav[44:]), strip_name)  # the WAV header is 44 bytes
     fd, path = tempfile.mkstemp(prefix="jarvis-voice-", suffix=".wav")
     os.close(fd)
     try:
@@ -249,18 +264,6 @@ def transcribe(wav: bytes, setup: dict[str, Any], strip_name: bool = True) -> st
         Path(path).unlink(missing_ok=True)
 
 
-def synthesize(text: str, setup: dict[str, Any]) -> Path:
-    fd, path = tempfile.mkstemp(prefix="jarvis-speech-", suffix=".wav")
-    os.close(fd)
-    r = subprocess.run([setup["piper"], "--model", setup["voice_model"], "--output_file", path],
-                       input=text, capture_output=True, text=True, timeout=120, encoding="utf-8",
-                       cwd=str(Path(setup["piper"]).parent), creationflags=win.CREATE_NO_WINDOW | win.ABOVE_NORMAL_PRIORITY_CLASS)
-    if r.returncode != 0 or not Path(path).stat().st_size:
-        Path(path).unlink(missing_ok=True)
-        raise RuntimeError((r.stderr or "piper failed").strip().splitlines()[-1])
-    return Path(path)
-
-
 class Voice:
     """Owns the wake listener, listening/transcribing and speech. `emit` sends events to the backend."""
 
@@ -275,8 +278,8 @@ class Voice:
         self._wake_stop = threading.Event()
         self._busy = threading.Lock()
         self._stop_listening = threading.Event()
-        self._speech: Path | None = None
-        self._speech_token = 0
+        self.levels = speech.Levels(emit)
+        self.speaker = speech.Speaker(emit, self.levels)
         self.any_speech = True  # also wake on "Jarvis" anywhere in a sentence, not only "Hey JARVIS" at the start
         self._hearing = threading.Lock()  # one transcription at a time
         self._quiet_until = 0.0
@@ -295,6 +298,12 @@ class Voice:
             self.enabled = False
             return {"enabled": False, **setup}
         self.enabled = enabled
+        if enabled:
+            from . import asr
+
+            threading.Thread(target=asr.recognizer, daemon=True).start()  # load Parakeet now, not on the first request
+        if enabled and setup.get("piper"):  # typed replies are spoken too, in either mode
+            self.speaker.setup(setup["piper"], setup["voice_model"])  # load Piper now, not on the first reply
         if enabled and (self._wake is None or not self._wake.is_alive()):
             self._wake_stop = threading.Event()
             self._wake = threading.Thread(target=self._wake_loop, args=(self._wake_stop,), daemon=True)
@@ -363,8 +372,8 @@ class Voice:
             return
         try:
             setup = prepare()
-            if not setup.get("whisper"):
-                return  # without Whisper only "Hey JARVIS" wakes it
+            if not setup.get("whisper") and not asr_ready():
+                return  # without a speech recognizer only "Hey JARVIS" wakes it
             raw = transcribe(to_wav(pcm), setup, strip_name=False)
             if not raw or not addressed(raw):
                 if raw:
@@ -443,7 +452,7 @@ class Voice:
             win_beep()
             self.emit({"event": "listening", "confidence": confidence})
             self._stop_listening.clear()
-            pcm = record_utterance(self._stop_listening)
+            pcm = record_utterance(self._stop_listening, lambda d: self.levels.feed("user", d, RATE))
             if not pcm:
                 self.emit({"event": "idle", "reason": "no speech heard"})
                 return
@@ -465,45 +474,16 @@ class Voice:
 
     # ----- speech -----
 
-    def speak(self, text: str) -> dict[str, Any]:
+    def speak(self, text: str, queue_after: bool = False) -> dict[str, Any]:
+        """Say text with Piper, sentence by sentence; queue_after adds to what is already being said."""
         setup = prepare()
-        if not setup["ready"]:
+        if not (setup.get("piper") and Path(setup.get("voice_model", "")).is_file()):
             return {"spoken": False, **setup}
-        self.stop_speaking()
-        self._speech_token += 1
-        token = self._speech_token
-        path = synthesize(text, setup)
-        with wave.open(str(path), "rb") as w:
-            seconds = w.getnframes() / float(w.getframerate())
-        import winsound
-
-        self._speech = path
-        winsound.PlaySound(str(path), winsound.SND_FILENAME | winsound.SND_ASYNC)
-        self.emit({"event": "speaking", "seconds": round(seconds, 1)})
-
-        def finished() -> None:
-            time.sleep(seconds + 0.3)
-            if self._speech_token == token:
-                self._speech = None
-                path.unlink(missing_ok=True)
-                self.emit({"event": "idle", "reason": "spoken"})
-
-        threading.Thread(target=finished, daemon=True).start()
-        return {"spoken": True, "seconds": round(seconds, 1)}
+        self.speaker.setup(setup["piper"], setup["voice_model"])
+        return {"spoken": True, "sentences": self.speaker.say(text, queue_after)}
 
     def stop_speaking(self) -> None:
-        if self._speech is None:
-            return
-        import winsound
-
-        winsound.PlaySound(None, 0)
-        self._speech_token += 1
-        path, self._speech = self._speech, None
-        try:
-            path.unlink(missing_ok=True)
-        except OSError:
-            pass
-        self.emit({"event": "idle", "reason": "interrupted"})
+        self.speaker.stop()
 
 
 _VOICE: Voice | None = None

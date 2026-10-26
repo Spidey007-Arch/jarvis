@@ -84,8 +84,9 @@ class VoiceGate:
 
 
 class LiveAudio:
-    def __init__(self, send: Callable[[dict[str, Any]], None]) -> None:
+    def __init__(self, send: Callable[[dict[str, Any]], None], levels: Any = None) -> None:
         self.send = send
+        self.levels = levels  # speech.Levels: drives the arc reactor with both voices
         self._mic_stop: threading.Event | None = None
         self._play: queue.Queue[bytes] = queue.Queue()
         self._speaker: threading.Thread | None = None
@@ -127,6 +128,8 @@ class LiveAudio:
                 while not stop.is_set():
                     data, _ = mic.read(MIC_FRAME)
                     frames = [self.gate(bytes(data))]
+                    if self.levels is not None and not self.talking:
+                        self.levels.feed("user", bytes(data), MIC_RATE)
                     if voices is not None:
                         frames = voices.feed(frames[0])
                     for f in frames:
@@ -193,6 +196,8 @@ class LiveAudio:
                         if gen != self._generation:
                             break
                         piece = chunk[i:i + step]
+                        if self.levels is not None:
+                            self.levels.feed("jarvis", piece, SPEAKER_RATE)
                         out.write(piece)
                         now = time.monotonic()
                         self._playing_until = max(self._playing_until, now) + len(piece) / BYTES_PER_S

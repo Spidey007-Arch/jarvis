@@ -96,12 +96,14 @@ export interface VoiceEvent {
   at: number;
   event:
     | "listening" | "transcribing" | "transcript" | "speaking" | "idle" | "error"
-    | "live_connecting" | "live_start" | "user_text" | "jarvis_text" | "live_tool" | "live_turn" | "live_end" | "briefing";
+    | "live_connecting" | "live_start" | "user_text" | "jarvis_text" | "live_tool" | "live_turn" | "live_end" | "briefing" | "levels";
   conversation_id?: string | null;
   tool?: string;
   model?: string;
   text?: string;
   message?: string;
+  who?: "jarvis" | "user"; // levels: whose voice
+  v?: number[]; // levels: loudness 0..1, one per 50 ms
   reason?: string;
   seconds?: number;
 }
@@ -110,6 +112,7 @@ export interface VoiceStatus {
   ready: boolean;
   missing: string[];
   error?: string;
+  asr?: string; // offline speech recognizer in use, e.g. "NVIDIA sherpa-onnx-nemo-parakeet..." or "Whisper base"
   speaker_model?: boolean; // the speaker-recognition model is downloaded
   voiceprint?: boolean; // the user's voice is enrolled: only it wakes JARVIS
 }
@@ -143,7 +146,9 @@ export const saveApiKey = (c: Connection, service: string, key: string) =>
   call<{ saved: string[] }>(c, "/api/apikeys", { method: "PUT", body: JSON.stringify({ service, key }) });
 export const deleteApiKey = (c: Connection, service: string) =>
   call<{ saved: string[] }>(c, `/api/apikeys/${encodeURIComponent(service)}`, { method: "DELETE" });
-export const speak = (c: Connection, text: string) => call<{ spoken: boolean }>(c, "/api/voice/speak", { method: "POST", body: JSON.stringify({ text }) });
+/** queue: follow on from what is already being said (a reply spoken sentence by sentence as it streams). */
+export const speak = (c: Connection, text: string, queue = false) =>
+  call<{ spoken: boolean }>(c, "/api/voice/speak", { method: "POST", body: JSON.stringify({ text, queue }) });
 export const stopSpeaking = (c: Connection) => call<{ stopped: boolean }>(c, "/api/voice/stop", { method: "POST", body: "{}" });
 
 /** A reply as it should sound: no markdown, links or lists; long answers trimmed at a sentence. */

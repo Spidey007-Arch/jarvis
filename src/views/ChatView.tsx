@@ -171,6 +171,34 @@ export default function ChatView({
     abort.current = ctrl;
     let failed = false;
     let full = "";
+    // JARVIS always answers out loud, typed or spoken: each sentence is spoken as soon as it has streamed in, instead of
+    // waiting for the whole reply. Code is left on screen, and a long answer stops after ~700 characters.
+    let said = 0;
+    let saidChars = 0;
+    let firstSpeech = true;
+    let speechOver = false;
+    const sayUpTo = (final: boolean) => {
+      if (speechOver || !conn) return;
+      const fence = full.indexOf("```");
+      const text = fence >= 0 ? full.slice(0, fence) : full;
+      const rest = text.slice(said);
+      let cut = final ? rest.length : 0;
+      if (!final) {
+        for (const m of rest.matchAll(/[.!?…](?=\s)|\n/g)) cut = (m.index ?? 0) + m[0].length;
+      }
+      if (cut <= 0) return;
+      said += cut;
+      let piece = forSpeech(rest.slice(0, cut));
+      if (final && fence >= 0) piece = `${piece} The code is on screen.`.trim();
+      if (!piece) return;
+      if (saidChars + piece.length > 700) {
+        piece = "The rest is on screen.";
+        speechOver = true;
+      }
+      saidChars += piece.length;
+      speak(conn, piece, !firstSpeech).catch((e) => setNotice({ tone: "warn", text: `Could not speak the reply: ${(e as Error).message}` }));
+      firstSpeech = false;
+    };
     // Replies are revealed word by word at a natural pace; the orb pulses with each word.
     let buffer = "";
     let timer: number | undefined;
@@ -203,6 +231,7 @@ export default function ChatView({
         notice: (d) => setNotice({ tone: "warn", text: d.message }),
         delta: (d) => {
           full += d.text;
+          sayUpTo(false);
           buffer += d.text;
           if (timer === undefined) timer = window.setInterval(pump, 35);
         },
@@ -242,10 +271,7 @@ export default function ChatView({
       abort.current = null;
       onActivity(failed ? "error" : "idle");
       onConversation(ownConversation.current, true);
-      // Spoken to, so answer out loud.
-      if (spoken !== undefined && !failed && !ctrl.signal.aborted && full.trim()) {
-        speak(conn, forSpeech(full)).catch((e) => setNotice({ tone: "warn", text: `Could not speak the reply: ${(e as Error).message}` }));
-      }
+      if (!failed && !ctrl.signal.aborted && full.trim()) sayUpTo(true);
       if (typing) box.current?.focus();
     }
   };

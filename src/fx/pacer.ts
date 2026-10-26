@@ -10,7 +10,7 @@ let boostUntil = 0;
 const boost = () => {
   boostUntil = performance.now() + BOOST_MS;
 };
-for (const ev of ["pointermove", "pointerdown", "keydown", "jarvis:send", "jarvis:pulse"]) {
+for (const ev of ["pointermove", "pointerdown", "keydown", "jarvis:send", "jarvis:pulse", "jarvis:levels"]) {
   window.addEventListener(ev, boost, { passive: true });
 }
 

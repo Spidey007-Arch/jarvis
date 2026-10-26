@@ -60,7 +60,7 @@ class AgentBridge:
 
     def voice_event(self, msg: dict[str, Any]) -> None:
         self._voice_seq += 1
-        self.voice_events = (self.voice_events + [{**{k: v for k, v in msg.items() if k != "type"}, "seq": self._voice_seq, "at": time.time()}])[-50:]
+        self.voice_events = (self.voice_events + [{**{k: v for k, v in msg.items() if k != "type"}, "seq": self._voice_seq, "at": time.time()}])[-200:]
         self._voice_changed.set()
         self._voice_changed = asyncio.Event()
 

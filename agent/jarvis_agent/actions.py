@@ -456,7 +456,7 @@ _LIVE: live_audio.LiveAudio | None = None
 
 def attach_live(send: Any) -> live_audio.LiveAudio:
     global _LIVE
-    _LIVE = live_audio.LiveAudio(send)
+    _LIVE = live_audio.LiveAudio(send, voice.instance().levels)
     voice.instance().live_busy = lambda: _LIVE.mic_on if _LIVE else False
     voice.instance().live_talking = lambda: _LIVE.talking if _LIVE else False
     voice.instance().on_barge = lambda: _LIVE.flush() if _LIVE else None
@@ -477,13 +477,15 @@ def voice_status(_: dict[str, Any]) -> dict[str, Any]:
 
     v = voice.instance()
     sv = speaker.verifier()
-    return {"enabled": v.enabled, **voice.prepare(), "speaker_model": sv is not None, "voiceprint": bool(sv and sv.enrolled)}
+    from . import asr
+
+    return {"enabled": v.enabled, **voice.prepare(), **asr.status(), "speaker_model": sv is not None, "voiceprint": bool(sv and sv.enrolled)}
 
 
 @action
 def speak(args: dict[str, Any]) -> dict[str, Any]:
     try:
-        return voice.instance().speak(_str(args, "text"))
+        return voice.instance().speak(_str(args, "text"), bool(args.get("queue")))
     except RuntimeError as e:
         raise ActionError(f"Could not speak: {e}") from e
 
@@ -492,8 +494,8 @@ def speak(args: dict[str, Any]) -> dict[str, Any]:
 def listen_now(_: dict[str, Any]) -> dict[str, Any]:
     """Push-to-talk: start taking a request now, without the wake word."""
     setup = voice.prepare()
-    if not setup["whisper"] or voice.FILES["whisper_model"] in setup["missing"]:
-        raise ActionError("Whisper is not installed yet, so JARVIS cannot listen. See Settings > Voice.")
+    if (not setup["whisper"] or voice.FILES["whisper_model"] in setup["missing"]) and not voice.asr_ready():
+        raise ActionError("No speech recognizer is installed yet, so JARVIS cannot listen. See Settings > Voice.")
     voice.instance().on_wake(1.0, by_voice=False)  # the user pressed the button: no voice check needed
     return {"listening": True}
 

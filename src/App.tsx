@@ -164,6 +164,11 @@ function VoiceLink({ conn, onState, onTurn }: { conn: Connection | null; onState
         }
         for (const e of events) {
           after = Math.max(after, e.seq);
+          if (e.event === "levels") {
+            // the voice's loudness, 50 ms apart: the arc reactor pulses with it
+            window.dispatchEvent(new CustomEvent("jarvis:levels", { detail: { who: e.who, v: e.v } }));
+            continue;
+          }
           if (e.event === "listening") {
             setHeard(null);
             setNote(null);
