@@ -16,7 +16,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
-from . import briefing, public_apis
+from . import briefing, permissions, public_apis
 from .db import DB
 from .extraction import EXTRACT_SCHEMA, extract_prompt
 from .bridge import AgentBridge, AgentError, AgentUnavailable
@@ -69,11 +69,7 @@ TOOL_SCHEMAS = [t.schema() for t in TOOLS]
 OFFLINE_FOR_S = 30 * 60  # after Live proves too slow, use the offline voice this long before trying Live again
 audit = logging.getLogger("jarvis.automation")
 
-# A click on a control like these needs the user's Allow first (and cannot happen from a voice session).
-RISKY_CLICK = re.compile(
-    r"\b(send|pay|payment|buy|purchase|order|checkout|check out|delete|remove|uninstall|erase|format|wipe|submit|post|publish|tweet|"
-    r"transfer|withdraw|confirm|accept|agree|allow|grant|sign ?out|log ?out|shut ?down|restart|discard|unsubscribe|reset|install|"
-    r"forward|reply all|empty trash|clear (all|history|data))\b", re.I)
+RISKY_CLICK = permissions.RISKY_CLICK
 
 LOCATE_PROMPT = (
     'You are looking at a screenshot of the user\'s Windows desktop. Find this on it: "{target}".\n'
@@ -84,38 +80,13 @@ LOCATE_PROMPT = (
 )
 
 
-# Commands that remove, uninstall, end or reset something: the user says yes first, even with Full control.
-DANGER_COMMAND = re.compile(
-    r"(remove-item|\b(rm|rmdir|rd|del|erase|ri)\b|uninstall|stop-process|\bkill\b|taskkill|stop-service|disable-|restart-computer|"
-    r"stop-computer|shutdown|logoff|reg(\.exe)?\s+(delete|add)|set-itemproperty|remove-itemproperty|netsh|set-executionpolicy|"
-    r"git\s+(push\b.*(\s-f\b|--force)|reset\s+--hard|clean\s+-[a-z]*f)|drop\s+(table|database)|truncate\s+table|"
-    r"clear-recyclebin|format-volume)", re.I)
-
-
 SPOKEN_YES = re.compile(r"\b(yes|yeah|yep|yup|sure|do it|go ahead|go for it|confirm(ed)?|haan|han|ha|okay|ok|proceed|please do|absolutely)\b", re.I)
 SPOKEN_NO = re.compile(r"\b(no|nope|don'?t|stop|cancel|wait|nahi|mat|never ?mind)\b", re.I)
 
 
-def needs_approval(spec: ToolSpec, args: dict[str, Any], full_control: bool = False) -> bool:
-    """Whether the user must say yes before this runs. With Full control (the owner's own PC) only destructive or
-    irreversible steps ask; without it (the default for anyone else's install) every change asks."""
-    if spec.risk == "danger":
-        return True
-    if spec.name == "screen_click" and RISKY_CLICK.search(str(args.get("target", ""))):
-        return True
-    if spec.name == "click_text" and RISKY_CLICK.search(str(args.get("text", ""))):
-        return True
-    if spec.name == "autostart" and str(args.get("action", "status")).lower() != "status":
-        return not full_control  # a lasting change to how Windows starts
-    if spec.name == "window_control" and str(args.get("action", "")).lower() == "close":
-        return not full_control  # the app may lose unsaved work (it usually asks first)
-    if spec.name == "run_command" and DANGER_COMMAND.search(str(args.get("command", ""))):
-        return True
-    if spec.risk == "confirm":
-        if spec.name == "organize_folder" and args.get("dry_run", True) is not False:
-            return False  # a dry run only reports a plan
-        return not full_control
-    return False
+def needs_approval(spec: ToolSpec, args: dict[str, Any], full_control: bool = False, saved: dict[str, str] | None = None) -> bool:
+    """Whether the user must say yes before this runs (see permissions.py)."""
+    return permissions.decide(spec, args, saved, full_control)[0] == "ask"
 
 
 def _trim(value: Any, limit: int = 6000) -> Any:
@@ -155,6 +126,7 @@ class SettingsIn(BaseModel):
     proactive_alerts: bool | None = None
     startup_briefing: bool | None = None
     full_control: bool | None = None
+    permissions: dict[str, str] | None = None
     provider: str | None = None
     api_key: str | None = Field(default=None, max_length=300)
     base_url: str | None = Field(default=None, max_length=300)
@@ -233,7 +205,12 @@ def build_router(svc: Services, require_auth: Callable[..., None]) -> APIRouter:
     async def put_settings(body: SettingsIn) -> dict[str, Any]:
         changes = body.model_dump(exclude_unset=True)
         profile = {k: changes.pop(k) for k in ("user_name", "address", "proactive_alerts", "startup_briefing",
-                                                   "full_control") if k in changes}
+                                                   "full_control", "permissions") if k in changes}
+        if "permissions" in profile:
+            bad = {k: v for k, v in (profile["permissions"] or {}).items() if k not in permissions.CAPABILITIES or v not in permissions.POLICIES}
+            if bad:
+                raise HTTPException(status_code=400, detail=f"Unknown permission or policy: {bad}")
+            profile["permissions"] = {**(svc.settings.get("permissions") or {}), **profile["permissions"]}
         if profile:
             svc.settings.update_profile(profile)
 
@@ -494,7 +471,11 @@ def build_router(svc: Services, require_auth: Callable[..., None]) -> APIRouter:
             entry.update(status=status, **extra)
             queue.put_nowait(("tool", dict(entry)))
 
-        if needs_approval(spec, args, bool(svc.settings.get("full_control"))):
+        decision, cap = permissions.decide(spec, args, svc.settings.get("permissions"), bool(svc.settings.get("full_control")))
+        if decision == "block":
+            emit("declined", error="blocked in Settings")
+            return {"ok": False, "error": permissions.blocked_message(cap)}
+        if decision == "ask":
             fut: asyncio.Future = asyncio.get_running_loop().create_future()
             pending_confirmations[cid] = fut
             emit("awaiting_confirmation", detail=json.dumps(args, ensure_ascii=False))
@@ -539,7 +520,10 @@ def build_router(svc: Services, require_auth: Callable[..., None]) -> APIRouter:
         spec = BY_NAME.get(name)
         if spec is None:
             return {"ok": False, "error": f"There is no tool named '{name}'."}
-        if needs_approval(spec, args, bool(svc.settings.get("full_control"))):
+        decision, cap = permissions.decide(spec, args, svc.settings.get("permissions"), bool(svc.settings.get("full_control")))
+        if decision == "block":
+            return {"ok": False, "error": permissions.blocked_message(cap)}
+        if decision == "ask":
             key = call_key(ToolCall(id="", name=name, args=args))
             asked = voice_pending.get(key)
             heard = svc.live.heard if svc.live else ""
@@ -783,6 +767,10 @@ def build_router(svc: Services, require_auth: Callable[..., None]) -> APIRouter:
             return await svc.bridge.call("voice_forget", timeout=10)
         except (AgentUnavailable, AgentError) as e:
             raise HTTPException(status_code=503, detail=str(e)) from e
+
+    @r.get("/permissions")
+    async def get_permissions() -> list[dict[str, Any]]:
+        return permissions.overview(svc.settings.get("permissions"), bool(svc.settings.get("full_control")))
 
     @r.get("/apikeys")
     async def api_keys() -> dict[str, Any]:

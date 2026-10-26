@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import ApiKeysCard from "./ApiKeysCard";
+import PermissionsCard from "./PermissionsCard";
 import { ApiError, ModelInfo, ProviderPreset, Settings, SettingsUpdate, VoiceStatus, enrollVoice, forgetVoice, getModels, getProviders, getSettings, getVoice, putSettings, setVoice, setVoiceMode } from "../api";
 import type { Connection } from "../shell";
 
@@ -287,6 +288,7 @@ export default function SettingsView({ conn, onChanged }: { conn: Connection | n
           )}
           <Note k="voice" />
         </section>
+        <PermissionsCard conn={conn} fullControl={!!s.full_control} onChanged={() => { onChanged(); load(); }} />
         <ApiKeysCard conn={conn} />
         <section className="card">
           <h2>Models</h2>
@@ -366,20 +368,6 @@ export default function SettingsView({ conn, onChanged }: { conn: Connection | n
               }
             />
             <span>Start-up briefing: system health, open apps and processes, spoken when JARVIS opens</span>
-          </label>
-          <label className="switch">
-            <input
-              type="checkbox"
-              checked={!!s.full_control}
-              disabled={busy}
-              onChange={(e) =>
-                save("profile", { full_control: e.target.checked },
-                  e.target.checked
-                    ? "Full control is on: JARVIS runs commands, edits files and manages processes without asking. Deleting, uninstalling, killing, power and sending still ask."
-                    : "Full control is off: JARVIS asks before every change.")
-              }
-            />
-            <span>Full control of this PC (only on your own PC): run commands, write and edit files, manage processes without asking each time</span>
           </label>
           <div className="field-row">
             <button

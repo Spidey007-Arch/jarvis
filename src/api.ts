@@ -28,6 +28,7 @@ export interface Settings {
   proactive_alerts: boolean;
   startup_briefing: boolean;
   full_control: boolean;
+  permissions: Record<string, Policy>;
   provider: string;
   base_url: string;
   chat_model: string;
@@ -57,7 +58,7 @@ export interface ModelInfo {
   kind: "chat" | "embed";
 }
 
-export type SettingsUpdate = Partial<Pick<Settings, "user_name" | "address" | "proactive_alerts" | "startup_briefing" | "full_control" | "provider" | "base_url" | "chat_model" | "embed_model">> & {
+export type SettingsUpdate = Partial<Pick<Settings, "user_name" | "address" | "proactive_alerts" | "startup_briefing" | "full_control" | "permissions" | "provider" | "base_url" | "chat_model" | "embed_model">> & {
   api_key?: string;
 };
 
@@ -142,6 +143,15 @@ export interface ApiKeys {
   catalog: number; // how many APIs JARVIS can call
   need_key: string[]; // APIs that take an API key, for the name picker
 }
+export type Policy = "allow" | "ask" | "block";
+export interface Permission {
+  id: string;
+  label: string;
+  locked: boolean; // can be blocked, never allowed without asking
+  policy: Policy;
+}
+export const getPermissions = (c: Connection) => call<Permission[]>(c, "/api/permissions");
+
 export const getApiKeys = (c: Connection) => call<ApiKeys>(c, "/api/apikeys");
 export const saveApiKey = (c: Connection, service: string, key: string) =>
   call<{ saved: string[] }>(c, "/api/apikeys", { method: "PUT", body: JSON.stringify({ service, key }) });
