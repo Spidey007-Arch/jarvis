@@ -136,12 +136,21 @@ class SettingsIn(BaseModel):
     full_control: bool | None = None
     presence_greetings: bool | None = None
     followups: bool | None = None
+    onboarded: bool | None = None
     permissions: dict[str, str] | None = None
     provider: str | None = None
     api_key: str | None = Field(default=None, max_length=300)
     base_url: str | None = Field(default=None, max_length=300)
     chat_model: str | None = None
     embed_model: str | None = None
+
+
+class ModelTestIn(BaseModel):
+    model: str = Field(min_length=1, max_length=200)
+
+
+class AutostartIn(BaseModel):
+    enabled: bool
 
 
 class ConfirmIn(BaseModel):
@@ -215,7 +224,7 @@ def build_router(svc: Services, require_auth: Callable[..., None]) -> APIRouter:
     async def put_settings(body: SettingsIn) -> dict[str, Any]:
         changes = body.model_dump(exclude_unset=True)
         profile = {k: changes.pop(k) for k in ("user_name", "address", "proactive_alerts", "startup_briefing",
-                                                   "full_control", "permissions", "presence_greetings", "followups") if k in changes}
+                                                   "full_control", "permissions", "presence_greetings", "followups", "onboarded") if k in changes}
         if "permissions" in profile:
             bad = {k: v for k, v in (profile["permissions"] or {}).items() if k not in permissions.CAPABILITIES or v not in permissions.POLICIES}
             if bad:
@@ -286,6 +295,27 @@ def build_router(svc: Services, require_auth: Callable[..., None]) -> APIRouter:
         except LLMError as e:
             raise HTTPException(status_code=502, detail=str(e)) from e
         return {"chat": [m for m in ms if m["kind"] == "chat"], "embed": [m for m in ms if m["kind"] == "embed"]}
+
+    @r.get("/models/status")
+    async def models_status() -> dict[str, Any]:
+        """Chat models with whether JARVIS is avoiding them right now, and today's use."""
+        try:
+            ms = [m for m in await svc.llm.list_models() if m["kind"] == "chat"]
+        except LLMNotConfigured as e:
+            raise HTTPException(status_code=409, detail=str(e)) from e
+        except LLMError as e:
+            raise HTTPException(status_code=502, detail=str(e)) from e
+        try:
+            used = {u["model"]: u for u in (await svc.llm.quota_view()).get("models", [])}
+        except Exception:  # noqa: BLE001 - usage is optional here
+            used = {}
+        return {"current": svc.llm.chat_model, "models": [
+            {"name": m["name"], "display_name": m.get("display_name", m["name"]), **svc.llm.model_state(m["name"]),
+             "used_today": used.get(m["name"], {}).get("used")} for m in ms]}
+
+    @r.post("/models/test")
+    async def models_test(body: ModelTestIn) -> dict[str, Any]:
+        return await svc.llm.test_model(body.model)
 
     # ---------------- conversations ----------------
 
@@ -862,6 +892,21 @@ def build_router(svc: Services, require_auth: Callable[..., None]) -> APIRouter:
     async def stop_all() -> dict[str, Any]:
         await _emergency_stop()
         return {"stopped": True}
+
+    @r.get("/autostart")
+    async def autostart_status() -> dict[str, Any]:
+        try:
+            return await svc.bridge.call("autostart", {"action": "status"}, timeout=15)
+        except (AgentUnavailable, AgentError) as e:
+            raise HTTPException(status_code=503, detail=str(e)) from e
+
+    @r.put("/autostart")
+    async def autostart_set(body: AutostartIn) -> dict[str, Any]:
+        """The user's own switch in Settings, so no approval prompt."""
+        try:
+            return await svc.bridge.call("autostart", {"action": "enable" if body.enabled else "disable"}, timeout=15)
+        except (AgentUnavailable, AgentError) as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
 
     @r.get("/skills")
     async def list_skills() -> list[dict[str, Any]]:

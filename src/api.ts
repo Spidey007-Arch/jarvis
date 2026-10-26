@@ -29,6 +29,7 @@ export interface Settings {
   startup_briefing: boolean;
   full_control: boolean;
   presence_greetings: boolean;
+  onboarded: boolean;
   followups: boolean;
   permissions: Record<string, Policy>;
   provider: string;
@@ -60,7 +61,7 @@ export interface ModelInfo {
   kind: "chat" | "embed";
 }
 
-export type SettingsUpdate = Partial<Pick<Settings, "user_name" | "address" | "proactive_alerts" | "startup_briefing" | "full_control" | "permissions" | "presence_greetings" | "followups" | "provider" | "base_url" | "chat_model" | "embed_model">> & {
+export type SettingsUpdate = Partial<Pick<Settings, "user_name" | "address" | "proactive_alerts" | "startup_briefing" | "full_control" | "permissions" | "presence_greetings" | "followups" | "onboarded" | "provider" | "base_url" | "chat_model" | "embed_model">> & {
   api_key?: string;
 };
 
@@ -164,6 +165,22 @@ export interface TaskOffer {
 export const getTask = (c: Connection) => call<{ task: TaskView | null; offer: TaskOffer | null }>(c, "/api/task");
 export const controlTask = (c: Connection, id: string, what: string) =>
   call<Partial<TaskView> & { prompt?: string }>(c, `/api/task/${encodeURIComponent(id)}/${what}`, { method: "POST" });
+
+export const getAutostart = (c: Connection) => call<{ starts_with_windows: boolean }>(c, "/api/autostart");
+export const setAutostart = (c: Connection, enabled: boolean) =>
+  call<{ starts_with_windows: boolean }>(c, "/api/autostart", { method: "PUT", body: JSON.stringify({ enabled }) });
+export const stopEverything = (c: Connection) => call<{ stopped: boolean }>(c, "/api/stop-all", { method: "POST" });
+
+export interface ModelStatus {
+  name: string;
+  display_name: string;
+  cooling_s: number;
+  recent_failures: number;
+  used_today?: number | null;
+}
+export const getModelStatus = (c: Connection) => call<{ current: string; models: ModelStatus[] }>(c, "/api/models/status");
+export const testModel = (c: Connection, model: string) =>
+  call<{ model: string; ok: boolean; ms?: number; error?: string }>(c, "/api/models/test", { method: "POST", body: JSON.stringify({ model }) });
 
 export type Policy = "allow" | "ask" | "block";
 export interface Permission {

@@ -5,6 +5,8 @@ import { useTelemetry } from "./telemetry";
 import { Connection, Overall, ShellStatus, getConnection, getStatus, insideShell, onStatus } from "./shell";
 import { Quota, VoiceEvent, getQuota, getSettings, getVoiceEvents, getVoiceSeq, startBriefing, stopSpeaking } from "./api";
 import TaskPanel from "./views/TaskPanel";
+import ModelPicker from "./views/ModelPicker";
+import Onboarding from "./views/Onboarding";
 import ChatView from "./views/ChatView";
 import HistoryPanel from "./views/HistoryPanel";
 import MemoryView from "./views/MemoryView";
@@ -348,6 +350,7 @@ export default function App() {
             <Gauge label="RAM" value={s.ram_percent} />
             <Gauge label="DISK" value={s.disk_percent ?? undefined} />
           </div>
+          <ModelPicker conn={conn} onChanged={() => setReload((n) => n + 1)} />
           <QuotaStrip conn={conn} activity={coreActivity} />
         </div>
       </header>
@@ -376,6 +379,7 @@ export default function App() {
 
       <main className="front">
         <TaskPanel conn={conn} />
+        <Onboarding conn={conn} onChanged={() => setReload((n) => n + 1)} />
         <ChatView
           conn={conn}
           configured={configured}

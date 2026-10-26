@@ -169,6 +169,25 @@ class LLM:
 
     # ---------- fallback ----------
 
+    def model_state(self, name: str) -> dict[str, Any]:
+        """Whether JARVIS is avoiding a model right now (it failed recently) and for how long."""
+        left = self._cooldown.get(name, 0) - time.monotonic()
+        return {"cooling_s": max(0, round(left)), "recent_failures": self._failures.get(name, 0)}
+
+    async def test_model(self, name: str) -> dict[str, Any]:
+        """One tiny request to a specific model: does it answer, and how fast."""
+        p = self.provider()
+        start = time.monotonic()
+        try:
+            await _timed(p.generate_json(name, 'Reply with {"ok": "yes"}.', {"type": "object", "properties": {"ok": {"type": "string"}},
+                                                                             "required": ["ok"]}), 30.0)
+        except ProviderError as e:
+            if e.transient:
+                self._cool(name, e)
+            return {"model": name, "ok": False, "error": str(describe(e, self.provider_id, name))}
+        self._ok(name)
+        return {"model": name, "ok": True, "ms": round((time.monotonic() - start) * 1000)}
+
     def _available(self, names: list[str]) -> list[str]:
         now = time.monotonic()
         ready = [n for n in names if self._cooldown.get(n, 0) <= now]

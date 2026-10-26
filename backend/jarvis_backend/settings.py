@@ -27,6 +27,7 @@ DEFAULTS: dict[str, Any] = {
     "proactive_alerts": True,
     "voice_enabled": True,
     "startup_briefing": True,  # JARVIS speaks first on launch: system health, open apps and processes
+    "onboarded": False,  # the first-run setup was finished (or skipped); existing installs with a key count as done
     "presence_greetings": True,  # welcome the user back after they have been away a while
     "followups": True,  # follow up on its own on a conversation left hanging (initiative.py)
     "permissions": {},  # capability -> allow | ask | block (permissions.py); unset ones follow full_control
@@ -37,7 +38,7 @@ DEFAULTS: dict[str, Any] = {
     "secrets": {},
 }
 PROFILE_FIELDS = ("user_name", "address", "proactive_alerts", "voice_enabled", "voice_mode", "startup_briefing",
-                  "full_control", "permissions", "presence_greetings", "followups")
+                  "full_control", "permissions", "presence_greetings", "followups", "onboarded")
 PROVIDER_FIELDS = ("chat_model", "embed_model", "base_url")
 
 
@@ -168,6 +169,7 @@ class SettingsStore:
         with self._lock:
             keyed = sorted(k.split(":", 1)[1] for k in self._data["secrets"] if k.startswith("api_key:"))
             profile = {k: self._data.get(k, DEFAULTS.get(k)) for k in PROFILE_FIELDS}
+        profile["onboarded"] = bool(profile.get("onboarded")) or bool(keyed) or bool(cfg["chat_model"])
         return {
             **profile,
             "provider": pid,

@@ -15,7 +15,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
@@ -30,6 +30,9 @@ const AGENT_CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
 /// is busy, not dead: only restart it after this many consecutive unanswered checks (~1 minute).
 const HEALTH_FAILURES_BEFORE_RESTART: u32 = 15;
 const HEALTH_TIMEOUT: Duration = Duration::from_secs(3);
+/// A visible window that hasn't checked in with the backend for this long is frozen or blank: reload it.
+const UI_SILENT_RELOAD_S: f64 = 45.0;
+const UI_RELOADS_PER_MIN: usize = 3;
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct ConnInfo {
@@ -58,6 +61,7 @@ pub struct Status {
 struct Health {
     pid: u32,
     agent_connected: bool,
+    ui_age_s: Option<f64>,
 }
 
 pub struct Supervisor {
@@ -174,6 +178,7 @@ impl Supervisor {
         let mut agent_restarts: Vec<Instant> = Vec::new();
         let mut bad_health: u32 = 0;
         let mut agent_wait_since: Option<Instant> = None;
+        let mut ui_reloads: Vec<Instant> = Vec::new();
 
         while !self.shutdown_flag.load(Ordering::SeqCst) {
             if self.restart_requested.swap(false, Ordering::SeqCst) {
@@ -253,6 +258,7 @@ impl Supervisor {
                     match self.health(info.port) {
                         Some(h) if h.pid == info.pid => {
                             bad_health = 0;
+                            self.watch_window(&app, h.ui_age_s, &mut ui_reloads);
                             self.set(&app, |s| {
                                 s.backend = "online".into();
                                 s.ever_online = true;
@@ -505,6 +511,28 @@ impl Supervisor {
         }
     }
 
+    /// Reload the window if it is on screen but has stopped checking in (frozen, blank or never loaded).
+    /// Hidden or minimized windows are left alone: Windows slows their timers on purpose.
+    fn watch_window(&self, app: &AppHandle, ui_age_s: Option<f64>, reloads: &mut Vec<Instant>) {
+        let Some(age) = ui_age_s else { return };
+        if age < UI_SILENT_RELOAD_S {
+            return;
+        }
+        let Some(w) = app.get_webview_window("main") else { return };
+        if !w.is_visible().unwrap_or(false) || w.is_minimized().unwrap_or(true) {
+            return;
+        }
+        reloads.retain(|t| t.elapsed() < Duration::from_secs(60));
+        if reloads.len() >= UI_RELOADS_PER_MIN {
+            return;
+        }
+        reloads.push(Instant::now());
+        self.log_error("crash", &format!("window silent for {age:.0}s while visible; reloading it"));
+        if w.reload().is_err() {
+            let _ = w.eval("window.location.reload()");
+        }
+    }
+
     // ---------- health ----------
 
     fn health(&self, port: u16) -> Option<Health> {
@@ -516,6 +544,7 @@ impl Supervisor {
         Some(Health {
             pid: v.get("pid")?.as_u64()? as u32,
             agent_connected: v.get("agent_connected").and_then(|x| x.as_bool()).unwrap_or(false),
+            ui_age_s: v.get("ui_age_s").and_then(|x| x.as_f64()),
         })
     }
 

@@ -9,6 +9,7 @@ import os
 import secrets
 import time
 from contextlib import asynccontextmanager
+from datetime import datetime
 from typing import Any
 
 import psutil
@@ -55,6 +56,7 @@ def create_app(port: int, token: str | None = None) -> FastAPI:
     token = token or secrets.token_urlsafe(32)
     bridge = AgentBridge()
     started = time.monotonic()
+    ui_seen: dict[str, float] = {"at": 0.0}  # when the window last checked in (POST /ui/alive)
     parent_pid = int(os.environ.get("JARVIS_PARENT_PID", "0") or 0)
 
     async def watch_parent(app: FastAPI) -> None:
@@ -153,7 +155,24 @@ def create_app(port: int, token: str | None = None) -> FastAPI:
             "uptime_s": round(time.monotonic() - started, 1),
             "agent_connected": bridge.connected,
             "agent_heartbeat_age_s": bridge.heartbeat_age,
+            # How long since the window last checked in; the shell reloads a window that stays silent.
+            "ui_age_s": round(time.monotonic() - ui_seen["at"], 1) if ui_seen["at"] else None,
         }
+
+    @app.post("/ui/alive", dependencies=[Depends(require_auth)])
+    async def ui_alive() -> dict[str, bool]:
+        ui_seen["at"] = time.monotonic()
+        return {"ok": True}
+
+    @app.post("/ui/error", dependencies=[Depends(require_auth)])
+    async def ui_error(body: dict[str, Any]) -> dict[str, bool]:
+        """A page error in the window: written to logs/crash.log (keys never reach the window, so none can leak here)."""
+        line = json.dumps({"at": datetime.now().isoformat(timespec="seconds"), "message": str(body.get("message", ""))[:500],
+                           "stack": str(body.get("stack", ""))[:2000], "where": str(body.get("where", ""))[:100]})
+        with open(logs_dir() / "crash.log", "a", encoding="utf-8") as f:
+            f.write(line + "\n")
+        log.error("window error: %s", str(body.get("message", ""))[:200])
+        return {"ok": True}
 
     @app.post("/shutdown", dependencies=[Depends(require_auth)])
     async def shutdown() -> dict[str, bool]:

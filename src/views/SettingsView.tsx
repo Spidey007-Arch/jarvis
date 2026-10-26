@@ -1,10 +1,21 @@
 import { useCallback, useEffect, useState } from "react";
 import ApiKeysCard from "./ApiKeysCard";
 import PermissionsCard from "./PermissionsCard";
+import SystemCard from "./SystemCard";
 import { ApiError, ModelInfo, ProviderPreset, Settings, SettingsUpdate, VoiceStatus, enrollVoice, forgetVoice, getModels, getProviders, getSettings, getVoice, putSettings, setVoice, setVoiceMode } from "../api";
 import type { Connection } from "../shell";
 
 type Note = { tone: "ok" | "bad"; text: string } | null;
+type Tab = "general" | "ai" | "voice" | "permissions" | "keys" | "system";
+const TABS: { id: Tab; label: string }[] = [
+  { id: "general", label: "General" },
+  { id: "ai", label: "AI & models" },
+  { id: "voice", label: "Voice" },
+  { id: "permissions", label: "PC control & safety" },
+  { id: "keys", label: "API keys" },
+  { id: "system", label: "System" },
+];
+const TAB_KEY = "jarvis.settingsTab";
 type Section = "provider" | "model" | "profile" | "voice";
 
 export default function SettingsView({ conn, onChanged }: { conn: Connection | null; onChanged: () => void }) {
@@ -21,6 +32,22 @@ export default function SettingsView({ conn, onChanged }: { conn: Connection | n
   const [voice, setVoiceStatus] = useState<VoiceStatus | null>(null);
   const [voiceBusy, setVoiceBusy] = useState(false);
   const note = (k: Section, n: Note) => setNotes((prev) => ({ ...prev, [k]: n }));
+  const [tab, setTab] = useState<Tab>(() => {
+    try {
+      const t = localStorage.getItem(TAB_KEY) as Tab | null;
+      return t && TABS.some((x) => x.id === t) ? t : "general";
+    } catch {
+      return "general";
+    }
+  });
+  const pick = (t: Tab) => {
+    setTab(t);
+    try {
+      localStorage.setItem(TAB_KEY, t);
+    } catch {
+      /* remembered for this visit only */
+    }
+  };
 
   const preset = presets.find((p) => p.id === s?.provider);
   const connected = !!s?.ready;
@@ -132,277 +159,294 @@ export default function SettingsView({ conn, onChanged }: { conn: Connection | n
   const Note = ({ k }: { k: Section }) => (notes[k] ? <p className={notes[k]!.tone}>{notes[k]!.text}</p> : null);
 
   return (
-    <div className="settings">
-      {s.load_error && <div className="banner bad">{s.load_error}</div>}
-
-      <section className="card provider-card">
-        <h2>AI provider</h2>
-        <p className="dim small">Bring your own key. Keys are encrypted with Windows DPAPI and never leave this PC except to call the provider.</p>
-        <div className="providers" role="radiogroup" aria-label="AI provider">
-          {shown.map((p) => (
-            <button
-              key={p.id}
-              role="radio"
-              aria-checked={p.id === s.provider}
-              className={`prov ${p.id === s.provider ? "on" : ""} ${p.featured ? "featured" : ""}`}
-              disabled={busy}
-              onClick={() => p.id !== s.provider && save("provider", { provider: p.id }, `Switched to ${p.name}.`, true)}
-            >
-              <span>
-                {p.featured && <b className="star">★</b>}
-                {p.name}
-                {p.badge && <em className="badge">{p.badge}</em>}
-              </span>
-              {s.providers_with_keys.includes(p.id) && <i title="Key saved">●</i>}
-            </button>
-          ))}
-        </div>
-        {hidden.length > 0 && (
-          <details className="more-providers">
-            <summary>Use another provider</summary>
-            <select
-              value=""
-              disabled={busy}
-              aria-label="Other AI providers"
-              onChange={(e) => {
-                const p = presets.find((x) => x.id === e.target.value);
-                if (p) save("provider", { provider: p.id }, `Switched to ${p.name}. Paste its key below.`, true);
-              }}
-            >
-              <option value="">Choose…</option>
-              {hidden.map((p) => (
-                <option key={p.id} value={p.id}>{p.name}</option>
-              ))}
-            </select>
-          </details>
-        )}
-        <p className="dim small">{preset.key_hint}</p>
-
-        {showBaseUrl && (
-          <label>
-            <span>Base URL</span>
-            <input value={baseUrl} spellCheck={false} placeholder="https://…/v1" onChange={(e) => setBaseUrl(e.target.value)} />
-          </label>
-        )}
-        <div className="field-row">
-          {showKey && (
-            <input
-              type="password"
-              autoComplete="off"
-              spellCheck={false}
-              placeholder={
-                s.has_api_key
-                  ? `Key saved (${s.api_key_hint}). Paste a new one to replace it.`
-                  : preset.needs_key
-                    ? `Paste your ${preset.name} API key`
-                    : "API key (if the server needs one)"
-              }
-              value={key}
-              onChange={(e) => setKey(e.target.value)}
-              aria-label={`${preset.name} API key`}
-            />
-          )}
-          <button
-            disabled={!canConnect}
-            onClick={() => {
-              const body: SettingsUpdate = { provider: preset.id };
-              if (key.trim()) body.api_key = key.trim();
-              if (showBaseUrl) body.base_url = baseUrl.trim();
-              save("provider", body, `Connected to ${preset.name}.`, true);
-            }}
-          >
-            {busy ? "CONNECTING…" : "CONNECT"}
+    <div className="settings-shell">
+      <nav className="settings-nav" aria-label="Settings sections">
+        {TABS.map((t) => (
+          <button key={t.id} className={tab === t.id ? "on" : ""} aria-current={tab === t.id ? "page" : undefined} onClick={() => pick(t.id)}>
+            {t.label}
           </button>
-          {s.has_api_key && (
-            <button className="ghost" disabled={busy} onClick={() => save("provider", { api_key: "" }, "Key removed.", true)}>
-              REMOVE KEY
-            </button>
-          )}
-        </div>
-        <p className={connected ? "ok small" : "dim small"}>{connected ? `● Connected · ${s.chat_model}` : "○ Not connected yet"}</p>
-        <Note k="provider" />
-      </section>
-
-      <div className="settings-side">
-        <section className="card">
-          <h2>Voice</h2>
-          <label className="switch">
-            <input type="checkbox" checked={!!voice?.enabled} disabled={voiceBusy || !voice} onChange={(e) => toggleVoice(e.target.checked)} />
-            <span>Wake when I say “Jarvis” (e.g. “Jarvis, open Spotify”), then answer out loud</span>
-          </label>
-          <div className="chips" role="radiogroup" aria-label="Voice engine">
-            {(["live", "local"] as const).map((m) => (
-              <button
-                key={m}
-                role="radio"
-                aria-checked={(s.voice_mode ?? "live") === m}
-                className={(s.voice_mode ?? "live") === m ? "on" : ""}
-                disabled={voiceBusy}
-                onClick={async () => {
-                  if (!conn) return;
-                  await setVoiceMode(conn, m).catch((e) => note("voice", { tone: "bad", text: (e as Error).message }));
-                  setS({ ...s, voice_mode: m });
-                  note("voice", { tone: "ok", text: m === "live" ? "Live: natural speech-to-speech with Gemini (needs internet and your Gemini key)." : "Offline: Whisper listens and Piper speaks, all on this PC." });
-                }}
-              >
-                {m === "live" ? "Live (Gemini)" : "Offline"}
-              </button>
-            ))}
-          </div>
-          <p className="dim small">
-            {!voice
-              ? "Checking voice…"
-              : voice.ready
-                ? `Offline mode runs entirely on this PC: openWakeWord hears “Hey JARVIS”, ${voice.asr?.startsWith("NVIDIA") ? "NVIDIA Parakeet" : "Whisper"} turns speech into text, Piper speaks (British voice).`
-                : `Voice files still downloading or missing: ${voice.missing.join(", ") || "programs not unpacked yet"}.`}
-          </p>
-          {voice?.speaker_model && (
-            <div className="enroll">
-              <div className="enroll-head">
-                <strong>Only my voice</strong>
-                <span className={`badge ${voice.voiceprint ? "ok" : ""}`}>{voice.voiceprint ? "ON" : "NOT SET UP"}</span>
-              </div>
-              {enrolling > 0 ? (
-                <blockquote className="enroll-read">
-                  <span className="enroll-count">{enrolling}s · read this aloud, normally, close to the mic</span>
-                  The quick brown fox jumps over the lazy dog. I am setting up my assistant so that it listens to me and
-                  nobody else. Today I might ask it to check the weather, play some music, read my messages or open a file
-                  on my computer. One, two, three, four, five, six, seven, eight, nine, ten.
-                </blockquote>
-              ) : (
-                <p className="dim small">
-                  {voice.voiceprint
-                    ? "JARVIS answers only your voice: other people, the TV and background talk are ignored, even if they say “Jarvis”."
-                    : "Teach JARVIS your voice (15 seconds of reading aloud) so it ignores everyone else. Stays on this PC."}
-                </p>
-              )}
-              <div className="field-row">
-                <button disabled={enrolling > 0 || voiceBusy} onClick={teachVoice}>
-                  {enrolling > 0 ? "LISTENING…" : voice.voiceprint ? "RE-TEACH MY VOICE" : "TEACH JARVIS MY VOICE"}
-                </button>
-                {voice.voiceprint && enrolling === 0 && (
-                  <button className="ghost" onClick={forget}>FORGET</button>
-                )}
-              </div>
-            </div>
-          )}
-          <Note k="voice" />
-        </section>
-        <PermissionsCard conn={conn} fullControl={!!s.full_control} onChanged={() => { onChanged(); load(); }} />
-        <ApiKeysCard conn={conn} />
-        <section className="card">
-          <h2>Models</h2>
-          {!models ? (
-            <p className="dim">{loadingModels ? "Loading models…" : "Connect a provider first. The list comes from what your account can access."}</p>
-          ) : (
+        ))}
+      </nav>
+      <div className="settings">
+        {s.load_error && <div className="banner bad">{s.load_error}</div>}
+        {tab === "general" && (
+          <>
+          <section className="card">
+            <h2>How JARVIS addresses you</h2>
             <div className="grid2">
               <label>
-                <span>Chat model</span>
-                <select
-                  value={s.chat_model}
-                  disabled={busy}
-                  onChange={(e) => save("model", { chat_model: e.target.value }, `Chat model set to ${e.target.value}.`)}
-                >
-                  {!s.chat_model && <option value="">Choose…</option>}
-                  {models.chat.map((m) => (
-                    <option key={m.name} value={m.name}>
-                      {m.display_name === m.name ? m.name : `${m.display_name} (${m.name})`}
-                    </option>
-                  ))}
-                </select>
+                <span>Your name</span>
+                <input value={name} maxLength={80} onChange={(e) => setName(e.target.value)} />
               </label>
               <label>
-                <span>Memory search</span>
-                <select
-                  value={s.embed_model}
-                  disabled={busy}
-                  onChange={(e) =>
-                    save("model", { embed_model: e.target.value }, e.target.value ? `Embedding model set to ${e.target.value}.` : "Memory will use keyword search.")
-                  }
-                >
-                  <option value="">Keyword search (no embeddings)</option>
-                  {models.embed.map((m) => (
-                    <option key={m.name} value={m.name}>
-                      Semantic · {m.name}
-                    </option>
-                  ))}
-                </select>
+                <span>Form of address</span>
+                <input value={address} maxLength={40} placeholder="sir" onChange={(e) => setAddress(e.target.value)} />
               </label>
             </div>
-          )}
-          <Note k="model" />
-        </section>
+            <label className="switch">
+              <input
+                type="checkbox"
+                checked={s.proactive_alerts}
+                disabled={busy}
+                onChange={(e) =>
+                  save("profile", { proactive_alerts: e.target.checked },
+                    e.target.checked ? "JARVIS will speak up about low battery, a full drive or sustained overload." : "Proactive alerts are off.")
+                }
+              />
+              <span>Speak up proactively (low battery, full drive, sustained CPU or memory overload)</span>
+            </label>
+            <label className="switch">
+              <input
+                type="checkbox"
+                checked={s.startup_briefing}
+                disabled={busy}
+                onChange={(e) =>
+                  save("profile", { startup_briefing: e.target.checked },
+                    e.target.checked ? "JARVIS will brief you out loud each time it starts." : "Start-up briefing is off.")
+                }
+              />
+              <span>Start-up briefing: system health, open apps and processes, spoken when JARVIS opens</span>
+            </label>
+            <label className="switch">
+              <input
+                type="checkbox"
+                checked={s.presence_greetings ?? true}
+                disabled={busy}
+                onChange={(e) =>
+                  save("profile", { presence_greetings: e.target.checked },
+                    e.target.checked ? "JARVIS will welcome you back after you've been away." : "No welcome back.")
+                }
+              />
+              <span>Welcome me back after I've been away (uses mouse and keyboard idle time and screen lock, nothing else)</span>
+            </label>
+            <label className="switch">
+              <input
+                type="checkbox"
+                checked={s.followups ?? true}
+                disabled={busy}
+                onChange={(e) =>
+                  save("profile", { followups: e.target.checked },
+                    e.target.checked ? "JARVIS may follow up on a conversation left hanging (at most 3 times an hour)." : "No follow-ups.")
+                }
+              />
+              <span>Keep conversations going: follow up on an open question or unfinished thread, at most 3 times an hour</span>
+            </label>
+            <div className="field-row">
+              <button
+                disabled={busy || (name === s.user_name && address === s.address)}
+                onClick={() => save("profile", { user_name: name.trim(), address: address.trim() || "sir" }, "Saved.")}
+              >
+                SAVE
+              </button>
+            </div>
+            <Note k="profile" />
+          </section>
+          </>
+        )}
+        {tab === "ai" && (
+          <>
+          <section className="card provider-card">
+            <h2>AI provider</h2>
+            <p className="dim small">Bring your own key. Keys are encrypted with Windows DPAPI and never leave this PC except to call the provider.</p>
+            <div className="providers" role="radiogroup" aria-label="AI provider">
+              {shown.map((p) => (
+                <button
+                  key={p.id}
+                  role="radio"
+                  aria-checked={p.id === s.provider}
+                  className={`prov ${p.id === s.provider ? "on" : ""} ${p.featured ? "featured" : ""}`}
+                  disabled={busy}
+                  onClick={() => p.id !== s.provider && save("provider", { provider: p.id }, `Switched to ${p.name}.`, true)}
+                >
+                  <span>
+                    {p.featured && <b className="star">★</b>}
+                    {p.name}
+                    {p.badge && <em className="badge">{p.badge}</em>}
+                  </span>
+                  {s.providers_with_keys.includes(p.id) && <i title="Key saved">●</i>}
+                </button>
+              ))}
+            </div>
+            {hidden.length > 0 && (
+              <details className="more-providers">
+                <summary>Use another provider</summary>
+                <select
+                  value=""
+                  disabled={busy}
+                  aria-label="Other AI providers"
+                  onChange={(e) => {
+                    const p = presets.find((x) => x.id === e.target.value);
+                    if (p) save("provider", { provider: p.id }, `Switched to ${p.name}. Paste its key below.`, true);
+                  }}
+                >
+                  <option value="">Choose…</option>
+                  {hidden.map((p) => (
+                    <option key={p.id} value={p.id}>{p.name}</option>
+                  ))}
+                </select>
+              </details>
+            )}
+            <p className="dim small">{preset.key_hint}</p>
 
-        <section className="card">
-          <h2>How JARVIS addresses you</h2>
-          <div className="grid2">
-            <label>
-              <span>Your name</span>
-              <input value={name} maxLength={80} onChange={(e) => setName(e.target.value)} />
+            {showBaseUrl && (
+              <label>
+                <span>Base URL</span>
+                <input value={baseUrl} spellCheck={false} placeholder="https://…/v1" onChange={(e) => setBaseUrl(e.target.value)} />
+              </label>
+            )}
+            <div className="field-row">
+              {showKey && (
+                <input
+                  type="password"
+                  autoComplete="off"
+                  spellCheck={false}
+                  placeholder={
+                    s.has_api_key
+                      ? `Key saved (${s.api_key_hint}). Paste a new one to replace it.`
+                      : preset.needs_key
+                        ? `Paste your ${preset.name} API key`
+                        : "API key (if the server needs one)"
+                  }
+                  value={key}
+                  onChange={(e) => setKey(e.target.value)}
+                  aria-label={`${preset.name} API key`}
+                />
+              )}
+              <button
+                disabled={!canConnect}
+                onClick={() => {
+                  const body: SettingsUpdate = { provider: preset.id };
+                  if (key.trim()) body.api_key = key.trim();
+                  if (showBaseUrl) body.base_url = baseUrl.trim();
+                  save("provider", body, `Connected to ${preset.name}.`, true);
+                }}
+              >
+                {busy ? "CONNECTING…" : "CONNECT"}
+              </button>
+              {s.has_api_key && (
+                <button className="ghost" disabled={busy} onClick={() => save("provider", { api_key: "" }, "Key removed.", true)}>
+                  REMOVE KEY
+                </button>
+              )}
+            </div>
+            <p className={connected ? "ok small" : "dim small"}>{connected ? `● Connected · ${s.chat_model}` : "○ Not connected yet"}</p>
+            <Note k="provider" />
+          </section>
+          <section className="card">
+            <h2>Models</h2>
+            {!models ? (
+              <p className="dim">{loadingModels ? "Loading models…" : "Connect a provider first. The list comes from what your account can access."}</p>
+            ) : (
+              <div className="grid2">
+                <label>
+                  <span>Chat model</span>
+                  <select
+                    value={s.chat_model}
+                    disabled={busy}
+                    onChange={(e) => save("model", { chat_model: e.target.value }, `Chat model set to ${e.target.value}.`)}
+                  >
+                    {!s.chat_model && <option value="">Choose…</option>}
+                    {models.chat.map((m) => (
+                      <option key={m.name} value={m.name}>
+                        {m.display_name === m.name ? m.name : `${m.display_name} (${m.name})`}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  <span>Memory search</span>
+                  <select
+                    value={s.embed_model}
+                    disabled={busy}
+                    onChange={(e) =>
+                      save("model", { embed_model: e.target.value }, e.target.value ? `Embedding model set to ${e.target.value}.` : "Memory will use keyword search.")
+                    }
+                  >
+                    <option value="">Keyword search (no embeddings)</option>
+                    {models.embed.map((m) => (
+                      <option key={m.name} value={m.name}>
+                        Semantic · {m.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+            )}
+            <Note k="model" />
+          </section>
+          </>
+        )}
+        {tab === "voice" && (
+          <>
+          <section className="card">
+            <h2>Voice</h2>
+            <label className="switch">
+              <input type="checkbox" checked={!!voice?.enabled} disabled={voiceBusy || !voice} onChange={(e) => toggleVoice(e.target.checked)} />
+              <span>Wake when I say “Jarvis” (e.g. “Jarvis, open Spotify”), then answer out loud</span>
             </label>
-            <label>
-              <span>Form of address</span>
-              <input value={address} maxLength={40} placeholder="sir" onChange={(e) => setAddress(e.target.value)} />
-            </label>
-          </div>
-          <label className="switch">
-            <input
-              type="checkbox"
-              checked={s.proactive_alerts}
-              disabled={busy}
-              onChange={(e) =>
-                save("profile", { proactive_alerts: e.target.checked },
-                  e.target.checked ? "JARVIS will speak up about low battery, a full drive or sustained overload." : "Proactive alerts are off.")
-              }
-            />
-            <span>Speak up proactively (low battery, full drive, sustained CPU or memory overload)</span>
-          </label>
-          <label className="switch">
-            <input
-              type="checkbox"
-              checked={s.startup_briefing}
-              disabled={busy}
-              onChange={(e) =>
-                save("profile", { startup_briefing: e.target.checked },
-                  e.target.checked ? "JARVIS will brief you out loud each time it starts." : "Start-up briefing is off.")
-              }
-            />
-            <span>Start-up briefing: system health, open apps and processes, spoken when JARVIS opens</span>
-          </label>
-          <label className="switch">
-            <input
-              type="checkbox"
-              checked={s.presence_greetings ?? true}
-              disabled={busy}
-              onChange={(e) =>
-                save("profile", { presence_greetings: e.target.checked },
-                  e.target.checked ? "JARVIS will welcome you back after you've been away." : "No welcome back.")
-              }
-            />
-            <span>Welcome me back after I've been away (uses mouse and keyboard idle time and screen lock, nothing else)</span>
-          </label>
-          <label className="switch">
-            <input
-              type="checkbox"
-              checked={s.followups ?? true}
-              disabled={busy}
-              onChange={(e) =>
-                save("profile", { followups: e.target.checked },
-                  e.target.checked ? "JARVIS may follow up on a conversation left hanging (at most 3 times an hour)." : "No follow-ups.")
-              }
-            />
-            <span>Keep conversations going: follow up on an open question or unfinished thread, at most 3 times an hour</span>
-          </label>
-          <div className="field-row">
-            <button
-              disabled={busy || (name === s.user_name && address === s.address)}
-              onClick={() => save("profile", { user_name: name.trim(), address: address.trim() || "sir" }, "Saved.")}
-            >
-              SAVE
-            </button>
-          </div>
-          <Note k="profile" />
-        </section>
+            <div className="chips" role="radiogroup" aria-label="Voice engine">
+              {(["live", "local"] as const).map((m) => (
+                <button
+                  key={m}
+                  role="radio"
+                  aria-checked={(s.voice_mode ?? "live") === m}
+                  className={(s.voice_mode ?? "live") === m ? "on" : ""}
+                  disabled={voiceBusy}
+                  onClick={async () => {
+                    if (!conn) return;
+                    await setVoiceMode(conn, m).catch((e) => note("voice", { tone: "bad", text: (e as Error).message }));
+                    setS({ ...s, voice_mode: m });
+                    note("voice", { tone: "ok", text: m === "live" ? "Live: natural speech-to-speech with Gemini (needs internet and your Gemini key)." : "Offline: Whisper listens and Piper speaks, all on this PC." });
+                  }}
+                >
+                  {m === "live" ? "Live (Gemini)" : "Offline"}
+                </button>
+              ))}
+            </div>
+            <p className="dim small">
+              {!voice
+                ? "Checking voice…"
+                : voice.ready
+                  ? `Offline mode runs entirely on this PC: openWakeWord hears “Hey JARVIS”, ${voice.asr?.startsWith("NVIDIA") ? "NVIDIA Parakeet" : "Whisper"} turns speech into text, Piper speaks (British voice).`
+                  : `Voice files still downloading or missing: ${voice.missing.join(", ") || "programs not unpacked yet"}.`}
+            </p>
+            {voice?.speaker_model && (
+              <div className="enroll">
+                <div className="enroll-head">
+                  <strong>Only my voice</strong>
+                  <span className={`badge ${voice.voiceprint ? "ok" : ""}`}>{voice.voiceprint ? "ON" : "NOT SET UP"}</span>
+                </div>
+                {enrolling > 0 ? (
+                  <blockquote className="enroll-read">
+                    <span className="enroll-count">{enrolling}s · read this aloud, normally, close to the mic</span>
+                    The quick brown fox jumps over the lazy dog. I am setting up my assistant so that it listens to me and
+                    nobody else. Today I might ask it to check the weather, play some music, read my messages or open a file
+                    on my computer. One, two, three, four, five, six, seven, eight, nine, ten.
+                  </blockquote>
+                ) : (
+                  <p className="dim small">
+                    {voice.voiceprint
+                      ? "JARVIS answers only your voice: other people, the TV and background talk are ignored, even if they say “Jarvis”."
+                      : "Teach JARVIS your voice (15 seconds of reading aloud) so it ignores everyone else. Stays on this PC."}
+                  </p>
+                )}
+                <div className="field-row">
+                  <button disabled={enrolling > 0 || voiceBusy} onClick={teachVoice}>
+                    {enrolling > 0 ? "LISTENING…" : voice.voiceprint ? "RE-TEACH MY VOICE" : "TEACH JARVIS MY VOICE"}
+                  </button>
+                  {voice.voiceprint && enrolling === 0 && (
+                    <button className="ghost" onClick={forget}>FORGET</button>
+                  )}
+                </div>
+              </div>
+            )}
+            <Note k="voice" />
+          </section>
+          </>
+        )}
+        {tab === "permissions" && <PermissionsCard conn={conn} fullControl={!!s.full_control} onChanged={() => { onChanged(); load(); }} />}
+        {tab === "keys" && <ApiKeysCard conn={conn} />}
+        {tab === "system" && <SystemCard conn={conn} />}
       </div>
     </div>
   );
