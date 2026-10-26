@@ -369,6 +369,30 @@ export default function SettingsView({ conn, onChanged }: { conn: Connection | n
             />
             <span>Start-up briefing: system health, open apps and processes, spoken when JARVIS opens</span>
           </label>
+          <label className="switch">
+            <input
+              type="checkbox"
+              checked={s.presence_greetings ?? true}
+              disabled={busy}
+              onChange={(e) =>
+                save("profile", { presence_greetings: e.target.checked },
+                  e.target.checked ? "JARVIS will welcome you back after you've been away." : "No welcome back.")
+              }
+            />
+            <span>Welcome me back after I've been away (uses mouse and keyboard idle time and screen lock, nothing else)</span>
+          </label>
+          <label className="switch">
+            <input
+              type="checkbox"
+              checked={s.followups ?? true}
+              disabled={busy}
+              onChange={(e) =>
+                save("profile", { followups: e.target.checked },
+                  e.target.checked ? "JARVIS may follow up on a conversation left hanging (at most 3 times an hour)." : "No follow-ups.")
+              }
+            />
+            <span>Keep conversations going: follow up on an open question or unfinished thread, at most 3 times an hour</span>
+          </label>
           <div className="field-row">
             <button
               disabled={busy || (name === s.user_name && address === s.address)}

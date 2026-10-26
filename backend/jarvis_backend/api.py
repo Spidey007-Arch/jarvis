@@ -26,6 +26,7 @@ from .monitor import Monitor
 from .reminders import ReminderError, Reminders
 from .research import ResearchError, web_research
 from .live import LiveError, LiveVoice
+from .initiative import Initiative
 from .tasks import TaskStopped
 from .tools import BY_NAME, OBSERVE_TOOLS, STEPWISE_TOOLS, TOOLS, ToolSpec, describe_call
 from .providers import PRESETS
@@ -53,6 +54,7 @@ class Services:
     monitor: Monitor
     live: Any = None  # LiveVoice, created with the router (it needs the router's tool runner)
     tasks: Any = None  # Tasks: task mode (tasks.py)
+    initiative: Any = None  # Initiative: welcome back and follow-ups (initiative.py), created with the router
     emergency_stop: Callable[[], Awaitable[None]] | None = None  # set by the router
     offline_voice_until: float = 0.0  # Live voice paused until then: the connection was too slow for it
     agent_event: Callable[[dict[str, Any]], None] | None = None  # set by the router: events the agent reports on its own
@@ -129,6 +131,8 @@ class SettingsIn(BaseModel):
     proactive_alerts: bool | None = None
     startup_briefing: bool | None = None
     full_control: bool | None = None
+    presence_greetings: bool | None = None
+    followups: bool | None = None
     permissions: dict[str, str] | None = None
     provider: str | None = None
     api_key: str | None = Field(default=None, max_length=300)
@@ -208,7 +212,7 @@ def build_router(svc: Services, require_auth: Callable[..., None]) -> APIRouter:
     async def put_settings(body: SettingsIn) -> dict[str, Any]:
         changes = body.model_dump(exclude_unset=True)
         profile = {k: changes.pop(k) for k in ("user_name", "address", "proactive_alerts", "startup_briefing",
-                                                   "full_control", "permissions") if k in changes}
+                                                   "full_control", "permissions", "presence_greetings", "followups") if k in changes}
         if "permissions" in profile:
             bad = {k: v for k, v in (profile["permissions"] or {}).items() if k not in permissions.CAPABILITIES or v not in permissions.POLICIES}
             if bad:
@@ -629,7 +633,7 @@ def build_router(svc: Services, require_auth: Callable[..., None]) -> APIRouter:
 
     def _on_agent_event(msg: dict[str, Any]) -> None:
         if msg.get("event") == "download_done":
-            item = {k: msg.get(k) for k in ("name", "path", "size_kb", "program", "finished")}
+            item = {**{k: msg.get(k) for k in ("name", "path", "size_kb", "program", "finished")}, "at": time.time()}
             svc.recent_downloads.append(item)
             del svc.recent_downloads[:-20]
             log.info("download finished", extra={"fields": {"size_kb": item["size_kb"], "program": item["program"]}})
@@ -640,6 +644,18 @@ def build_router(svc: Services, require_auth: Callable[..., None]) -> APIRouter:
             spawn(_say(line))
 
     svc.agent_event = _on_agent_event
+
+    def _happenings(since: float) -> list[str]:
+        """Short notes on what happened since a time, for the welcome back."""
+        notes = [f"{Path(str(d['name'])).stem[:40]} finished downloading" for d in svc.recent_downloads if d.get("at", 0) >= since]
+        notes += [a["message"].rstrip(".") for a in svc.monitor.recent(since)][:2]
+        soon = [r for r in svc.reminders.pending() if r.get("kind") != "timer"][:1]
+        notes += [f"next up: {r['text'] or r['kind']} at {r['due'][-5:]}" for r in soon]
+        return notes
+
+    svc.initiative = Initiative(settings=svc.settings, bridge=svc.bridge, db=svc.db, llm=svc.llm, say=_say,
+                                busy=lambda: bool(svc.live and svc.live.active) or svc.tasks.current is not None,
+                                happenings=_happenings)
 
     svc.live = LiveVoice(
         api_key=lambda: svc.settings.api_key("gemini"),

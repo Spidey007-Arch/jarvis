@@ -27,6 +27,8 @@ DEFAULTS: dict[str, Any] = {
     "proactive_alerts": True,
     "voice_enabled": True,
     "startup_briefing": True,  # JARVIS speaks first on launch: system health, open apps and processes
+    "presence_greetings": True,  # welcome the user back after they have been away a while
+    "followups": True,  # follow up on its own on a conversation left hanging (initiative.py)
     "permissions": {},  # capability -> allow | ask | block (permissions.py); unset ones follow full_control
     "full_control": False,  # the owner's own PC: changes run without asking; only destructive steps ask. Off for everyone else.
     "voice_mode": "live",  # live: Gemini Live speech-to-speech; local: wake word + Whisper + Piper, offline
@@ -35,7 +37,7 @@ DEFAULTS: dict[str, Any] = {
     "secrets": {},
 }
 PROFILE_FIELDS = ("user_name", "address", "proactive_alerts", "voice_enabled", "voice_mode", "startup_briefing",
-                  "full_control", "permissions")
+                  "full_control", "permissions", "presence_greetings", "followups")
 PROVIDER_FIELDS = ("chat_model", "embed_model", "base_url")
 
 

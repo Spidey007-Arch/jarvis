@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import ctypes
 import json
 import logging
 import os
@@ -14,7 +15,7 @@ import websockets
 from jarvis_common import logs
 
 from . import __version__
-from . import extras, voice
+from . import extras, voice, win
 from .actions import attach_live
 from .live_audio import LiveAudio
 from .actions import SCREENSHOT_TTL_S, ActionError, purge_old_screenshots, run, warm_app_index
@@ -51,7 +52,31 @@ def _stats() -> dict:
         out["net_down_kbps"] = round((net.bytes_recv - _last_net[1]) / 1024 / dt, 1)
         out["net_up_kbps"] = round((net.bytes_sent - _last_net[2]) / 1024 / dt, 1)
     _last_net = (now, net.bytes_recv, net.bytes_sent)
+    out.update(_presence())
     return out
+
+
+_meter: "win.PlaybackMeter | None" = None
+
+
+def _presence() -> dict:
+    """Whether someone is at the PC: seconds since the last mouse or keyboard input, whether the session is
+    locked, and whether sound is playing (watching a video is not being away). No content is read."""
+    global _meter
+    user32 = ctypes.windll.user32
+
+    class LASTINPUTINFO(ctypes.Structure):
+        _fields_ = [("cbSize", ctypes.c_uint), ("dwTime", ctypes.c_uint)]
+
+    info = LASTINPUTINFO(ctypes.sizeof(LASTINPUTINFO), 0)
+    idle = (ctypes.windll.kernel32.GetTickCount() - info.dwTime) / 1000 if user32.GetLastInputInfo(ctypes.byref(info)) else None
+    desk = user32.OpenInputDesktop(0, False, 0x0100)  # DESKTOP_SWITCHDESKTOP: fails or cannot switch while locked
+    locked = not desk or not user32.SwitchDesktop(desk)
+    if desk:
+        user32.CloseDesktop(desk)
+    if _meter is None:
+        _meter = win.PlaybackMeter()
+    return {"idle_s": round(idle, 1) if idle is not None else None, "locked": bool(locked), "audio_playing": _meter.peak() > 0.02}
 
 
 # Voice events come from worker threads; they wait here until a backend connection can send them.

@@ -28,6 +28,8 @@ export interface Settings {
   proactive_alerts: boolean;
   startup_briefing: boolean;
   full_control: boolean;
+  presence_greetings: boolean;
+  followups: boolean;
   permissions: Record<string, Policy>;
   provider: string;
   base_url: string;
@@ -58,7 +60,7 @@ export interface ModelInfo {
   kind: "chat" | "embed";
 }
 
-export type SettingsUpdate = Partial<Pick<Settings, "user_name" | "address" | "proactive_alerts" | "startup_briefing" | "full_control" | "permissions" | "provider" | "base_url" | "chat_model" | "embed_model">> & {
+export type SettingsUpdate = Partial<Pick<Settings, "user_name" | "address" | "proactive_alerts" | "startup_briefing" | "full_control" | "permissions" | "presence_greetings" | "followups" | "provider" | "base_url" | "chat_model" | "embed_model">> & {
   api_key?: string;
 };
 

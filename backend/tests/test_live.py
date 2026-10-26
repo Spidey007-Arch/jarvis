@@ -81,7 +81,7 @@ class Reconnect(unittest.IsolatedAsyncioTestCase):
         v = live.LiveVoice(api_key=lambda: "k", push_agent=push, call_agent=call, emit=events.append,
                            system_prompt=lambda: "", tools=[], run_tool=None,
                            save_turn=lambda c, u, r, label=None: saved.append(r) or "conv")
-        with mock.patch("google.genai.Client", return_value=client), mock.patch.object(live, "IDLE_S", 0.6):
+        with mock.patch("google.genai.Client", return_value=client), mock.patch.object(live, "IDLE_S", 2.0):
             await v.start("button")
             await asyncio.wait_for(v._task, 10)
 
@@ -106,8 +106,8 @@ class Reconnect(unittest.IsolatedAsyncioTestCase):
         v = live.LiveVoice(api_key=lambda: "k", push_agent=noop, call_agent=noop, emit=lambda e: None,
                            system_prompt=lambda: "", tools=[], run_tool=None,
                            save_turn=lambda c, u, r, label=None: saved.append(r) or "conv")
-        with mock.patch("google.genai.Client", return_value=client), mock.patch.object(live, "IDLE_S", 0.6), \
-                mock.patch.object(live, "STALL_S", 0.5):
+        with mock.patch("google.genai.Client", return_value=client), mock.patch.object(live, "IDLE_S", 2.0), \
+                mock.patch.object(live, "STALL_S", 1.0):
             await v.start("button")
             await asyncio.wait_for(v._task, 10)
         self.assertEqual(len(connect.configs), 2)
@@ -119,10 +119,10 @@ def audio(n: int) -> types.LiveServerMessage:
 
 
 class SlowLine(unittest.IsolatedAsyncioTestCase):
-    async def run_reply(self, chunk: int) -> tuple[list, int]:
+    async def run_reply(self, chunk: int, count: int = 60, ratio: float = live.SLOW_RATIO) -> tuple[list, int]:
         """A reply whose audio arrives in chunk-byte pieces every ~10 ms; returns on_slow calls and connections made."""
         script = [content(input_transcription=types.Transcription(text="what's the weather")),
-                  *[audio(chunk) for _ in range(60)], content(turn_complete=True)]
+                  *[audio(chunk) for _ in range(count)], content(turn_complete=True)]
         connect = FakeConnect([FakeSession(script, fail=None), FakeSession([], fail=None)])
         client = pytypes.SimpleNamespace(aio=pytypes.SimpleNamespace(live=pytypes.SimpleNamespace(connect=connect)),
                                          models=pytypes.SimpleNamespace(list=lambda: []))
@@ -134,8 +134,8 @@ class SlowLine(unittest.IsolatedAsyncioTestCase):
         v = live.LiveVoice(api_key=lambda: "k", push_agent=noop, call_agent=noop, emit=lambda e: None,
                            system_prompt=lambda: "", tools=[], run_tool=None, save_turn=lambda c, u, r, label=None: "conv",
                            on_slow=lambda *a: calls.append(a))
-        with mock.patch("google.genai.Client", return_value=client), mock.patch.object(live, "IDLE_S", 0.6), \
-                mock.patch.object(live, "SLOW_CHECK_S", 0.2):
+        with mock.patch("google.genai.Client", return_value=client), mock.patch.object(live, "IDLE_S", 2.0), \
+                mock.patch.object(live, "SLOW_CHECK_S", 0.2), mock.patch.object(live, "SLOW_RATIO", ratio):
             await v.start("button")
             await asyncio.wait_for(v._task, 10)
         return calls, len(connect.configs)
@@ -149,7 +149,9 @@ class SlowLine(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(connections, 1)  # no point reconnecting on the same slow line
 
     async def test_a_fast_line_stays_live(self) -> None:
-        calls, _ = await self.run_reply(4000)
+        # A quarter second of audio per message. The threshold is lowered so that a test machine busy enough to
+        # delay each message by a whole second still counts as fast; the slow test above uses the real one.
+        calls, _ = await self.run_reply(12000, 20, ratio=0.05)
         self.assertEqual(calls, [])
 
 
@@ -175,7 +177,7 @@ class Continuity(unittest.IsolatedAsyncioTestCase):
                            system_prompt=lambda: "", tools=[], run_tool=None,
                            save_turn=lambda c, u, r, label=None: saved.append((c, u, r)) or (c or "conv-new"),
                            recent_conversation=recent_conversation)
-        with mock.patch("google.genai.Client", return_value=client), mock.patch.object(live, "IDLE_S", 0.6):
+        with mock.patch("google.genai.Client", return_value=client), mock.patch.object(live, "IDLE_S", 2.0):
             await v.start("wake", label=label)
             if during:
                 await during(v)

@@ -96,6 +96,7 @@ def create_app(port: int, token: str | None = None) -> FastAPI:
         maintenance = asyncio.create_task(daily_maintenance())
         reminders = asyncio.create_task(services.reminders.run())
         monitor = asyncio.create_task(services.monitor.run())
+        initiative = asyncio.create_task(services.initiative.run()) if services.initiative else None
         try:
             yield
         finally:
@@ -103,6 +104,8 @@ def create_app(port: int, token: str | None = None) -> FastAPI:
             maintenance.cancel()
             reminders.cancel()
             monitor.cancel()
+            if initiative:
+                initiative.cancel()
             db.close()
             _remove_runtime()
             log.info("backend stopped")
