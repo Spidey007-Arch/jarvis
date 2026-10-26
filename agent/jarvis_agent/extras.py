@@ -204,6 +204,40 @@ def recent_downloads(args: dict[str, Any]) -> dict[str, Any]:
     return {"folder": str(_downloads_dir()), "files": [_describe(p) for p in files[:limit]]}
 
 
+class EmergencyHotkey:
+    """Ctrl+Alt+Shift+S, from any app: JARVIS stops talking at once and the backend stops every task and
+    pending approval. A Windows hotkey, so it works whichever window is in front."""
+
+    MODS = 0x0001 | 0x0002 | 0x0004 | 0x4000  # Alt, Ctrl, Shift, no auto-repeat
+    KEY = ord("S")
+
+    def __init__(self, report: Callable[[dict[str, Any]], None]) -> None:
+        self.report = report
+
+    def start(self) -> None:
+        threading.Thread(target=self._run, daemon=True, name="emergency-hotkey").start()
+
+    def _run(self) -> None:
+        import ctypes
+        from ctypes import wintypes
+
+        user32 = ctypes.windll.user32
+        if not user32.RegisterHotKey(None, 1, self.MODS, self.KEY):
+            log.warning("Ctrl+Alt+Shift+S is taken by another app; the emergency stop shortcut is unavailable")
+            return
+        msg = wintypes.MSG()
+        while user32.GetMessageW(ctypes.byref(msg), None, 0, 0) > 0:
+            if msg.message == 0x0312:  # WM_HOTKEY
+                log.warning("emergency stop pressed")
+                try:
+                    from .actions import run
+
+                    run("stop_speaking", {})
+                except Exception:  # noqa: BLE001 - the backend still stops everything else
+                    log.exception("could not stop speaking")
+                self.report({"event": "emergency_stop"})
+
+
 class DownloadWatcher:
     """Notices files the user downloads in a browser and reports each once, when it is complete."""
 

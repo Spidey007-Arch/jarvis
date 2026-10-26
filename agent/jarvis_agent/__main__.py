@@ -195,6 +195,7 @@ async def amain() -> int:
     _loop, _outbox = asyncio.get_running_loop(), asyncio.Queue(maxsize=200)
     voice.attach(emit_voice)
     extras.DownloadWatcher(lambda e: send_backend({"type": "event", **e})).start()
+    extras.EmergencyHotkey(lambda e: send_backend({"type": "event", **e})).start()
     global live
     live = attach_live(send_backend)
     psutil.cpu_percent(interval=None)  # prime the counter so the first reading is meaningful

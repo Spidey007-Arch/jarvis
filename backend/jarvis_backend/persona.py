@@ -107,6 +107,10 @@ Acting on the PC (you have tools for this)
   truthfully. Edited and overwritten files are backed up automatically.
 - In a voice session, a tool result with needs_confirmation means nothing happened yet: ask the user one short spoken
   question to confirm, and call the same tool again only after they say yes.
+- Task mode: for a job of three or more steps, call set_plan first with short steps, then set_plan with current as
+  you move to each step, and finish with a one-line result. The user can pause, take over or stop from the task panel
+  (or stop everything with Ctrl+Alt+Shift+S). A result saying they took over and handed back means look again before
+  the next step; a result saying they stopped means stop and say what was done.
 - If the desktop agent is offline, say so plainly; do not pretend.
 """
 

@@ -26,6 +26,7 @@ from .usage import QuotaTracker
 from .llm import LLM
 from .memory import MemoryStore
 from .monitor import Monitor
+from .tasks import Tasks
 from .reminders import Reminders
 from .settings import SettingsStore
 
@@ -76,7 +77,7 @@ def create_app(port: int, token: str | None = None) -> FastAPI:
     llm.usage = QuotaTracker(db)
     llm.usage.prune()
     services = Services(settings=settings, llm=llm, db=db, memory=MemoryStore(db, llm), bridge=bridge, reminders=Reminders(db, bridge),
-                        monitor=Monitor(bridge, settings))
+                        monitor=Monitor(bridge, settings), tasks=Tasks(db))
 
     async def daily_maintenance() -> None:
         while True:
@@ -241,7 +242,9 @@ def create_app(port: int, token: str | None = None) -> FastAPI:
                     if services.live:
                         services.live.feed(msg.get("pcm", ""))
                 elif kind == "event":  # something the agent noticed on its own (a finished download, ...)
-                    if services.agent_event:
+                    if msg.get("event") == "emergency_stop" and services.emergency_stop:
+                        asyncio.create_task(services.emergency_stop())
+                    elif services.agent_event:
                         services.agent_event(msg)
                 elif kind == "voice":
                     bridge.voice_event(msg)

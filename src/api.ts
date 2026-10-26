@@ -98,7 +98,7 @@ export interface VoiceEvent {
   at: number;
   event:
     | "listening" | "transcribing" | "transcript" | "speaking" | "idle" | "error"
-    | "live_connecting" | "live_start" | "user_text" | "jarvis_text" | "live_tool" | "live_turn" | "live_end" | "briefing" | "levels";
+    | "live_connecting" | "live_start" | "user_text" | "jarvis_text" | "live_tool" | "live_turn" | "live_end" | "briefing" | "levels" | "emergency_stop";
   conversation_id?: string | null;
   tool?: string;
   model?: string;
@@ -143,6 +143,26 @@ export interface ApiKeys {
   catalog: number; // how many APIs JARVIS can call
   need_key: string[]; // APIs that take an API key, for the name picker
 }
+export interface TaskView {
+  id: string;
+  goal: string;
+  status: string;
+  plan: string[];
+  current: number;
+  actions: { label: string; status: string }[];
+  steps_taken: number;
+}
+export interface TaskOffer {
+  id: string;
+  goal: string;
+  plan: string[];
+  current: number;
+  done_steps: string[];
+}
+export const getTask = (c: Connection) => call<{ task: TaskView | null; offer: TaskOffer | null }>(c, "/api/task");
+export const controlTask = (c: Connection, id: string, what: string) =>
+  call<Partial<TaskView> & { prompt?: string }>(c, `/api/task/${encodeURIComponent(id)}/${what}`, { method: "POST" });
+
 export type Policy = "allow" | "ask" | "block";
 export interface Permission {
   id: string;

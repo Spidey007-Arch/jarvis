@@ -185,6 +185,10 @@ TOOLS: list[ToolSpec] = [
              obj({"page": S}), agent_action="open_settings", label="Opening settings"),
     ToolSpec("set_reminder", "Set a reminder that JARVIS says out loud at a local date-time. due must be ISO format YYYY-MM-DDTHH:MM in the user's local time.",
              obj({"text": S, "due": S}, ["text", "due"]), label="Setting a reminder"),
+    ToolSpec("set_plan", "For a job of three or more steps, post the plan first (the user sees it in a task panel and can pause, "
+             "take over or stop it), then call again with current set to the index of the step you are starting as you go. "
+             "steps: short imperative phrases. Re-plan with new steps if the plan changes.",
+             obj({"steps": {"type": "array", "items": S}, "current": I}, ["steps"]), label="Planning"),
     ToolSpec("set_alarm", "Set an alarm JARVIS says out loud: at is a time today (HH:MM, 24-hour; tomorrow if already past) or "
              "an ISO date-time YYYY-MM-DDTHH:MM; label is optional (e.g. 'gym').",
              obj({"at": S, "label": S}, ["at"]), label="Setting an alarm for {at}"),
@@ -208,7 +212,7 @@ TOOLS: list[ToolSpec] = [
 ]
 
 # Repeating these is normal (another key press, the next track), never a loop.
-STEPWISE_TOOLS = frozenset({"press_keys", "type_text", "volume", "media", "brightness", "web_click", "web_type", "screen_click", "screen_scroll",
+STEPWISE_TOOLS = frozenset({"set_plan", "press_keys", "type_text", "volume", "media", "brightness", "web_click", "web_type", "screen_click", "screen_scroll",
                             "click_text", "window_control", "screen_drag", "wait_for_window"})
 # Read-only looks whose answer can change after other actions.
 OBSERVE_TOOLS = frozenset({"look_at_screen", "system_status", "clipboard_get", "list_folder", "find_files", "list_reminders", "web_read",

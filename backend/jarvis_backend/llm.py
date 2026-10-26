@@ -317,7 +317,7 @@ class LLM:
         tools: list[dict[str, Any]],
         execute: Callable[[ToolCall], Awaitable[dict[str, Any]]],
         on_notice: Callable[[str], None] | None = None,
-        max_rounds: int = 8,
+        max_rounds: int | Callable[[], int] = 8,
     ) -> str:
         """Let the model call tools until it produces a final answer. Returns that answer.
 
@@ -358,7 +358,9 @@ class LLM:
         if model != preferred and on_notice:
             on_notice(f"{preferred} is busy right now; this reply came from {model}.")
 
-        for _ in range(max_rounds):
+        rounds = 0
+        while rounds < (max_rounds() if callable(max_rounds) else max_rounds):  # a planned task may raise the limit
+            rounds += 1
             if not step.calls:
                 return step.text
             results = [(call, await execute(call)) for call in step.calls]

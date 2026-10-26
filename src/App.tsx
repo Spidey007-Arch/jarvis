@@ -4,6 +4,7 @@ import type { Activity } from "./fx/activity";
 import { useTelemetry } from "./telemetry";
 import { Connection, Overall, ShellStatus, getConnection, getStatus, insideShell, onStatus } from "./shell";
 import { Quota, VoiceEvent, getQuota, getSettings, getVoiceEvents, getVoiceSeq, startBriefing, stopSpeaking } from "./api";
+import TaskPanel from "./views/TaskPanel";
 import ChatView from "./views/ChatView";
 import HistoryPanel from "./views/HistoryPanel";
 import MemoryView from "./views/MemoryView";
@@ -183,6 +184,10 @@ function VoiceLink({ conn, onState, onTurn }: { conn: Connection | null; onState
             setHeard(e.text);
             put("off");
             window.dispatchEvent(new CustomEvent("jarvis:voice-text", { detail: e.text }));
+          } else if (e.event === "emergency_stop") {
+            setCaption("");
+            setNote("Stopped everything");
+            put("off");
           } else if (e.event === "idle") {
             setCaption("");
             if (e.reason && e.reason !== "spoken" && e.reason !== "interrupted") setNote(e.reason);
@@ -370,6 +375,7 @@ export default function App() {
       <VoiceLink conn={conn} onState={setVoiceState} onTurn={onTurn} />
 
       <main className="front">
+        <TaskPanel conn={conn} />
         <ChatView
           conn={conn}
           configured={configured}

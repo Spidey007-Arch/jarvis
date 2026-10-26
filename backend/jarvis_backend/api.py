@@ -10,7 +10,7 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Awaitable, Callable
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -26,6 +26,7 @@ from .monitor import Monitor
 from .reminders import ReminderError, Reminders
 from .research import ResearchError, web_research
 from .live import LiveError, LiveVoice
+from .tasks import TaskStopped
 from .tools import BY_NAME, OBSERVE_TOOLS, STEPWISE_TOOLS, TOOLS, ToolSpec, describe_call
 from .providers import PRESETS
 from .memory import TYPES, MemoryStore
@@ -51,6 +52,8 @@ class Services:
     reminders: Reminders
     monitor: Monitor
     live: Any = None  # LiveVoice, created with the router (it needs the router's tool runner)
+    tasks: Any = None  # Tasks: task mode (tasks.py)
+    emergency_stop: Callable[[], Awaitable[None]] | None = None  # set by the router
     offline_voice_until: float = 0.0  # Live voice paused until then: the connection was too slow for it
     agent_event: Callable[[dict[str, Any]], None] | None = None  # set by the router: events the agent reports on its own
     recent_downloads: list[dict[str, Any]] = field(default_factory=list)  # browser downloads noticed this session, newest last
@@ -442,6 +445,11 @@ def build_router(svc: Services, require_auth: Callable[..., None]) -> APIRouter:
                 raise ToolFailure(str(e)) from e
         if spec.name == "set_reminder":
             return svc.reminders.add(str(args.get("text", "")), str(args.get("due", "")))
+        if spec.name == "set_plan":
+            steps = args.get("steps") or []
+            if isinstance(steps, str):
+                steps = [s for s in re.split(r"\s*(?:\n|;|\d+\.\s)\s*", steps) if s]
+            return svc.tasks.set_plan(list(steps), int(args.get("current") or 0))
         if spec.name == "set_alarm":
             return svc.reminders.add_alarm(str(args.get("at", "")), str(args.get("label") or ""))
         if spec.name == "set_timer":
@@ -768,6 +776,51 @@ def build_router(svc: Services, require_auth: Callable[..., None]) -> APIRouter:
         except (AgentUnavailable, AgentError) as e:
             raise HTTPException(status_code=503, detail=str(e)) from e
 
+    @r.get("/task")
+    async def get_task() -> dict[str, Any]:
+        t = svc.tasks.current
+        return {"task": t.view() if t and t.visible else None, "offer": None if t else svc.tasks.offer()}
+
+    @r.post("/task/{task_id}/{what}")
+    async def control_task(task_id: str, what: str) -> dict[str, Any]:
+        if what == "dismiss":
+            svc.tasks.dismiss(task_id)
+            return {"dismissed": task_id}
+        if what == "continue":
+            try:
+                return {"prompt": svc.tasks.continue_prompt(task_id)}
+            except KeyError as e:
+                raise HTTPException(status_code=404, detail="That task is gone.") from e
+        try:
+            return svc.tasks.control(task_id, what)
+        except KeyError as e:
+            raise HTTPException(status_code=404, detail="That task is no longer running.") from e
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail="Use pause, resume, take_over, hand_back or stop.") from e
+
+    async def _emergency_stop() -> None:
+        """Ctrl+Alt+Shift+S: stop everything JARVIS is doing, now."""
+        stopped = svc.tasks.stop_all()
+        for fut in list(pending_confirmations.values()):
+            if not fut.done():
+                fut.set_result(False)
+        if svc.live and svc.live.active:
+            await svc.live.stop()
+        try:
+            await svc.bridge.push({"type": "speaker_flush"})  # Live voice still queued in the speakers
+            await svc.bridge.call("stop_speaking", {}, timeout=5)
+        except (AgentUnavailable, AgentError):
+            pass
+        svc.bridge.voice_event({"type": "voice", "event": "emergency_stop"})
+        log.warning("emergency stop", extra={"fields": {"task_stopped": stopped}})
+
+    svc.emergency_stop = _emergency_stop
+
+    @r.post("/stop-all")
+    async def stop_all() -> dict[str, Any]:
+        await _emergency_stop()
+        return {"stopped": True}
+
     @r.get("/permissions")
     async def get_permissions() -> list[dict[str, Any]]:
         return permissions.overview(svc.settings.get("permissions"), bool(svc.settings.get("full_control")))
@@ -865,8 +918,17 @@ def build_router(svc: Services, require_auth: Callable[..., None]) -> APIRouter:
                 history = [(m["role"], m["content"]) for m in prior] + [("user", text)]
 
                 done_calls: dict[str, tuple[int, int, dict[str, Any]]] = {}
+                task = svc.tasks.begin(text, conv_id, actions)
 
                 async def execute(call: ToolCall) -> dict[str, Any]:
+                    try:
+                        signal = await svc.tasks.checkpoint(task)
+                    except TaskStopped:
+                        return {"ok": False, "error": "The user stopped this task. Do nothing more; say in one line what was done."}
+                    if signal == "handed_back":
+                        return {"ok": False, "error": "Not run: the user took over and has just handed control back, so the screen "
+                                                      "may have changed. Look again (look_at_screen, read_window, list_windows) "
+                                                      "before continuing, then carry on."}
                     step = len(actions)
                     if (cached := repeat_of(call, done_calls, step)) is not None:
                         audit.info("repeated call skipped", extra={"fields": {"tool": call.name}})
@@ -878,8 +940,10 @@ def build_router(svc: Services, require_auth: Callable[..., None]) -> APIRouter:
 
                 agent_task = asyncio.create_task(
                     svc.llm.run_agent(system, history, TOOL_SCHEMAS, execute,
-                                      on_notice=lambda m: queue.put_nowait(("notice", {"message": m})))
+                                      on_notice=lambda m: queue.put_nowait(("notice", {"message": m})),
+                                      max_rounds=lambda: task.max_rounds)
                 )
+                task.agent = agent_task
                 while True:
                     getter = asyncio.create_task(queue.get())
                     done, _ = await asyncio.wait({getter, agent_task}, return_when=asyncio.FIRST_COMPLETED)
@@ -892,6 +956,10 @@ def build_router(svc: Services, require_auth: Callable[..., None]) -> APIRouter:
                     break
                 try:
                     reply = agent_task.result()
+                except asyncio.CancelledError:  # the task was stopped (task panel or the emergency shortcut)
+                    done_steps = [a["label"] for a in actions if a["status"] == "done"]
+                    reply = "Stopped." + (f" Done before stopping: {'; '.join(done_steps)}." if done_steps else " Nothing was done.")
+                    yield _sse("delta", {"text": reply})
                 except AgentIncomplete as e:
                     # The actions really happened; say exactly what was done instead of an empty reply.
                     done = [a["label"] for a in actions if a["status"] == "done"]
@@ -921,6 +989,8 @@ def build_router(svc: Services, require_auth: Callable[..., None]) -> APIRouter:
             except (LLMError, LLMNotConfigured) as e:
                 yield _sse("error", {"message": str(e)})
             finally:
+                if "task" in locals():
+                    svc.tasks.finish(task, "stopped" if task.status == "stopped" else ("done" if reply else "failed"))
                 if agent_task and not agent_task.done():
                     agent_task.cancel()  # user pressed Stop or closed the window
                 for fut in list(pending_confirmations.values()):
