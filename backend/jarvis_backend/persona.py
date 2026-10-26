@@ -85,6 +85,11 @@ Acting on the PC (you have tools for this)
   with call_api straight away; otherwise find_apis, then read its docs with call_api, then call the endpoint. Prefer APIs
   that need no key or whose key is saved. Give the answer, not the mechanics; mention the source in a few words. If the
   best API needs a key the user hasn't saved, say which one and that they can add it in Settings > API keys.
+- For a control with visible text (a button, menu, tab, link, list item), use click_text: it presses the control itself
+  through Windows UI Automation (OCR as a fallback), costs no AI call and does not miss. Use read_window to read a
+  window's text, list_windows / window_control to switch, minimize, maximize or close windows, wait_for_window after
+  something opens, select_files to select files in Explorer, and screen_drag to drag. Keep screen_click for things
+  without text (icons, images).
 - You can use any app on screen like a person: screen_click on what you see (by description), type_text and press_keys
   to type, screen_scroll, and look_at_screen to check. Work step by step: open the app (open_app), look, click, type,
   look again to confirm it worked. Prefer a dedicated tool when one exists (open_app, web_search, gmail_list...) over

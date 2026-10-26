@@ -93,6 +93,35 @@ TOOLS: list[ToolSpec] = [
     ToolSpec("screen_scroll", "Scroll the mouse wheel: direction up or down, amount in wheel steps (default 5), optionally over a described "
              "area ('the chat list', 'the web page').",
              obj({"direction": S, "amount": I, "over": S}), timeout=90, label="Scrolling {direction}"),
+    # Precise control: controls by their real text (Windows UI Automation, then OCR), windows, drag, waiting.
+    ToolSpec("click_text", "Press a button, menu item, tab, link or label by the exact text it shows, in a window (by title or app "
+             "name; default: the frontmost app). Uses Windows UI Automation, which presses the control itself, and falls back to "
+             "reading the window with OCR; faster and more reliable than screen_click and needs no AI call, so prefer it whenever "
+             "the target has visible text. index picks among several matches (0 = best); button right or double=true use the mouse.",
+             obj({"text": S, "window": S, "index": I, "button": S, "double": B}, ["text"]), agent_action="click_text", timeout=60,
+             label="Pressing \"{text}\""),
+    ToolSpec("find_controls", "List the controls in a window whose visible name contains text (all named controls when text is "
+             "empty): name, type (Button, MenuItem, Edit, ListItem...), position, enabled. Use it to see what can be pressed.",
+             obj({"window": S, "text": S, "limit": I}), agent_action="find_controls", timeout=60, label="Looking at the controls"),
+    ToolSpec("read_window", "Read all the visible text of a window (by title or app name; default: the frontmost app) with Windows' "
+             "built-in OCR. Free and local; use it instead of look_at_screen when only the text matters.",
+             obj({"window": S}), agent_action="read_window", timeout=60, label="Reading the window"),
+    ToolSpec("list_windows", "List the open app windows, front to back: title, app, minimized, which one is active.",
+             obj(), agent_action="list_windows", label="Checking open windows"),
+    ToolSpec("window_control", "Bring a window to the front (focus), or minimize, maximize, restore or close it. window is part of "
+             "its title or the app name, e.g. 'chrome', 'Downloads', 'Spotify'.",
+             obj({"action": S, "window": S}, ["action", "window"]), agent_action="window_control", label="{action} {window}"),
+    ToolSpec("wait_for_window", "Wait up to 15 s for a window whose title contains `title` to come to the front (or, with no title, for "
+             "the front window to change), e.g. after opening an app or a dialog. Returns what is in front.",
+             obj({"title": S, "seconds": I}), agent_action="wait_for_window", timeout=25, label="Waiting for {title}"),
+    ToolSpec("screen_drag", "Drag something visible to somewhere visible, by describing both, e.g. from 'the report.pdf icon' to "
+             "'the Documents folder in the sidebar', or a slider handle to its right end.",
+             obj({"source": S, "target": S}, ["source", "target"]), timeout=120, label="Dragging {source} to {target}"),
+    ToolSpec("select_files", "Open a folder in File Explorer and SELECT the matching files there, e.g. 'open Downloads and select all "
+             "the zip files' = folder 'Downloads', extension 'zip'. name_contains filters by name. Use this instead of clicking "
+             "or keyboard shortcuts to select files.",
+             obj({"folder": S, "extension": S, "name_contains": S, "include_folders": B}, ["folder"]), agent_action="select_files",
+             timeout=75, label="Selecting files in {folder}"),
     ToolSpec("clipboard_get","Read the text currently on the clipboard.", obj(), agent_action="clipboard_get", label="Reading the clipboard"),
     ToolSpec("clipboard_set", "Put text on the clipboard.", obj({"text": S}, ["text"]), agent_action="clipboard_set", label="Copying to clipboard"),
     ToolSpec("press_keys", "Press a keyboard shortcut in the focused window, e.g. [\"ctrl\",\"s\"], [\"win\",\"d\"], [\"alt\",\"tab\"].",
@@ -161,11 +190,12 @@ TOOLS: list[ToolSpec] = [
 ]
 
 # Repeating these is normal (another key press, the next track), never a loop.
-STEPWISE_TOOLS = frozenset({"press_keys", "type_text", "volume", "media", "brightness", "web_click", "web_type", "screen_click", "screen_scroll"})
+STEPWISE_TOOLS = frozenset({"press_keys", "type_text", "volume", "media", "brightness", "web_click", "web_type", "screen_click", "screen_scroll",
+                            "click_text", "window_control", "screen_drag", "wait_for_window"})
 # Read-only looks whose answer can change after other actions.
 OBSERVE_TOOLS = frozenset({"look_at_screen", "system_status", "clipboard_get", "list_folder", "find_files", "list_reminders", "web_read",
                            "gmail_list", "gmail_open", "whatsapp_chats", "whatsapp_read", "find_apis", "call_api",
-                           "read_file", "list_processes", "run_command"})
+                           "read_file", "list_processes", "run_command", "find_controls", "read_window", "list_windows"})
 
 BY_NAME = {t.name: t for t in TOOLS}
 

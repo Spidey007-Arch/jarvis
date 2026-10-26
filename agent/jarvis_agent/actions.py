@@ -1090,3 +1090,6 @@ def kill_process(args: dict[str, Any]) -> dict[str, Any]:
     except psutil.TimeoutExpired:
         p.kill()
     return {"ended": name, "pid": p.pid}
+
+
+from . import uictl  # noqa: E402,F401 - registers its actions (window and control tools)

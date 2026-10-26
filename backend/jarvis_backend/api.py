@@ -101,6 +101,10 @@ def needs_approval(spec: ToolSpec, args: dict[str, Any], full_control: bool = Fa
         return True
     if spec.name == "screen_click" and RISKY_CLICK.search(str(args.get("target", ""))):
         return True
+    if spec.name == "click_text" and RISKY_CLICK.search(str(args.get("text", ""))):
+        return True
+    if spec.name == "window_control" and str(args.get("action", "")).lower() == "close":
+        return not full_control  # the app may lose unsaved work (it usually asks first)
     if spec.name == "run_command" and DANGER_COMMAND.search(str(args.get("command", ""))):
         return True
     if spec.risk == "confirm":
@@ -425,6 +429,12 @@ def build_router(svc: Services, require_auth: Callable[..., None]) -> APIRouter:
                                                           "double": bool(args.get("double"))}, timeout=15)
             return {"clicked": label, "kind": spot.get("kind"), "at": done.get("clicked"),
                     "next": "Check the result with look_at_screen before the next step if anything is uncertain."}
+        if spec.name == "screen_drag":
+            src = await _locate_on_screen(str(args.get("source") or ""))
+            dst = await _locate_on_screen(str(args.get("target") or ""))
+            done = await svc.bridge.call("mouse_drag", {"x1": src["x"], "y1": src["y"], "x2": dst["x"], "y2": dst["y"]}, timeout=20)
+            return {"dragged": src.get("label") or args.get("source"), "onto": dst.get("label") or args.get("target"), **done,
+                    "next": "Check the result with look_at_screen or read_window if anything is uncertain."}
         if spec.name == "screen_scroll":
             direction = str(args.get("direction") or "down").lower()
             clicks = max(1, min(int(args.get("amount") or 5), 30)) * (1 if direction == "up" else -1)

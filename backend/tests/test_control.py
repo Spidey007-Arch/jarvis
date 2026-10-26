@@ -33,6 +33,15 @@ class FullControl(unittest.TestCase):
         self.assertTrue(needs_approval(BY_NAME["power"], {"action": "restart"}, full_control=True))
         self.assertTrue(needs_approval(BY_NAME["screen_click"], {"target": "the Send button"}, full_control=True))
 
+    def test_controls_by_text_and_windows(self) -> None:
+        press = BY_NAME["click_text"]
+        self.assertFalse(needs_approval(press, {"text": "View"}, full_control=True))
+        self.assertTrue(needs_approval(press, {"text": "Send"}, full_control=True))  # sends something: always asks
+        close = BY_NAME["window_control"]
+        self.assertTrue(needs_approval(close, {"action": "close", "window": "Word"}))
+        self.assertFalse(needs_approval(close, {"action": "close", "window": "Word"}, full_control=True))
+        self.assertFalse(needs_approval(close, {"action": "minimize", "window": "Word"}))
+
     def test_spoken_answers(self) -> None:
         for yes in ("yes", "yeah go ahead", "haan do it", "okay"):
             self.assertTrue(SPOKEN_YES.search(yes) and not SPOKEN_NO.search(yes), yes)
