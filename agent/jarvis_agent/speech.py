@@ -129,6 +129,15 @@ class Piper:
         self.proc = None
 
 
+def _close(stream: Any) -> None:
+    if stream is not None:
+        try:
+            stream.close()
+        except Exception:  # noqa: BLE001 - the device may already be gone
+            pass
+    return None
+
+
 class Speaker:
     """Sentence-by-sentence speech: synthesize ahead, play in order, stop at once."""
 
@@ -192,10 +201,19 @@ class Speaker:
                 self._audio.put((gen, None))
 
     def _play_loop(self) -> None:
+        """One output stream stays open for a whole reply, with a generous buffer, so sentences run on without
+        gaps and a busy CPU (a heavy app, the window's animation) cannot starve the speakers mid-word."""
         import sounddevice as sd
 
+        win.boost_thread()
+        out: Any = None
+        out_rate = 0
         while True:
-            gen, path = self._audio.get()
+            try:
+                gen, path = self._audio.get(timeout=2.0 if out is not None else None)
+            except queue.Empty:
+                out = _close(out)  # nothing more to say: release the device
+                continue
             if path is None or gen != self._gen:
                 if path:
                     path.unlink(missing_ok=True)
@@ -206,16 +224,25 @@ class Speaker:
                 if not self._busy:
                     self._busy = True
                     self.emit({"event": "speaking"})
+                if out is None or rate != out_rate:
+                    _close(out)
+                    out, out_rate = sd.RawOutputStream(samplerate=rate, channels=1, dtype="int16", latency="high"), rate
+                    out.start()
                 block = int(rate * STEP_S) * 2
-                with sd.RawOutputStream(samplerate=rate, channels=1, dtype="int16") as out:
-                    for i in range(0, len(pcm), block):
-                        if gen != self._gen:
-                            break
-                        piece = pcm[i:i + block]
-                        self.levels.feed("jarvis", piece, rate)
-                        out.write(piece)
+                underruns = 0
+                for i in range(0, len(pcm), block):
+                    if gen != self._gen:
+                        out.abort()  # stopped: drop what is still buffered, now
+                        out = _close(out)
+                        break
+                    piece = pcm[i:i + block]
+                    self.levels.feed("jarvis", piece, rate)
+                    underruns += bool(out.write(piece))
+                if underruns:
+                    log.warning("speech ran dry %d times in one sentence (the CPU is very busy)", underruns)
             except Exception:  # noqa: BLE001
                 log.exception("speech playback failed")
+                out = _close(out)
             finally:
                 path.unlink(missing_ok=True)
             if self._text.empty() and self._audio.empty():

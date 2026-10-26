@@ -10,7 +10,9 @@ let boostUntil = 0;
 const boost = () => {
   boostUntil = performance.now() + BOOST_MS;
 };
-for (const ev of ["pointermove", "pointerdown", "keydown", "jarvis:send", "jarvis:pulse", "jarvis:levels"]) {
+// Voice levels deliberately do not boost: while JARVIS talks, the CPU belongs to the audio, and the core's
+// 20 level steps a second look the same at 30 fps.
+for (const ev of ["pointermove", "pointerdown", "keydown", "jarvis:send", "jarvis:pulse"]) {
   window.addEventListener(ev, boost, { passive: true });
 }
 

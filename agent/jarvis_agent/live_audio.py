@@ -15,6 +15,8 @@ import threading
 import time
 from typing import Any, Callable
 
+from . import win
+
 log = logging.getLogger("jarvis.live_audio")
 
 MIC_RATE = 16000
@@ -173,6 +175,7 @@ class LiveAudio:
     def _play_loop(self) -> None:
         import sounddevice as sd
 
+        win.boost_thread()
         try:
             with sd.RawOutputStream(samplerate=SPEAKER_RATE, channels=1, dtype="int16", latency="high") as out:
                 primed = False

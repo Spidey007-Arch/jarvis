@@ -21,6 +21,17 @@ class WinError(Exception):
     """A Windows call failed; the message says which call and why."""
 
 
+def boost_thread() -> None:
+    """Run the calling thread above normal priority, so audio keeps flowing when the CPU is busy."""
+    try:
+        k = ctypes.windll.kernel32
+        k.GetCurrentThread.restype = wintypes.HANDLE
+        k.SetThreadPriority.argtypes = [wintypes.HANDLE, ctypes.c_int]
+        k.SetThreadPriority(k.GetCurrentThread(), 2)  # THREAD_PRIORITY_HIGHEST
+    except (AttributeError, OSError):
+        pass
+
+
 def powershell(script: str, timeout: float = 20.0) -> str:
     """Run a PowerShell snippet hidden. Raises WinError with PowerShell's own error text."""
     r = subprocess.run(
