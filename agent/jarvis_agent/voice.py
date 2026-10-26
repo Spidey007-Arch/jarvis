@@ -427,16 +427,17 @@ class Voice:
         finally:
             self._quiet_until = time.monotonic() + 1
 
-    def on_wake(self, confidence: float = 1.0) -> None:
+    def on_wake(self, confidence: float = 1.0, by_voice: bool = True) -> None:
+        """by_voice: woken by speech (check the request is the user's too); False for the mic button."""
         if self.mode == "live":
             self.emit({"event": "wake", "confidence": confidence})  # the backend opens a live session
             return
         self.stop_speaking()
         if not self._busy.acquire(blocking=False):
             return  # already listening
-        threading.Thread(target=self._listen, args=(confidence,), daemon=True).start()
+        threading.Thread(target=self._listen, args=(confidence, by_voice), daemon=True).start()
 
-    def _listen(self, confidence: float) -> None:
+    def _listen(self, confidence: float, by_voice: bool = True) -> None:
         try:
             setup = prepare()
             win_beep()
@@ -445,6 +446,10 @@ class Voice:
             pcm = record_utterance(self._stop_listening)
             if not pcm:
                 self.emit({"event": "idle", "reason": "no speech heard"})
+                return
+            if by_voice and not self._is_user(pcm):
+                log.info("the request after the wake word was not in the user's voice; ignored")
+                self.emit({"event": "idle", "reason": "that wasn't your voice"})
                 return
             self.emit({"event": "transcribing"})
             text = transcribe(to_wav(pcm), setup)

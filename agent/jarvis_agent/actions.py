@@ -494,7 +494,7 @@ def listen_now(_: dict[str, Any]) -> dict[str, Any]:
     setup = voice.prepare()
     if not setup["whisper"] or voice.FILES["whisper_model"] in setup["missing"]:
         raise ActionError("Whisper is not installed yet, so JARVIS cannot listen. See Settings > Voice.")
-    voice.instance().on_wake(1.0)
+    voice.instance().on_wake(1.0, by_voice=False)  # the user pressed the button: no voice check needed
     return {"listening": True}
 
 
