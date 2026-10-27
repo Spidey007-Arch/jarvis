@@ -39,5 +39,23 @@ class Files(unittest.TestCase):
                 actions.edit_file({"path": f, "old_text": "nope", "new_text": "z"})
 
 
+class SpotifySearch(unittest.TestCase):
+    def test_song_rows_come_from_title_and_song_lines(self) -> None:
+        from jarvis_agent import uictl
+
+        # what Windows OCR read on Spotify's search page for "alfaaz"
+        lines = [{"x": 371, "y": 73, "w": 32, "h": 11, "text": "Songs"},
+                 {"x": 414, "y": 135, "w": 49, "h": 12, "text": "Alfaaz"},
+                 {"x": 380, "y": 220, "w": 87, "h": 10, "text": "Alfaaz - Vocals"},
+                 {"x": 381, "y": 239, "w": 168, "h": 11, "text": "Song  Hamza Mark, Zain Zohaib"},
+                 {"x": 380, "y": 273, "w": 35, "h": 10, "text": "Aarzu"},
+                 {"x": 381, "y": 292, "w": 151, "h": 11, "text": "Song  Noor, Khan, Madhurxc"},
+                 {"x": 380, "y": 786, "w": 87, "h": 10, "text": "Alfaaz -Vocals"},
+                 {"x": 381, "y": 805, "w": 174, "h": 11, "text": "Single  Hamza Malik, Zain Zohaib"}]
+        rows = uictl._song_rows(lines)
+        self.assertEqual([r["text"] for r in rows], ["Alfaaz - Vocals", "Aarzu"])  # singles and headings aren't tracks
+        self.assertEqual(rows[0]["artist"], "Hamza Mark, Zain Zohaib")
+
+
 if __name__ == "__main__":
     unittest.main()

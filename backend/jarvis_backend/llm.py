@@ -366,6 +366,7 @@ class LLM:
         effort: Callable[[], str] | None = None,
         on_thought: Callable[[str], None] | None = None,
         advise: Callable[[int, list[tuple[ToolCall, dict[str, Any]]]], Awaitable[str | None]] | None = None,
+        on_step: Callable[[], None] | None = None,
     ) -> str:
         """Let the model call tools until it produces a final answer. Returns that answer.
 
@@ -411,6 +412,10 @@ class LLM:
         rounds = 0
         while rounds < (max_rounds() if callable(max_rounds) else max_rounds):  # a planned task may raise the limit
             rounds += 1
+            log.info("agent step", extra={"fields": {"model": model, "round": rounds, "calls": [c.name for c in step.calls],
+                                                     "text_chars": len(step.text or "")}})
+            if on_step:
+                on_step()
             if step.thought and on_thought:
                 on_thought(step.thought)
             if not step.calls:

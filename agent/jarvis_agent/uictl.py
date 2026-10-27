@@ -404,6 +404,74 @@ def read_window(args: dict[str, Any]) -> dict[str, Any]:
     return {"window": w["title"], "app": w["app"], "text": text[:8000], "lines": len(lines)}
 
 
+# ---------------- music ----------------
+
+def _song_rows(lines: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Track rows on Spotify's search page: a title line with a 'Song · artist' line just under it."""
+    rows = []
+    for top in lines:
+        under = next((l for l in lines if 0 < l["y"] - top["y"] < 30 and abs(l["x"] - top["x"]) < 12
+                      and l["text"].strip().lower().startswith("song")), None)
+        if under:
+            artist = under["text"].strip()[4:]
+            while artist and not artist[0].isalnum():  # the '·' after "Song" comes out of OCR as a stray symbol
+                artist = artist[1:]
+            rows.append({**top, "artist": artist.strip()})
+    return sorted(rows, key=lambda r: r["y"])
+
+
+def _spotify() -> dict[str, Any] | None:
+    return next((w for w in _windows() if w["app"].lower() == "spotify"), None)
+
+
+@action
+def play_music(args: dict[str, Any]) -> dict[str, Any]:
+    """Play a song on Spotify: open Spotify's own search for it, double-click the best matching track, and confirm
+    it is playing from the window title (Spotify shows 'Artist - Song' while it plays)."""
+    from urllib.parse import quote
+
+    query = _str(args, "query").strip()
+    try:
+        os.startfile("spotify:search:" + quote(query))
+    except OSError as e:
+        raise ActionError("Spotify isn't installed (or can't open search links). Play it on YouTube with open_url instead.") from e
+    w = None
+    deadline = time.monotonic() + 20
+    while time.monotonic() < deadline and (w := _spotify()) is None:
+        time.sleep(0.5)
+    if w is None:
+        raise ActionError("Spotify did not open within 20 s.")
+    words = {x for x in query.lower().split() if x not in ("by", "the", "song", "a")}
+    rows: list[dict[str, Any]] = []
+    left = top = 0
+    for _ in range(4):  # results take a moment to load, longer when Spotify has just started
+        time.sleep(1.5)
+        lines, (left, top, _r, _b) = _ocr(w["hwnd"])
+        if rows := _song_rows(lines):
+            break
+    if not rows:
+        raise ActionError(f"Spotify's search for '{query}' showed no songs I could read.")
+
+    def score(r: dict[str, Any]) -> int:
+        have = set((r["text"] + " " + r["artist"]).lower().replace("-", " ").split())
+        return len(words & have)
+
+    pick = max(rows, key=score)  # max keeps the first (top) row among equals
+    before = w["title"]
+    _click_point(left + pick["x"] + min(pick["w"], 80) // 2, top + pick["y"] + pick["h"] // 2, "left", True)
+    title = before
+    for _ in range(16):
+        time.sleep(0.4)
+        now = next((x for x in _windows() if x["hwnd"] == w["hwnd"]), None)
+        title = now["title"] if now else ""
+        if title != before and " - " in title:
+            return {"playing": title, "searched": query, "picked": pick["text"], "artist": pick["artist"]}
+    if " - " in before and pick["text"].lower() in before.lower():
+        return {"playing": before, "searched": query, "note": "That song was already playing."}
+    raise ActionError(f"I double-clicked '{pick['text']}' in Spotify but it didn't start (window title: '{title}'). "
+                      "Check with read_window.")
+
+
 # ---------------- mouse, waiting, Explorer ----------------
 
 @action

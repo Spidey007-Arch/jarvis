@@ -67,6 +67,10 @@ TOOLS: list[ToolSpec] = [
              obj({"n": I, "text": S, "submit": B}, ["n", "text"]), agent_action="web_type", timeout=30, label="Typing on the page"),
     ToolSpec("volume", "Get or change the system volume. action: get, set (with level 0-100), up, down (step default 10), mute, unmute.",
              obj({"action": S, "level": I, "step": I}, ["action"]), agent_action="volume", label="Adjusting volume"),
+    ToolSpec("play_music", "Play a specific song (or artist) on Spotify: searches Spotify, starts the best match and confirms "
+             "it is playing. query: the song, optionally with the artist, e.g. 'alfaaz' or 'believer imagine dragons'. "
+             "Use this for any 'play <song>' request, not keyboard shortcuts.",
+             obj({"query": S}, ["query"]), agent_action="play_music", timeout=60, label="Playing {query} on Spotify"),
     ToolSpec("media", "Control whatever media is playing. action: play_pause, next, previous, stop.",
              obj({"action": S}, ["action"]), agent_action="media", label="Media: {action}"),
     ToolSpec("brightness", "Get the screen brightness, or set it with level 0-100. Works on laptop screens.",

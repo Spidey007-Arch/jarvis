@@ -25,7 +25,7 @@ MORE_TOOLS_SCHEMA: dict[str, Any] = {
 CORE = (
     "system_status", "open_app", "open_url", "web_search", "web_research", "look_at_screen", "click_text", "screen_click",
     "type_text", "press_keys", "find_files", "open_path", "read_file", "run_command", "set_reminder", "set_plan",
-    "list_windows", "window_control", "volume", "media",
+    "list_windows", "window_control", "volume", "media", "play_music",
 )
 EXTRA = 12  # matched tools added on top of the core set
 

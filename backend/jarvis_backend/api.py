@@ -41,6 +41,7 @@ log = logging.getLogger("jarvis.api")
 HISTORY_MESSAGES = 24
 ADVISE_EVERY = 4  # rounds of a planned task between reviews by the advisor (and after any failure)
 ADVICE_MAX = 4  # reviews per task
+STALL_S = 360.0  # no step, tool or event for this long (outside a running tool) means a task is stuck; stop it
 ADVISOR_PROMPT = """You are the senior reviewer for JARVIS, an assistant working through a task on the user's Windows PC.
 Goal: {goal}
 Plan: {plan}
@@ -1150,6 +1151,7 @@ def build_router(svc: Services, require_auth: Callable[..., None]) -> APIRouter:
                 task = svc.tasks.begin(text, conv_id, actions)
 
                 reviews = {"n": 0}
+                progress = {"at": time.monotonic()}
 
                 async def advise(rounds: int, results: list[tuple[ToolCall, dict[str, Any]]]) -> str | None:
                     """The advisor: during a planned task, every few rounds and after a failure."""
@@ -1192,14 +1194,25 @@ def build_router(svc: Services, require_auth: Callable[..., None]) -> APIRouter:
                                       # a planned multi-step task thinks harder; a quick request answers fast
                                       effort=lambda: "high" if task.plan else "medium",
                                       on_thought=lambda t: setattr(task, "thought", t[-400:]),
-                                      advise=advise)
+                                      advise=advise,
+                                      on_step=lambda: progress.__setitem__("at", time.monotonic()))
                 )
                 task.agent = agent_task
+                stalled = False
                 while True:
                     getter = asyncio.create_task(queue.get())
-                    done, _ = await asyncio.wait({getter, agent_task}, return_when=asyncio.FIRST_COMPLETED)
+                    done, _ = await asyncio.wait({getter, agent_task}, timeout=15, return_when=asyncio.FIRST_COMPLETED)
                     if getter in done:
+                        progress["at"] = time.monotonic()
                         yield _sse(*getter.result())
+                        continue
+                    if not done:  # nothing for 15 s: fine while a tool runs or waits for the user, not otherwise
+                        getter.cancel()
+                        waiting = any(a["status"] in ("running", "awaiting_confirmation") for a in actions) or task.status != "running"
+                        if not waiting and time.monotonic() - progress["at"] > STALL_S:
+                            log.warning("task stalled; stopping it", extra={"fields": {"idle_s": round(time.monotonic() - progress["at"])}})
+                            stalled = True
+                            agent_task.cancel()
                         continue
                     getter.cancel()
                     while not queue.empty():
@@ -1207,9 +1220,10 @@ def build_router(svc: Services, require_auth: Callable[..., None]) -> APIRouter:
                     break
                 try:
                     reply = agent_task.result()
-                except asyncio.CancelledError:  # the task was stopped (task panel or the emergency shortcut)
+                except asyncio.CancelledError:  # the task was stopped (task panel, the emergency shortcut, or it stalled)
                     done_steps = [a["label"] for a in actions if a["status"] == "done"]
-                    reply = "Stopped." + (f" Done before stopping: {'; '.join(done_steps)}." if done_steps else " Nothing was done.")
+                    reply = ("I got stuck with no progress for several minutes, so I stopped." if stalled else "Stopped.") + (
+                        f" Done before stopping: {'; '.join(done_steps)}." if done_steps else " Nothing was done.")
                     yield _sse("delta", {"text": reply})
                 except AgentIncomplete as e:
                     # The actions really happened; say exactly what was done instead of an empty reply.
