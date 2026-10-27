@@ -73,6 +73,7 @@ class Services:
     initiative: Any = None  # Initiative: welcome back and follow-ups (initiative.py), created with the router
     skills: Any = None  # Skills: learned workflows (skills.py)
     connectors: Any = None  # Connectors: MCP servers as tools (connectors.py)
+    jobs: Any = None  # Jobs: housekeeping run while the user is idle (jobs.py), created in main
     recent_paths: list[dict[str, Any]] = field(default_factory=list)  # files JARVIS worked with lately, newest last
     emergency_stop: Callable[[], Awaitable[None]] | None = None  # set by the router
     offline_voice_until: float = 0.0  # Live voice paused until then: the connection was too slow for it
@@ -645,9 +646,8 @@ def build_router(svc: Services, require_auth: Callable[..., None]) -> APIRouter:
         try:
             out = await svc.llm.generate_json(extract_prompt(candidates, user_text, reply), EXTRACT_SCHEMA)
             ops = (out or {}).get("operations", [])
-            if ops:
+            if ops:  # merging many memories into fewer happens later, as a background job while the user is idle
                 await svc.memory.apply_ops(ops, conv_id)
-                await svc.memory.maybe_summarize()
         except Exception:  # noqa: BLE001 - extraction must never break chat; the failure is logged
             log.exception("memory extraction failed")
 
@@ -989,6 +989,10 @@ def build_router(svc: Services, require_auth: Callable[..., None]) -> APIRouter:
         if not svc.skills.forget(skill_id):
             raise HTTPException(status_code=404, detail="No such workflow.")
         return {"forgotten": skill_id}
+
+    @r.get("/jobs")
+    async def list_jobs() -> list[dict[str, Any]]:
+        return svc.jobs.view() if svc.jobs else []
 
     @r.get("/connectors")
     async def list_connectors() -> list[dict[str, Any]]:

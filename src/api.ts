@@ -210,6 +210,15 @@ export const retryConnector = (c: Connection, name: string) =>
 export const deleteConnector = (c: Connection, name: string) =>
   call<{ removed: string }>(c, `/api/connectors/${encodeURIComponent(name)}`, { method: "DELETE" });
 
+export interface BackgroundJob {
+  name: string;
+  every_hours: number;
+  last_run: number | null;
+  next_due: number;
+  last_result: string;
+}
+export const getJobs = (c: Connection) => call<BackgroundJob[]>(c, "/api/jobs");
+
 export type Policy = "allow" | "ask" | "block";
 export interface Permission {
   id: string;

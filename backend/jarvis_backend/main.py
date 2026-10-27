@@ -28,6 +28,7 @@ from .llm import LLM
 from .memory import MemoryStore
 from .monitor import Monitor
 from .connectors import Connectors
+from .jobs import Jobs
 from .skills import Skills
 from .tasks import Tasks
 from .reminders import Reminders
@@ -84,21 +85,31 @@ def create_app(port: int, token: str | None = None) -> FastAPI:
                         monitor=Monitor(bridge, settings), tasks=Tasks(db), skills=Skills(db),
                         connectors=Connectors(settings))
 
-    async def daily_maintenance() -> None:
-        while True:
-            try:
-                result = services.memory.maintenance()
-                log.info("memory maintenance", extra={"fields": result})
-            except Exception:  # noqa: BLE001
-                log.exception("memory maintenance failed")
-            await asyncio.sleep(24 * 3600)
+    # Housekeeping waits until the user isn't using the PC (jobs.py).
+    jobs = Jobs(db, stats=lambda: bridge.stats if bridge.connected else {},
+                presence=lambda: services.initiative.state if services.initiative else "active")
+
+    async def memory_upkeep() -> Any:
+        return services.memory.maintenance()
+
+    async def memory_summaries() -> Any:
+        return await services.memory.maybe_summarize()
+
+    async def usage_cleanup() -> Any:
+        if llm.usage:
+            llm.usage.prune()
+
+    jobs.add("memory upkeep", 24 * 3600, memory_upkeep)
+    jobs.add("memory summaries", 6 * 3600, memory_summaries)
+    jobs.add("usage cleanup", 24 * 3600, usage_cleanup)
+    services.jobs = jobs
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         _write_runtime(port, token)
         log.info("backend ready", extra={"fields": {"port": port, "pid": os.getpid(), "version": __version__}})
         watcher = asyncio.create_task(watch_parent(app))
-        maintenance = asyncio.create_task(daily_maintenance())
+        maintenance = asyncio.create_task(jobs.run())
         reminders = asyncio.create_task(services.reminders.run())
         monitor = asyncio.create_task(services.monitor.run())
         initiative = asyncio.create_task(services.initiative.run()) if services.initiative else None

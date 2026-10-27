@@ -213,6 +213,13 @@ TOOLS: list[ToolSpec] = [
              "overwrites. open=true opens it after.",
              obj({"kind": S, "title": S, "content": S, "path": S, "open": B}, ["kind", "content"]), risk="confirm",
              agent_action="create_document", timeout=120, label="Creating {kind}: {title}"),
+    ToolSpec("run_sandboxed", "Run Python code in a sandbox: its own empty folder holding copies of the given files, no network, "
+             "no starting programs, no reading or writing outside its folder, memory and time limits. Use it for data someone "
+             "else made (a CSV or workbook that was sent) or for calculations and analysis, instead of run_command. numpy, "
+             "openpyxl, pypdf, python-docx are available. Print the results; files written to out/ are kept in "
+             "Documents\\JARVIS\\Sandbox.",
+             obj({"code": S, "files": {"type": "array", "items": S}, "timeout": I}, ["code"]), agent_action="run_sandboxed",
+             timeout=150, label="Running code in the sandbox"),
     ToolSpec("set_plan", "For a job of three or more steps, post the plan first (the user sees it in a task panel and can pause, "
              "take over or stop it), then call again with current set to the index of the step you are starting as you go. "
              "steps: short imperative phrases. Re-plan with new steps if the plan changes.",

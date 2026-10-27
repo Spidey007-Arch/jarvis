@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { getAutostart, setAutostart, stopEverything } from "../api";
+import { BackgroundJob, getAutostart, getJobs, setAutostart, stopEverything } from "../api";
 import type { Connection } from "../shell";
 
 /** Start with Windows, the emergency stop, and re-running the first-run setup. */
@@ -7,6 +7,11 @@ export default function SystemCard({ conn }: { conn: Connection | null }) {
   const [autostart, setAuto] = useState<boolean | null>(null);
   const [note, setNote] = useState<{ tone: "ok" | "bad"; text: string } | null>(null);
   const [busy, setBusy] = useState(false);
+  const [jobs, setJobs] = useState<BackgroundJob[]>([]);
+
+  useEffect(() => {
+    if (conn) getJobs(conn).then(setJobs).catch(() => {});
+  }, [conn]);
 
   useEffect(() => {
     if (conn) getAutostart(conn).then((r) => setAuto(r.starts_with_windows)).catch((e) => setNote({ tone: "bad", text: (e as Error).message }));
@@ -42,6 +47,21 @@ export default function SystemCard({ conn }: { conn: Connection | null }) {
       <div className="field-row">
         <button className="ghost" onClick={() => window.dispatchEvent(new CustomEvent("jarvis:onboarding"))}>RUN FIRST-TIME SETUP AGAIN</button>
       </div>
+      {jobs.length > 0 && (
+        <>
+          <p className="dim small">Background jobs run while you're away or not using the PC, so they never slow you down:</p>
+          <ul className="perms">
+            {jobs.map((j) => (
+              <li key={j.name}>
+                <span className="perm-label">{j.name} <em className="perm-lock">every {j.every_hours} h</em></span>
+                <span className="dim small" title={j.last_result}>
+                  {j.last_run ? `last ${new Date(j.last_run * 1000).toLocaleString()}` : "not run yet"}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
       {note && <p className={`${note.tone} small`}>{note.text}</p>}
     </section>
   );
