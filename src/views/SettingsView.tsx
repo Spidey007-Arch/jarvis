@@ -3,7 +3,7 @@ import ApiKeysCard from "./ApiKeysCard";
 import PermissionsCard from "./PermissionsCard";
 import SystemCard from "./SystemCard";
 import ConnectorsCard from "./ConnectorsCard";
-import { ApiError, ModelInfo, ProviderPreset, Settings, SettingsUpdate, VoiceStatus, enrollVoice, forgetVoice, getModels, getProviders, getSettings, getVoice, putSettings, setVoice, setVoiceMode } from "../api";
+import { ApiError, ModelInfo, ProviderPreset, Settings, SettingsUpdate, VoiceStatus, enrollVoice, forgetVoice, getModels, getProviders, getSettings, getVoice, putSettings, setVoice, setVoiceMode, startGateway } from "../api";
 import type { Connection } from "../shell";
 
 type Note = { tone: "ok" | "bad"; text: string } | null;
@@ -149,6 +149,30 @@ export default function SettingsView({ conn, onChanged }: { conn: Connection | n
     }
   };
 
+  // The gateway button also starts the gateway's server in the background, so it is ready to answer.
+  const pickGateway = async () => {
+    if (!conn) return;
+    setBusy(true);
+    note("provider", { tone: "ok", text: "Starting the gateway in the background… the first start can take 2–3 minutes." });
+    try {
+      const r = await startGateway(conn);
+      if (!r.running) {
+        note("provider", { tone: "bad", text: r.error ?? "The gateway did not start." });
+        return;
+      }
+      const ready = r.started ? "Gateway started." : "Gateway is running.";
+      if (s?.provider === "gateway") note("provider", { tone: "ok", text: ready });
+      else {
+        setBusy(false);
+        await save("provider", { provider: "gateway" }, `${ready} Switched to it.`, true);
+      }
+    } catch (e) {
+      note("provider", { tone: "bad", text: e instanceof ApiError ? e.message : String(e) });
+    } finally {
+      setBusy(false);
+    }
+  };
+
   if (!conn) return <div className="view-msg">Waiting for the backend to come online…</div>;
   if (!s || !preset) return <div className="view-msg">Loading settings…</div>;
 
@@ -258,7 +282,7 @@ export default function SettingsView({ conn, onChanged }: { conn: Connection | n
                   aria-checked={p.id === s.provider}
                   className={`prov ${p.id === s.provider ? "on" : ""} ${p.featured ? "featured" : ""}`}
                   disabled={busy}
-                  onClick={() => p.id !== s.provider && save("provider", { provider: p.id }, `Switched to ${p.name}.`, true)}
+                  onClick={() => (p.id === "gateway" ? pickGateway() : p.id !== s.provider && save("provider", { provider: p.id }, `Switched to ${p.name}.`, true))}
                 >
                   <span>
                     {p.featured && <b className="star">★</b>}

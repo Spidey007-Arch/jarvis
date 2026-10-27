@@ -96,6 +96,12 @@ class QuotaTracker:
             self.db.run(f"UPDATE quota_limits SET {column} = ? WHERE model = ?", [limit, name])
         self.db.run("UPDATE quota_limits SET blocked_until = ?, reason = ? WHERE model = ?", [until, reason, name])
 
+    def blocked_until(self, model: str, now: float | None = None) -> float | None:
+        """When a model whose quota ran out is usable again (epoch seconds), or None if it is usable now."""
+        row = self.db.one("SELECT blocked_until FROM quota_limits WHERE model = ?", [base_model(model)])
+        until = row["blocked_until"] if row else None
+        return until if until is not None and until > (now if now is not None else time.time()) else None
+
     def snapshot(self, models: list[str], now: float | None = None) -> dict[str, Any]:
         now = now if now is not None else time.time()
         day = quota_day(now)

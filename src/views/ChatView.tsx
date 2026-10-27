@@ -22,7 +22,12 @@ function ActionRow({ a, live, onAnswer }: { a: ActionEvent; live: boolean; onAns
         <div className="confirm-title">
           <span className="confirm-badge">PERMISSION</span> {a.label}
         </div>
-        {a.detail && a.detail !== "{}" && <code className="confirm-detail">{a.detail}</code>}
+        {a.detail && a.detail !== "{}" && (
+          <details className="confirm-more">
+            <summary>Show details</summary>
+            <code className="confirm-detail">{a.detail}</code>
+          </details>
+        )}
         <div className="confirm-buttons">
           <button className="allow" disabled={answered} onClick={() => { setAnswered(true); onAnswer(true); }}>Allow</button>
           <button className="deny" disabled={answered} onClick={() => { setAnswered(true); onAnswer(false); }}>Deny</button>

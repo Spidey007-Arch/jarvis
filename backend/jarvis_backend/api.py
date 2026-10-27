@@ -16,7 +16,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
-from . import briefing, permissions, public_apis, toolsearch
+from . import briefing, gateway, permissions, public_apis, toolsearch
 from .db import DB
 from .extraction import EXTRACT_SCHEMA, extract_prompt
 from .bridge import AgentBridge, AgentError, AgentUnavailable
@@ -965,6 +965,12 @@ def build_router(svc: Services, require_auth: Callable[..., None]) -> APIRouter:
     async def stop_all() -> dict[str, Any]:
         await _emergency_stop()
         return {"stopped": True}
+
+    @r.post("/gateway/start")
+    async def gateway_start() -> dict[str, Any]:
+        """Start the local AI gateway in the background (if it isn't running) and wait until it answers."""
+        cfg = svc.settings.provider_cfg("gateway")
+        return await gateway.ensure((cfg.get("base_url") or PRESETS["gateway"]["base_url"]).strip())
 
     @r.get("/autostart")
     async def autostart_status() -> dict[str, Any]:

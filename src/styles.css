@@ -534,7 +534,9 @@ label { display: flex; flex-direction: column; gap: 5px; font-size: 11px; letter
 }
 .confirm-title { font-size: 13.5px; }
 .confirm-badge { font-size: 9px; letter-spacing: 0.24em; color: var(--warn); margin-right: 6px; }
-.confirm-detail { font: 11px/1.4 Consolas, monospace; color: var(--dim); white-space: pre-wrap; word-break: break-all; }
+.confirm-more summary { cursor: pointer; font-size: 11px; color: var(--dim); letter-spacing: 0.04em; }
+.confirm-more[open] summary { margin-bottom: 4px; }
+.confirm-detail { display: block; font: 11px/1.4 Consolas, monospace; color: var(--dim); white-space: pre-wrap; word-break: break-all; }
 .confirm-buttons { display: flex; gap: 8px; }
 .confirm-buttons button { flex: 1; border-radius: 10px; padding: 7px 0; font-size: 12.5px; letter-spacing: 0.08em; border: 1px solid; background: transparent; }
 .confirm-buttons .allow { border-color: var(--warn); color: #241400; background: var(--warn); }

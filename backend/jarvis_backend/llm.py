@@ -1,19 +1,24 @@
 """Provider-agnostic access to the user's chosen AI: chat streaming, structured JSON, embeddings.
 
-Busy or rate-limited models (429 / 5xx) are put on a short cooldown and the next
-candidate is tried immediately, and the user is told which model answered.
+Switching is automatic. Busy or rate-limited models (429 / 5xx) are put on a cooldown and the next
+candidate is tried immediately; a model whose daily quota is used up is skipped until the quota resets
+(remembered across restarts); a model the provider no longer offers is skipped. When every model of the
+chosen provider is out, the local gateway (if installed) answers instead. The user is told which model
+answered.
 """
 from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import time
 from typing import Any, AsyncIterator, Awaitable, Callable, TypeVar
 
 from .providers import PRESETS, Provider, ProviderError, make_provider, provider_class
 from .providers.base import NETWORK_ERROR, NO_REPLY, Step, ToolCall, tools_unsupported
+from . import gateway
 from .settings import SettingsStore
-from .usage import QuotaTracker
+from .usage import QuotaTracker, next_reset
 
 log = logging.getLogger("jarvis.llm")
 
@@ -21,6 +26,9 @@ T = TypeVar("T")
 _COOLDOWN_S = 120.0
 _MAX_COOLDOWN_S = 1800.0
 FIRST_RESPONSE_TIMEOUT_S = 30.0
+_GONE_S = 6 * 3600.0  # a model the provider says doesn't exist (any more) is skipped this long
+_GONE = re.compile(r"not found|not supported|isn't supported|is not available|no longer available|deprecated|unknown model|"
+                   r"does not exist|decommissioned", re.I)
 MORE_TOOLS = "more_tools"  # the tool-search tool (toolsearch.py); handled here, inside the agent loop
 TRIM_AFTER_ROUNDS = 4
 KEEP_RESULTS = 4  # overloaded models can hang for minutes before admitting it
@@ -77,6 +85,9 @@ class LLM:
         self._models_retry_at = 0.0
         self._cooldown: dict[str, float] = {}
         self._failures: dict[str, int] = {}
+        self._backup: tuple[tuple[str, str], Provider, str] | None = None
+        self._backup_retry_at = 0.0
+        self._told: dict[tuple[str, str], float] = {}
         self.usage: QuotaTracker | None = None  # set by the app once the database is open
 
     # ---------- configuration ----------
@@ -175,8 +186,20 @@ class LLM:
 
     def model_state(self, name: str) -> dict[str, Any]:
         """Whether JARVIS is avoiding a model right now (it failed recently) and for how long."""
-        left = self._cooldown.get(name, 0) - time.monotonic()
+        left = self._usable_at(name) - time.monotonic()
         return {"cooling_s": max(0, round(left)), "recent_failures": self._failures.get(name, 0)}
+
+    def _usable_at(self, name: str) -> float:
+        """The monotonic time a model is usable again: a recent failure, or a used-up quota JARVIS remembers."""
+        at = self._cooldown.get(name, 0.0)
+        if self.usage:
+            try:
+                until = self.usage.blocked_until(name)
+            except Exception:  # noqa: BLE001 - quota bookkeeping must never break a reply
+                until = None
+            if until:
+                at = max(at, time.monotonic() + until - time.time())
+        return at
 
     async def test_model(self, name: str) -> dict[str, Any]:
         """One tiny request to a specific model: does it answer, and how fast."""
@@ -194,9 +217,22 @@ class LLM:
 
     def _available(self, names: list[str]) -> list[str]:
         now = time.monotonic()
-        ready = [n for n in names if self._cooldown.get(n, 0) <= now]
-        cooling = sorted((n for n in names if n not in ready), key=lambda n: self._cooldown.get(n, 0))
-        return ready + cooling  # still try busy models last, soonest-available first
+        at = {n: self._usable_at(n) for n in names}
+        ready = [n for n in names if at[n] <= now]
+        # Busy models are still tried last, soonest-available first; ones out for the day or gone are not tried at all
+        # while anything else is left (asking them again only costs seconds per reply).
+        cooling = sorted((n for n in names if n not in ready and at[n] - now < 3600), key=lambda n: at[n])
+        out = ready + cooling
+        return out or sorted(names, key=lambda n: at[n])[:1]
+
+    @staticmethod
+    def _gone(e: ProviderError) -> bool:
+        """The provider doesn't offer this model (any more): skip it rather than fail the reply."""
+        return not e.transient and (e.status == 404 or e.status in (400, 403) and bool(_GONE.search(str(e))))
+
+    def _drop(self, model: str, e: ProviderError) -> None:
+        log.warning("model unavailable; skipping it", extra={"fields": {"model": model, "error": str(e)[:200]}})
+        self._cooldown[model] = time.monotonic() + _GONE_S
 
     def _cool(self, model: str, e: ProviderError) -> None:
         """Back off from a busy model; models that keep failing are avoided for longer."""
@@ -206,15 +242,66 @@ class LLM:
         n = self._failures.get(model, 0) + 1
         self._failures[model] = n
         backoff = min(_COOLDOWN_S * 2 ** (n - 1), _MAX_COOLDOWN_S)
-        if e.status == 429 and "quota" in str(e).lower():
-            # A used-up daily quota will not come back in minutes, and asking again costs seconds per reply.
-            backoff = _MAX_COOLDOWN_S
-        self._cooldown[model] = time.monotonic() + max(e.retry_after or 0, backoff if not e.retry_after else 0, 5.0)
+        if e.status == 429 and "quota" in str(e).lower() and "minute" not in str(e).lower():
+            # A used-up daily quota comes back at the reset, not in minutes; until then the model is skipped.
+            self._cooldown[model] = time.monotonic() + max(next_reset() - time.time(), _MAX_COOLDOWN_S)
+        else:
+            self._cooldown[model] = time.monotonic() + max(e.retry_after or 0, backoff if not e.retry_after else 0, 5.0)
         if e.status == 429 and self.usage:
             try:
                 self.usage.rejected(model, str(e), e.retry_after)
             except Exception:  # noqa: BLE001 - quota bookkeeping must never break a reply
                 log.exception("could not record a quota rejection")
+
+    async def backup(self) -> tuple[Provider, str] | None:
+        """The local gateway as a backup when every model of the chosen provider is out: started if it isn't running.
+        None when the chosen provider is the gateway itself, or it isn't installed or doesn't answer."""
+        if self.provider_id == "gateway":
+            return None
+        cfg = self.settings.provider_cfg("gateway")
+        base = (cfg.get("base_url") or PRESETS["gateway"]["base_url"]).strip()
+        if time.monotonic() < self._backup_retry_at:
+            return None
+        if not await gateway.reachable(base):
+            # Not running: start it in the background (a cold start takes minutes) and use it from a later reply on.
+            if gateway.installed():
+                gateway.start_soon(base)
+            self._backup_retry_at = time.monotonic() + 60.0
+            return None
+        sig = (base, self.settings.api_key("gateway"))
+        if self._backup is None or self._backup[0] != sig:
+            p = make_provider("gateway", sig[1], base)
+            try:
+                models = await _timed(p.list_models(), 10.0)
+            except ProviderError:
+                self._backup_retry_at = time.monotonic() + 300.0
+                await p.aclose()
+                return None
+            model = cfg.get("chat_model") or provider_class("gateway").pick_chat(models)
+            if not model:
+                await p.aclose()
+                return None
+            p.on_usage = self._tokens
+            self._backup = (sig, p, model)
+        return self._backup[1], self._backup[2]
+
+    def _switched(self, on_notice: Callable[[str], None] | None, preferred: str, model: str) -> None:
+        """Say once in a while (not on every reply) that another model answered, and why."""
+        if not on_notice or time.monotonic() < self._told.get((preferred, model), 0.0):
+            return
+        self._told[(preferred, model)] = time.monotonic() + 3600.0
+        until = self.usage.blocked_until(preferred) if self.usage else None
+        if until:
+            back = time.strftime("%H:%M", time.localtime(until))
+            on_notice(f"{preferred} has used up today's quota (back at {back}), so {model} is answering until then.")
+        else:
+            on_notice(f"{preferred} is busy right now; this reply came from {model}.")
+
+    def _via_backup(self, on_notice: Callable[[str], None] | None, model: str) -> None:
+        log.info("answering through the gateway", extra={"fields": {"model": model}})
+        if on_notice:
+            on_notice(f"Every {PRESETS[self.provider_id]['name']} model is busy or out of quota; this reply came through the "
+                      f"local gateway ({model}).")
 
     async def advise(self, prompt: str) -> str | None:
         """Ask the strongest available model (the provider's pick) for a short review; None if it can't answer."""
@@ -269,7 +356,8 @@ class LLM:
         names = [utility] + p.fallbacks(models, primary) + [primary]
         return self._available(list(dict.fromkeys(n for n in names if n)))
 
-    async def _first_success(self, candidates: list[str], call: Callable[[str], Awaitable[T]], timeout: float = FIRST_RESPONSE_TIMEOUT_S) -> T:
+    async def _first_success(self, candidates: list[str], call: Callable[[str], Awaitable[T]], timeout: float = FIRST_RESPONSE_TIMEOUT_S,
+                             backup_call: Callable[[Provider, str], Awaitable[T]] | None = None) -> T:
         last: ProviderError | None = None
         last_model = candidates[0] if candidates else None
         queue, retried = list(candidates), set()
@@ -280,6 +368,10 @@ class LLM:
                 self._ok(model)
                 return result
             except ProviderError as e:
+                if self._gone(e):
+                    self._drop(model, e)
+                    last, last_model = e, model
+                    continue
                 if not e.transient:
                     raise describe(e, self.provider_id, model) from e
                 if e.status == NETWORK_ERROR and model not in retried:
@@ -289,6 +381,11 @@ class LLM:
                     continue
                 self._cool(model, e)
                 last, last_model = e, model
+        if backup_call and (b := await self.backup()):
+            try:
+                return await _timed(backup_call(*b), timeout)
+            except ProviderError as e:
+                log.warning("the gateway could not answer either", extra={"fields": {"error": str(e)[:200]}})
         raise describe(last, self.provider_id, last_model) if last else LLMError("No model is available.")
 
     # ---------- operations ----------
@@ -314,13 +411,17 @@ class LLM:
                         break
                     if not text:
                         continue
-                    if not started and model != preferred and on_notice:
-                        on_notice(f"{preferred} is busy right now; this reply came from {model}.")
+                    if not started and model != preferred:
+                        self._switched(on_notice, preferred, model)
                     started = True
                     yield text
                 self._ok(model)
                 return
             except ProviderError as e:
+                if not started and self._gone(e):
+                    self._drop(model, e)
+                    last, last_model = e, model
+                    continue
                 if started or not e.transient:
                     raise describe(e, self.provider_id, model) from e
                 if e.status == NETWORK_ERROR and model not in retried:
@@ -330,11 +431,26 @@ class LLM:
                     continue
                 self._cool(model, e)
                 last, last_model = e, model
+        if b := await self.backup():
+            bp, bm = b
+            started = False
+            try:
+                async for text in bp.stream_chat(bm, system, history):
+                    if text and not started:
+                        started = True
+                        self._via_backup(on_notice, bm)
+                    yield text
+                return
+            except ProviderError as e:
+                if started:
+                    raise describe(e, "gateway", bm) from e
+                log.warning("the gateway could not answer either", extra={"fields": {"error": str(e)[:200]}})
         raise describe(last, self.provider_id, last_model) if last else LLMError("No model is available.")
 
     async def generate_json(self, prompt: str, schema: dict[str, Any]) -> Any:
         p = self.provider()
-        return await self._first_success(await self._utility_candidates(), lambda m: p.generate_json(m, prompt, schema))
+        return await self._first_success(await self._utility_candidates(), lambda m: p.generate_json(m, prompt, schema),
+                                         backup_call=lambda bp, bm: bp.generate_json(bm, prompt, schema))
 
     async def embed(self, texts: list[str], task: str) -> list[list[float]]:
         if not self.can_embed:
@@ -392,6 +508,10 @@ class LLM:
             except ProviderError as e:
                 if tools_unsupported(e):
                     raise ToolsUnsupported(str(e)) from e
+                if self._gone(e):
+                    self._drop(candidate, e)
+                    last, last_model = e, candidate
+                    continue
                 if not e.transient:
                     raise describe(e, self.provider_id, candidate) from e
                 if e.status == NETWORK_ERROR and candidate not in retried:
@@ -401,13 +521,24 @@ class LLM:
                     continue
                 self._cool(candidate, e)
                 last, last_model = e, candidate
+        if (step is None or model is None) and (b := await self.backup()):
+            bp, bm = b
+            backup_session = bp.tool_session(system, history, tools)
+            backup_session.effort = session.effort
+            backup_session.via_backup = True  # its later steps stay on the gateway
+            try:
+                step = await _timed(backup_session.step(bm))
+                model, session = bm, backup_session
+                self._via_backup(on_notice, bm)
+            except ProviderError as e:
+                log.warning("the gateway could not answer either", extra={"fields": {"error": str(e)[:200]}})
         if step is None or model is None:
             if last is not None and last.status == 429:
                 raise LLMError(f"Every available {PRESETS[self.provider_id]['name']} model is out of quota right now. {last} "
                                "Try again later, or connect a key with more quota in Settings.")
             raise describe(last, self.provider_id, last_model) if last else LLMError("No model is available.")
-        if model != preferred and on_notice:
-            on_notice(f"{preferred} is busy right now; this reply came from {model}.")
+        if model != preferred and not getattr(session, "via_backup", False):
+            self._switched(on_notice, preferred, model)
 
         rounds = 0
         while rounds < (max_rounds() if callable(max_rounds) else max_rounds):  # a planned task may raise the limit
@@ -462,7 +593,7 @@ class LLM:
                 err = e
         if err.transient:
             self._cool(model, err)
-            if session.portable:
+            if session.portable and not getattr(session, "via_backup", False):
                 backups = [m for m in await self._chat_candidates() if m != model][:3]
                 for other in backups:
                     try:

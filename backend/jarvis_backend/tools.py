@@ -171,9 +171,10 @@ TOOLS: list[ToolSpec] = [
              "(git, python, npm, winget install/upgrade, pip, building or running code, system queries, editing settings via commands, "
              "managing services). cwd is the folder to run in (default: home); shell 'cmd' for cmd.exe syntax; timeout seconds "
              "(default 120, max 600); background=true starts a long-running process (a server, a watcher) and returns its pid and log. "
-             "Commands that delete, uninstall, kill or reset ask the user first; ones that would break Windows are refused.",
-             obj({"command": S, "cwd": S, "shell": S, "timeout": I, "background": B}, ["command"]),
-             risk="confirm", agent_action="run_command", timeout=620, label="Run: {command}"),
+             "Commands that delete, uninstall, kill or reset ask the user first; ones that would break Windows are refused. "
+             "purpose: what the command does in a few plain words (e.g. 'Checking WhatsApp crash logs'); it is what the user sees.",
+             obj({"command": S, "purpose": S, "cwd": S, "shell": S, "timeout": I, "background": B}, ["command", "purpose"]),
+             risk="confirm", agent_action="run_command", timeout=620, label="{purpose}"),
     ToolSpec("read_file", "Read a text or code file with line numbers. offset is the first line (default 1), limit the number of lines "
              "(default 400). Read before you edit.",
              obj({"path": S, "offset": I, "limit": I}, ["path"]), agent_action="read_file", label="Reading {path}"),
@@ -263,10 +264,15 @@ OBSERVE_TOOLS = frozenset({"look_at_screen", "system_status", "clipboard_get", "
 BY_NAME = {t.name: t for t in TOOLS}
 
 
+FALLBACK_LABELS = {"run_command": "Running a command"}
+
+
 def describe_call(spec: ToolSpec, args: dict[str, Any]) -> str:
     class Safe(dict):
         def __missing__(self, k: str) -> str:
             return ""
 
     shown = {k: (" + ".join(v) if isinstance(v, list) else str(v)) for k, v in args.items()}
-    return (spec.label or spec.name).format_map(Safe(shown)).strip()
+    shown = {k: v if len(v) <= 60 else v[:57].rstrip() + "..." for k, v in shown.items()}  # a step names things; it never dumps them
+    label = (spec.label or spec.name).format_map(Safe(shown)).strip()
+    return label or FALLBACK_LABELS.get(spec.name, spec.name.replace("_", " ").capitalize())
