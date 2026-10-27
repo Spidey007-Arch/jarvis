@@ -24,7 +24,7 @@ from .llm import LLM, AgentIncomplete, LLMError, LLMNotConfigured, ToolsUnsuppor
 from .providers.base import DYNAMIC_MARK, ToolCall
 from .monitor import Monitor
 from .reminders import ReminderError, Reminders
-from .research import ResearchError, web_research
+from .research import ResearchError, read_webpage, web_research
 from .live import LiveError, LiveVoice
 from .initiative import Initiative
 from .skills import guidance as skill_guidance
@@ -447,6 +447,8 @@ def build_router(svc: Services, require_auth: Callable[..., None]) -> APIRouter:
             return await svc.bridge.call(spec.agent_action, args, timeout=spec.timeout)
         if spec.name == "web_research":
             return await web_research(str(args.get("query", "")))
+        if spec.name == "read_webpage":
+            return await read_webpage(str(args.get("url", "")), str(args.get("question") or ""))
         if spec.name == "look_at_screen":
             shot = await svc.bridge.call("capture_screen", {}, timeout=20)
             path = Path(shot["path"])

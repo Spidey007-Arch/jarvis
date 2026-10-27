@@ -44,8 +44,12 @@ SYNONYMS = {
     "paste": "clipboard_get", "gpu": "hardware_info", "temperature": "hardware_info", "hot": "hardware_info",
     "process": "list_processes kill_process", "kill": "kill_process", "close": "close_app window_control", "edit": "edit_file write_file",
     "write": "write_file edit_file", "code": "write_file edit_file run_command", "screenshot": "screenshot", "scroll": "screen_scroll",
-    "drag": "screen_drag", "select": "select_files", "startup": "autostart", "start": "autostart", "pdf": "read_pdf",
-    "word": "create_document", "excel": "create_document", "powerpoint": "create_document", "document": "create_document",
+    "drag": "screen_drag", "select": "select_files", "startup": "autostart", "start": "autostart",
+    "word": "create_document read_document", "excel": "create_document read_document", "powerpoint": "create_document read_document",
+    "document": "create_document read_document", "pdf": "read_document create_document", "report": "create_document read_document",
+    "slides": "create_document", "presentation": "create_document", "spreadsheet": "create_document read_document",
+    "file": "read_document find_files", "read": "read_document read_webpage",
+    "link": "read_webpage", "url": "read_webpage", "page": "read_webpage", "website": "read_webpage", "article": "read_webpage", "store": "store_file stored_files",
 }
 
 _STOP = {"the", "a", "an", "to", "and", "or", "of", "in", "on", "for", "my", "me", "please", "can", "you", "it", "this", "that",

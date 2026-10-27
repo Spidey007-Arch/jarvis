@@ -52,7 +52,7 @@ _COMMANDS: list[tuple[str, re.Pattern[str]]] = [
 
 _SCREEN = frozenset({"look_at_screen", "screenshot", "read_window", "screen_click", "screen_drag", "click_text", "find_controls"})
 _MESSAGES = frozenset({"gmail_list", "gmail_open", "whatsapp_chats", "whatsapp_read"})
-_CHANGE_FILES = frozenset({"write_file", "edit_file", "create_folder", "move_path", "copy_path", "organize_folder"})
+_CHANGE_FILES = frozenset({"write_file", "edit_file", "create_folder", "move_path", "copy_path", "organize_folder", "create_document"})
 
 
 def capability(spec: ToolSpec, args: dict[str, Any]) -> str | None:

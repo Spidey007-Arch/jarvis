@@ -6,3 +6,9 @@ psutil
 pydantic
 uvicorn
 websockets
+# documents (read and create, locally)
+pypdf
+python-docx
+openpyxl
+python-pptx
+fpdf2

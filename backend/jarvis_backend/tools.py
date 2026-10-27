@@ -48,6 +48,9 @@ TOOLS: list[ToolSpec] = [
              obj({"query": S, "engine": S, "browser": S}, ["query"]), agent_action="web_search", label="Searching for {query}"),
     ToolSpec("web_research", "Search the web yourself and read the top results to answer a factual or current-events question directly, with sources. Use this instead of web_search when the user wants an answer, not a browser tab.",
              obj({"query": S}, ["query"]), timeout=60, label="Researching {query}"),
+    ToolSpec("read_webpage", "Read one web page or online PDF the user names or that came up in research, and get the passages "
+             "answering question (or the start of the page). Use it to check a source or follow a link. Public internet only.",
+             obj({"url": S, "question": S}, ["url"]), timeout=60, label="Reading {url}"),
     # Shopping and food ordering run in JARVIS's own browser window (its own profile; the user signs in there once).
     ToolSpec("web_open", "Open a page in JARVIS's shopping browser window, e.g. a store's search URL: https://www.amazon.in/s?k=..., "
              "https://www.flipkart.com/search?q=..., https://www.swiggy.com/search?query=..., https://www.zomato.com, https://www.dominos.co.in. "
@@ -185,6 +188,26 @@ TOOLS: list[ToolSpec] = [
              obj({"page": S}), agent_action="open_settings", label="Opening settings"),
     ToolSpec("set_reminder", "Set a reminder that JARVIS says out loud at a local date-time. due must be ISO format YYYY-MM-DDTHH:MM in the user's local time.",
              obj({"text": S, "due": S}, ["text", "due"]), label="Setting a reminder"),
+    # Documents, read and made on this PC (no AI service involved in the reading or the making)
+    ToolSpec("read_document", "Read a PDF, Word, Excel, PowerPoint, text file or image (by path or file-store id). With question: "
+             "the passages that best answer it, each with its page/slide/sheet; with pages ('3' or '2-5'): those parts; with "
+             "neither: the start. Quote the exact words you use and say where they are.",
+             obj({"file": S, "question": S, "pages": S}, ["file"]), agent_action="read_document", timeout=120,
+             label="Reading {file}"),
+    ToolSpec("store_file", "Keep a file in JARVIS's own file store: copied and read once, so later questions about it are instant "
+             "and work even if the original moves. Use when the user will ask about a document more than once.",
+             obj({"path": S}, ["path"]), agent_action="store_file", timeout=120, label="Keeping {path}"),
+    ToolSpec("stored_files", "List the files in JARVIS's file store (id, name, when added).", obj(), agent_action="stored_files",
+             label="Checking stored files"),
+    ToolSpec("forget_file", "Remove a file from JARVIS's file store (the original is not touched).", obj({"id": S}, ["id"]),
+             agent_action="forget_file", label="Removing {id} from the store"),
+    ToolSpec("create_document", "Create a Word (docx), Excel (xlsx), PowerPoint (pptx) or PDF file. content is markdown-style "
+             "text: # / ## / ### headings, - bullets, | tables |, paragraphs. PowerPoint: each # or ## heading starts a slide "
+             "with the lines under it as bullets. Excel: each # heading starts a sheet; rows are | table | lines or "
+             "comma-separated lines, the first row is the header. Saved to Documents\\JARVIS unless path is given; never "
+             "overwrites. open=true opens it after.",
+             obj({"kind": S, "title": S, "content": S, "path": S, "open": B}, ["kind", "content"]), risk="confirm",
+             agent_action="create_document", timeout=120, label="Creating {kind}: {title}"),
     ToolSpec("set_plan", "For a job of three or more steps, post the plan first (the user sees it in a task panel and can pause, "
              "take over or stop it), then call again with current set to the index of the step you are starting as you go. "
              "steps: short imperative phrases. Re-plan with new steps if the plan changes.",
@@ -218,7 +241,8 @@ STEPWISE_TOOLS = frozenset({"set_plan", "press_keys", "type_text", "volume", "me
 OBSERVE_TOOLS = frozenset({"look_at_screen", "system_status", "clipboard_get", "list_folder", "find_files", "list_reminders", "web_read",
                            "gmail_list", "gmail_open", "whatsapp_chats", "whatsapp_read", "find_apis", "call_api",
                            "read_file", "list_processes", "run_command", "find_controls", "read_window", "list_windows",
-                           "hardware_info", "recent_files", "recent_downloads"})
+                           "hardware_info", "recent_files", "recent_downloads",
+                           "read_document", "stored_files", "read_webpage"})
 
 BY_NAME = {t.name: t for t in TOOLS}
 
