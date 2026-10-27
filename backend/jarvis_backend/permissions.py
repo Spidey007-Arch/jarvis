@@ -26,6 +26,7 @@ CAPABILITIES: dict[str, tuple[str, bool]] = {
     "see_screen": ("Look at and read the screen", False),
     "read_messages": ("Read Gmail and WhatsApp", False),
     "downloads": ("Download files", False),
+    "connectors": ("Act through connectors (Slack, Notion, GitHub...): reading is always allowed", False),
 }
 POLICIES = ("allow", "ask", "block")
 ALLOWED_BY_DEFAULT = frozenset({"see_screen", "read_messages", "downloads"})
@@ -58,6 +59,8 @@ _CHANGE_FILES = frozenset({"write_file", "edit_file", "create_folder", "move_pat
 def capability(spec: ToolSpec, args: dict[str, Any]) -> str | None:
     """The kind of action a tool call is, or None when it needs no permission."""
     name = spec.name
+    if spec.risk in ("connector", "connector_read"):  # a connector tool: reading needs no permission, changing does
+        return None if spec.risk == "connector_read" else "connectors"
     if name == "screen_click" and RISKY_CLICK.search(str(args.get("target", ""))) or \
             name == "click_text" and RISKY_CLICK.search(str(args.get("text", ""))):
         return "send_or_pay"

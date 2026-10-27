@@ -374,6 +374,15 @@ label { display: flex; flex-direction: column; gap: 5px; font-size: 11px; letter
 .model-meta { font-size: 10.5px; white-space: nowrap; }
 .model-test { padding: 3px 8px; font-size: 10px; }
 
+/* connectors */
+.connectors { list-style: none; margin: 8px 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.connectors li { display: grid; grid-template-columns: auto auto minmax(0, 1fr) auto auto; align-items: center; gap: 8px; font-size: 12.5px; }
+.connectors .dot { width: 8px; height: 8px; border-radius: 50%; }
+.dot.bad { background: var(--bad, #ff6b6b); }
+.conn-meta { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.connectors button { padding: 3px 8px; font-size: 10px; }
+.field-row.tight { margin-top: 0; }
+
 /* settings sidebar */
 .settings-shell { display: grid; grid-template-columns: 150px minmax(0, 1fr); gap: 14px; align-items: start; }
 .settings-nav { position: sticky; top: 0; display: flex; flex-direction: column; gap: 4px; }

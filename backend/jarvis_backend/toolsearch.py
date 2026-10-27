@@ -73,22 +73,27 @@ def _expand(text: str) -> set[str]:
     return words
 
 
-def find(need: str, limit: int = 8, exclude: set[str] | frozenset[str] = frozenset()) -> list[dict[str, Any]]:
-    """Tool schemas matching a description of what is needed, best first."""
+def find(need: str, limit: int = 8, exclude: set[str] | frozenset[str] = frozenset(),
+         extra: list[dict[str, Any]] | None = None) -> list[dict[str, Any]]:
+    """Tool schemas matching a description of what is needed, best first (extra: connectors' tools too)."""
     want = _expand(need)
+    pool = {name: (words, _BY_NAME[name].schema()) for name, words in _INDEX.items()}
+    for t in extra or []:  # a connector's name counts strongly: "on slack" should bring Slack's tools
+        server = t["name"].split("__")[0]
+        pool[t["name"]] = (_words(t["name"].replace("__", " ").replace("_", " ") + " " + t["description"]) | {server}, t)
     scored = []
-    for name, words in _INDEX.items():
+    for name, (words, _schema) in pool.items():
         if name in exclude:
             continue
-        score = len(want & words) + (3 if name in want else 0)
+        score = len(want & words) + (3 if name in want or name.split("__")[0] in want else 0)
         if score:
             scored.append((score, name))
     scored.sort(key=lambda x: (-x[0], x[1]))
-    return [_BY_NAME[n].schema() for _, n in scored[:limit]]
+    return [pool[n][1] for _, n in scored[:limit]]
 
 
-def select(request: str, recent: str = "") -> list[dict[str, Any]]:
+def select(request: str, recent: str = "", extra: list[dict[str, Any]] | None = None) -> list[dict[str, Any]]:
     """The tools to send with a request: the core set, what matches it, and more_tools."""
     core = [_BY_NAME[n].schema() for n in CORE if n in _BY_NAME]
-    matched = find(request + " " + recent, limit=EXTRA, exclude=frozenset(CORE))
+    matched = find(request + " " + recent, limit=EXTRA, exclude=frozenset(CORE), extra=extra)
     return core + matched + [MORE_TOOLS_SCHEMA]

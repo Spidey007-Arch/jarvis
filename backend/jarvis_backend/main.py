@@ -27,6 +27,7 @@ from .usage import QuotaTracker
 from .llm import LLM
 from .memory import MemoryStore
 from .monitor import Monitor
+from .connectors import Connectors
 from .skills import Skills
 from .tasks import Tasks
 from .reminders import Reminders
@@ -80,7 +81,8 @@ def create_app(port: int, token: str | None = None) -> FastAPI:
     llm.usage = QuotaTracker(db)
     llm.usage.prune()
     services = Services(settings=settings, llm=llm, db=db, memory=MemoryStore(db, llm), bridge=bridge, reminders=Reminders(db, bridge),
-                        monitor=Monitor(bridge, settings), tasks=Tasks(db), skills=Skills(db))
+                        monitor=Monitor(bridge, settings), tasks=Tasks(db), skills=Skills(db),
+                        connectors=Connectors(settings))
 
     async def daily_maintenance() -> None:
         while True:
@@ -109,6 +111,7 @@ def create_app(port: int, token: str | None = None) -> FastAPI:
             monitor.cancel()
             if initiative:
                 initiative.cancel()
+            await services.connectors.close()
             db.close()
             _remove_runtime()
             log.info("backend stopped")

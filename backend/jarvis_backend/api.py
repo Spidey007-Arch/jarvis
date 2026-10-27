@@ -10,7 +10,7 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Awaitable, Callable
+from typing import Any, Awaitable, Callable, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -26,6 +26,7 @@ from .monitor import Monitor
 from .reminders import ReminderError, Reminders
 from .research import ResearchError, read_webpage, web_research
 from .live import LiveError, LiveVoice
+from .connectors import ConnectorError
 from .initiative import Initiative
 from .skills import guidance as skill_guidance
 from .tasks import TaskStopped
@@ -71,6 +72,7 @@ class Services:
     tasks: Any = None  # Tasks: task mode (tasks.py)
     initiative: Any = None  # Initiative: welcome back and follow-ups (initiative.py), created with the router
     skills: Any = None  # Skills: learned workflows (skills.py)
+    connectors: Any = None  # Connectors: MCP servers as tools (connectors.py)
     recent_paths: list[dict[str, Any]] = field(default_factory=list)  # files JARVIS worked with lately, newest last
     emergency_stop: Callable[[], Awaitable[None]] | None = None  # set by the router
     offline_voice_until: float = 0.0  # Live voice paused until then: the connection was too slow for it
@@ -157,6 +159,17 @@ class SettingsIn(BaseModel):
     base_url: str | None = Field(default=None, max_length=300)
     chat_model: str | None = None
     embed_model: str | None = None
+
+
+class ConnectorIn(BaseModel):
+    name: str = Field(min_length=1, max_length=40)
+    kind: Literal["local", "web"] = "local"
+    command: str = Field(default="", max_length=300)
+    args: list[str] = Field(default_factory=list, max_length=40)
+    url: str = Field(default="", max_length=500)
+    enabled: bool = True
+    token: str | None = Field(default=None, max_length=4000)  # web: sent as a Bearer token; None keeps the saved one
+    env: dict[str, str] | None = None  # local: secret environment values, e.g. {"NOTION_TOKEN": "..."}
 
 
 class ModelTestIn(BaseModel):
@@ -455,6 +468,11 @@ def build_router(svc: Services, require_auth: Callable[..., None]) -> APIRouter:
         return {"x": x / 1000, "y": y / 1000, "label": str(spot.get("label") or "")[:80], "kind": spot.get("kind")}
 
     async def _run_tool(spec: ToolSpec, args: dict[str, Any]) -> Any:
+        if spec.risk in ("connector", "connector_read"):
+            try:
+                return await svc.connectors.call(spec.name, args)
+            except ConnectorError as e:
+                raise ToolFailure(str(e)) from e
         if spec.agent_action:
             return await svc.bridge.call(spec.agent_action, args, timeout=spec.timeout)
         if spec.name == "web_research":
@@ -536,9 +554,19 @@ def build_router(svc: Services, require_auth: Callable[..., None]) -> APIRouter:
             return svc.reminders.cancel(str(args.get("id", "")))
         raise ToolFailure(f"Tool '{spec.name}' has no implementation.")
 
+    def _spec(name: str) -> ToolSpec | None:
+        """A built-in tool, or a connector's tool (its permission depends on whether it only reads)."""
+        if name in BY_NAME:
+            return BY_NAME[name]
+        t = svc.connectors.tools.get(name) if svc.connectors else None
+        if not t:
+            return None
+        return ToolSpec(name, t["schema"]["description"], t["schema"]["parameters"], risk="connector_read" if t["read_only"] else "connector",
+                        timeout=130, label=f"{t['server']}: {t['tool'].replace('_', ' ')}")
+
     async def _execute(call: ToolCall, queue: asyncio.Queue, actions: list[dict[str, Any]]) -> dict[str, Any]:
         """Run one tool call for the AI, asking first for risky ones. Always returns the real outcome."""
-        spec = BY_NAME.get(call.name)
+        spec = _spec(call.name)
         if spec is None:
             return {"ok": False, "error": f"There is no tool named '{call.name}'."}
         args = {k: v for k, v in call.args.items() if not k.startswith("_")}
@@ -628,7 +656,7 @@ def build_router(svc: Services, require_auth: Callable[..., None]) -> APIRouter:
     async def _live_tool(name: str, args: dict[str, Any]) -> dict[str, Any]:
         """A tool call made by the live voice model. One that needs a yes runs only after the user says yes out loud
         in a later turn (the voice gate already makes sure that is the owner speaking)."""
-        spec = BY_NAME.get(name)
+        spec = _spec(name)
         if spec is None:
             return {"ok": False, "error": f"There is no tool named '{name}'."}
         decision, cap = permissions.decide(spec, args, svc.settings.get("permissions"), bool(svc.settings.get("full_control")))
@@ -962,6 +990,51 @@ def build_router(svc: Services, require_auth: Callable[..., None]) -> APIRouter:
             raise HTTPException(status_code=404, detail="No such workflow.")
         return {"forgotten": skill_id}
 
+    @r.get("/connectors")
+    async def list_connectors() -> list[dict[str, Any]]:
+        out = []
+        for c in svc.connectors.configs():
+            secrets = json.loads(svc.settings.service_key(f"connector:{c['name']}") or "{}")
+            out.append({**{k: c.get(k) for k in ("name", "kind", "command", "args", "url", "enabled")},
+                        "has_token": bool(secrets.get("token")), "env_names": sorted(secrets.get("env", {})),
+                        **svc.connectors.status.get(c["name"], {"state": "not started" if c.get("enabled", True) else "off"})})
+        return out
+
+    @r.put("/connectors")
+    async def save_connector(body: ConnectorIn) -> dict[str, Any]:
+        name = re.sub(r"[^a-z0-9_-]", "-", body.name.strip().lower())[:30].strip("-")
+        if not name:
+            raise HTTPException(status_code=400, detail="Give the connector a name.")
+        if body.kind == "web" and not body.url.startswith(("https://", "http://")):
+            raise HTTPException(status_code=400, detail="A web connector needs its https address.")
+        if body.kind == "local" and not body.command.strip():
+            raise HTTPException(status_code=400, detail="A local connector needs the command that starts it, e.g. npx.")
+        items = [c for c in svc.connectors.configs() if c["name"] != name]
+        items.append({"name": name, "kind": body.kind, "command": body.command.strip(), "args": body.args, "url": body.url.strip(),
+                      "enabled": body.enabled})
+        svc.settings.set_connectors(items)
+        old = json.loads(svc.settings.service_key(f"connector:{name}") or "{}")
+        secrets = {"token": body.token if body.token is not None else old.get("token", ""),
+                   "env": {**old.get("env", {}), **(body.env or {})}}
+        svc.settings.set_service_key(f"connector:{name}", json.dumps(secrets))
+        await svc.connectors.drop(name)
+        if body.enabled:
+            await svc.connectors.ensure()
+        return {"name": name, **svc.connectors.status.get(name, {"state": "off"})}
+
+    @r.post("/connectors/{name}/connect")
+    async def retry_connector(name: str) -> dict[str, Any]:
+        await svc.connectors.drop(name)
+        await svc.connectors.ensure()
+        return {"name": name, **svc.connectors.status.get(name, {"state": "not configured"})}
+
+    @r.delete("/connectors/{name}")
+    async def delete_connector(name: str) -> dict[str, Any]:
+        await svc.connectors.drop(name)
+        svc.settings.set_connectors([c for c in svc.connectors.configs() if c["name"] != name])
+        svc.settings.set_service_key(f"connector:{name}", "")
+        return {"removed": name}
+
     @r.get("/permissions")
     async def get_permissions() -> list[dict[str, Any]]:
         return permissions.overview(svc.settings.get("permissions"), bool(svc.settings.get("full_control")))
@@ -1061,6 +1134,10 @@ def build_router(svc: Services, require_auth: Callable[..., None]) -> APIRouter:
                 if earlier and earlier.get("summary"):  # compaction: the start of a long conversation, summarised
                     history = [("user", f"[Summary of the earlier part of this conversation]\n{earlier['summary']}"),
                                ("model", "Understood; carrying on from there.")] + history
+                connector_tools: list[dict[str, Any]] = []
+                if svc.connectors and svc.connectors.configs():
+                    await svc.connectors.ensure()
+                    connector_tools = svc.connectors.schemas()
                 skill = svc.skills.match(text)
                 if skill:
                     system += "\n\n" + skill_guidance(skill)
@@ -1103,9 +1180,11 @@ def build_router(svc: Services, require_auth: Callable[..., None]) -> APIRouter:
                     return out
 
                 agent_task = asyncio.create_task(
-                    svc.llm.run_agent(system, history, toolsearch.select(text, " ".join(c for _r, c in history[-3:-1])), execute,
+                    svc.llm.run_agent(system, history, toolsearch.select(text, " ".join(c for _r, c in history[-3:-1]), extra=connector_tools),
+                                      execute,
                                       on_notice=lambda m: queue.put_nowait(("notice", {"message": m})),
-                                      max_rounds=lambda: task.max_rounds, find_tools=toolsearch.find,
+                                      max_rounds=lambda: task.max_rounds,
+                                      find_tools=lambda need: toolsearch.find(need, extra=connector_tools),
                                       # a planned multi-step task thinks harder; a quick request answers fast
                                       effort=lambda: "high" if task.plan else "medium",
                                       on_thought=lambda t: setattr(task, "thought", t[-400:]),

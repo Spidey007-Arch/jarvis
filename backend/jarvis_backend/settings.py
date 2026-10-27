@@ -28,6 +28,7 @@ DEFAULTS: dict[str, Any] = {
     "voice_enabled": True,
     "startup_briefing": True,  # JARVIS speaks first on launch: system health, open apps and processes
     "onboarded": False,  # the first-run setup was finished (or skipped); existing installs with a key count as done
+    "connectors": [],  # MCP servers: {name, kind: local|web, command, args, url, enabled}; their secrets live in secrets
     "presence_greetings": True,  # welcome the user back after they have been away a while
     "followups": True,  # follow up on its own on a conversation left hanging (initiative.py)
     "permissions": {},  # capability -> allow | ask | block (permissions.py); unset ones follow full_control
@@ -160,7 +161,12 @@ class SettingsStore:
     def service_keys(self) -> list[str]:
         """Names of the public APIs that have a saved key (not the keys)."""
         with self._lock:
-            return sorted(k.split(":", 1)[1] for k in self._data["secrets"] if k.startswith("service_key:"))
+            return sorted(k.split(":", 1)[1] for k in self._data["secrets"] if k.startswith("service_key:") and not k.startswith("service_key:connector:"))
+
+    def set_connectors(self, items: list[dict[str, Any]]) -> None:
+        with self._lock:
+            self._data["connectors"] = items
+            self._save()
 
     def public(self) -> dict[str, Any]:
         pid = self.provider

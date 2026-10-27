@@ -188,6 +188,28 @@ export const getModelStatus = (c: Connection) => call<{ current: string; models:
 export const testModel = (c: Connection, model: string) =>
   call<{ model: string; ok: boolean; ms?: number; error?: string }>(c, "/api/models/test", { method: "POST", body: JSON.stringify({ model }) });
 
+export interface Connector {
+  name: string;
+  kind: "local" | "web";
+  command?: string;
+  args?: string[];
+  url?: string;
+  enabled: boolean;
+  has_token: boolean;
+  env_names: string[];
+  state: string; // connected | error | not started | off
+  tools?: number;
+  server?: string;
+  error?: string;
+}
+export const getConnectors = (c: Connection) => call<Connector[]>(c, "/api/connectors");
+export const saveConnector = (c: Connection, body: Record<string, unknown>) =>
+  call<{ name: string; state: string; tools?: number; error?: string }>(c, "/api/connectors", { method: "PUT", body: JSON.stringify(body) });
+export const retryConnector = (c: Connection, name: string) =>
+  call<{ state: string }>(c, `/api/connectors/${encodeURIComponent(name)}/connect`, { method: "POST" });
+export const deleteConnector = (c: Connection, name: string) =>
+  call<{ removed: string }>(c, `/api/connectors/${encodeURIComponent(name)}`, { method: "DELETE" });
+
 export type Policy = "allow" | "ask" | "block";
 export interface Permission {
   id: string;
