@@ -84,6 +84,9 @@ export interface QuotaModel {
   state: "ready" | "out";
   reason: string | null;
   until: number | null; // epoch seconds
+  tokens_in?: number;
+  tokens_out?: number;
+  tokens_cached?: number; // read from the provider's cache: cheaper and faster
 }
 export interface Quota {
   provider: string;
@@ -91,6 +94,7 @@ export interface Quota {
   day: string;
   resets_at: number;
   models: QuotaModel[];
+  tokens?: { input: number; output: number; cached: number };
 }
 export const getQuota = (c: Connection) => call<Quota>(c, "/api/quota");
 

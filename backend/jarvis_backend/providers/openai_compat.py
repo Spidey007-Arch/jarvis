@@ -9,6 +9,7 @@ from typing import Any, AsyncIterator
 import httpx
 
 from .base import NETWORK_ERROR, NETWORK_EXCEPTIONS, Provider, ProviderError, Step, ToolCall, ToolSession, json_instruction, merge_turns, parse_json_loose
+from .base import split_system, stub, usage_of, with_context
 
 _NOT_CHAT = re.compile(
     r"whisper|tts|dall-e|davinci|babbage|moderation|image|audio|realtime|transcribe|embed|search|computer-use|sora|codex-mini"
@@ -91,9 +92,17 @@ class OpenAICompatProvider(Provider):
         return sorted(out, key=lambda x: x["name"])
 
     def _messages(self, system: str, history: list[tuple[str, str]]) -> list[dict[str, str]]:
-        msgs = [{"role": "system", "content": system}] if system else []
-        msgs += [{"role": "assistant" if r == "model" else "user", "content": t} for r, t in merge_turns(history)]
+        # Fixed instructions first and the changing context in the latest user turn: servers that cache a
+        # repeated prefix (OpenAI, DeepSeek, many gateways) can then reuse everything before it.
+        static, dynamic = split_system(system)
+        msgs = [{"role": "system", "content": static}] if static else []
+        msgs += [{"role": "assistant" if r == "model" else "user", "content": t} for r, t in with_context(history, dynamic)]
         return msgs
+
+    def _note(self, model: str, j: dict[str, Any]) -> None:
+        u = j.get("usage") or {}
+        cached = (u.get("prompt_tokens_details") or {}).get("cached_tokens") or u.get("prompt_cache_hit_tokens", 0)
+        self._usage(model, usage_of(u.get("prompt_tokens"), u.get("completion_tokens"), cached))
 
     async def stream_chat(self, model: str, system: str, history: list[tuple[str, str]]) -> AsyncIterator[str]:
         payload = {"model": model, "messages": self._messages(system, history), "stream": True, "temperature": 0.7}
@@ -139,6 +148,7 @@ class OpenAICompatProvider(Provider):
                     last = e
                     continue
                 raise
+            self._note(model, j)
             content = j["choices"][0]["message"].get("content") or ""
             return parse_json_loose(content)
         raise last or ProviderError("Structured output failed.")
@@ -226,8 +236,23 @@ class _OpenAITools(ToolSession):
         self.messages: list[dict[str, Any]] = provider._messages(system, history)
         self.tools = [{"type": "function", "function": t} for t in tools]
 
+    def add_tools(self, tools: list[dict[str, Any]]) -> None:
+        have = {t["function"]["name"] for t in self.tools}
+        self.tools += [{"type": "function", "function": t} for t in tools if t["name"] not in have]
+
+    def trim_results(self, keep: int) -> int:
+        results = [m for m in self.messages if m.get("role") == "tool"]
+        shrunk = 0
+        for m in results[:-keep] if keep else results:
+            small = stub(m["content"])
+            if small != m["content"]:
+                m["content"] = small
+                shrunk += 1
+        return shrunk
+
     async def step(self, model: str) -> Step:
         j = await self.p._post("/chat/completions", {"model": model, "messages": self.messages, "tools": self.tools, "temperature": 0.4})
+        self.p._note(model, j)
         try:
             msg = j["choices"][0]["message"]
         except (KeyError, IndexError) as e:

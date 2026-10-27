@@ -15,6 +15,7 @@ from .db import DB
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS quota_usage (day TEXT NOT NULL, model TEXT NOT NULL, requests INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (day, model));
+CREATE TABLE IF NOT EXISTS token_usage (day TEXT NOT NULL, model TEXT NOT NULL, input INTEGER NOT NULL DEFAULT 0, output INTEGER NOT NULL DEFAULT 0, cached INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (day, model));
 CREATE TABLE IF NOT EXISTS quota_limits (model TEXT PRIMARY KEY, per_day INTEGER, per_minute INTEGER, blocked_until REAL, reason TEXT);
 """
 
@@ -66,6 +67,15 @@ class QuotaTracker:
         # A success means the model is usable again.
         self.db.run("UPDATE quota_limits SET blocked_until = NULL, reason = NULL WHERE model = ?", [base_model(model)])
 
+    def record_tokens(self, model: str, usage: dict[str, int], now: float | None = None) -> None:
+        """Tokens one request used, as the provider reported them (cached: read from its cache)."""
+        self.db.run(
+            "INSERT INTO token_usage (day, model, input, output, cached) VALUES (?, ?, ?, ?, ?) "
+            "ON CONFLICT(day, model) DO UPDATE SET input = input + excluded.input, output = output + excluded.output, "
+            "cached = cached + excluded.cached",
+            [quota_day(now), base_model(model), usage.get("input", 0), usage.get("output", 0), usage.get("cached", 0)],
+        )
+
     def rejected(self, model: str, message: str, retry_after: float | None, now: float | None = None) -> None:
         """Learn from a 429: which limit was hit and until when the model is out."""
         now = now if now is not None else time.time()
@@ -90,6 +100,7 @@ class QuotaTracker:
         now = now if now is not None else time.time()
         day = quota_day(now)
         used = {r["model"]: r["requests"] for r in self.db.all("SELECT model, requests FROM quota_usage WHERE day = ?", [day])}
+        tokens = {r["model"]: r for r in self.db.all("SELECT * FROM token_usage WHERE day = ?", [day])}
         limits = {r["model"]: r for r in self.db.all("SELECT * FROM quota_limits")}
         names = list(dict.fromkeys([base_model(m) for m in models if m] + sorted(used)))
         rows = []
@@ -104,9 +115,16 @@ class QuotaTracker:
                 "state": "out" if out else "ready",
                 "reason": lim.get("reason") if out else None,
                 "until": blocked if out else None,
+                "tokens_in": (tokens.get(name) or {}).get("input", 0),
+                "tokens_out": (tokens.get(name) or {}).get("output", 0),
+                "tokens_cached": (tokens.get(name) or {}).get("cached", 0),
             })
-        return {"day": day, "resets_at": next_reset(now), "models": rows}
+        total_in = sum(t["input"] for t in tokens.values())
+        return {"day": day, "resets_at": next_reset(now), "models": rows,
+                "tokens": {"input": total_in, "output": sum(t["output"] for t in tokens.values()),
+                           "cached": sum(t["cached"] for t in tokens.values())}}
 
     def prune(self, keep_days: int = 14) -> None:
         cutoff = (datetime.fromisoformat(quota_day()) - timedelta(days=keep_days)).date().isoformat()
         self.db.run("DELETE FROM quota_usage WHERE day < ?", [cutoff])
+        self.db.run("DELETE FROM token_usage WHERE day < ?", [cutoff])

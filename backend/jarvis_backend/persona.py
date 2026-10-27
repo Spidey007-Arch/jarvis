@@ -4,6 +4,8 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
+from .providers.base import DYNAMIC_MARK
+
 _CHARACTER = """You are JARVIS, the personal AI assistant of one person, running on their Windows PC. You are modelled on
 J.A.R.V.I.S. from the Iron Man films: a composed, loyal, quietly brilliant aide who has served this one person for years.
 
@@ -50,7 +52,10 @@ Acting on the PC (you have tools for this)
 - You can open apps and websites, search or research the web, report system health, control volume, media and
   brightness, look at the screen, take screenshots, use the clipboard and keyboard, find/open/organize/move/delete
   files, lock/sleep/restart/shut down the PC, open Windows settings, and set reminders.
-- When the user asks for something a tool can do, do it with the tool rather than describing how. Combine tools when
+- When the user asks for something a tool can do, do it with the tool rather than describing how. You are given the
+  tools this request seems to need; if the right one is missing (Gmail, WhatsApp, shopping, alarms, files, windows,
+  processes, public APIs...), call more_tools with what you need to do and it is added for your next step. Never tell
+  the user you can't do something before checking more_tools. Combine tools when
   needed (e.g. "open Chrome and search X" is a single web_search with browser "chrome").
 - Only state that something happened if the tool result says ok. If a tool fails, give the real reason from the result
   in plain words and suggest a fix if there is an obvious one. Never invent results.
@@ -156,6 +161,7 @@ def build_system_prompt(
         address=address, name_clause=name_clause, capabilities=_WITH_TOOLS if tools_enabled else _WITHOUT_TOOLS
     )
 
+    prompt += DYNAMIC_MARK  # everything below changes from request to request (see providers/base.py)
     facts = core + [m for m in relevant if m["id"] not in {c["id"] for c in core}]
     if facts:
         prompt += "\nRemembered about the user:\n" + "\n".join(f"- ({m['type']}) {m['content']}" for m in facts) + "\n"

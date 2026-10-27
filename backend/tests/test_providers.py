@@ -264,7 +264,8 @@ class ProviderProtocolTests(unittest.TestCase):
                 await p.aclose()
         self.assertEqual("".join(self.run_async(go())), "At your service.")
         sent = SEEN[0]
-        self.assertEqual(sent["body"]["system"], "be JARVIS")
+        # the fixed instructions go as one block, cached for an hour (prompt caching)
+        self.assertEqual(sent["body"]["system"], [{"type": "text", "text": "be JARVIS", "cache_control": {"type": "ephemeral", "ttl": "1h"}}])
         self.assertEqual(sent["body"]["messages"], [{"role": "user", "content": "hello"}])
         self.assertEqual(sent["headers"]["anthropic-version"], anth.VERSION)
 
@@ -403,7 +404,9 @@ class ToolResultRoleTests(unittest.TestCase):
     def test_gemini(self) -> None:
         from jarvis_backend.providers.gemini import _GeminiTools
 
-        s = _GeminiTools(None, "sys", [("user", "hi")], [])
+        import types as pytypes
+
+        s = _GeminiTools(pytypes.SimpleNamespace(client=None), "sys", [("user", "hi")], [])
         before = len(s.contents)
         s.add_results(self.calls())
         added = s.contents[before:]

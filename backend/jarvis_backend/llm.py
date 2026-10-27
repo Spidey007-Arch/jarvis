@@ -20,7 +20,10 @@ log = logging.getLogger("jarvis.llm")
 T = TypeVar("T")
 _COOLDOWN_S = 120.0
 _MAX_COOLDOWN_S = 1800.0
-FIRST_RESPONSE_TIMEOUT_S = 30.0  # overloaded models can hang for minutes before admitting it
+FIRST_RESPONSE_TIMEOUT_S = 30.0
+MORE_TOOLS = "more_tools"  # the tool-search tool (toolsearch.py); handled here, inside the agent loop
+TRIM_AFTER_ROUNDS = 4
+KEEP_RESULTS = 4  # overloaded models can hang for minutes before admitting it
 
 
 class LLMNotConfigured(Exception):
@@ -95,6 +98,7 @@ class LLM:
                 self._provider = make_provider(pid, key, base)
             except ProviderError as e:
                 raise LLMNotConfigured(str(e)) from e
+            self._provider.on_usage = self._tokens
             self._signature = sig
             self._models_cache = None
             self._models_retry_at = 0.0
@@ -211,6 +215,10 @@ class LLM:
                 self.usage.rejected(model, str(e), e.retry_after)
             except Exception:  # noqa: BLE001 - quota bookkeeping must never break a reply
                 log.exception("could not record a quota rejection")
+
+    def _tokens(self, model: str, usage: dict[str, int]) -> None:
+        if self.usage:
+            self.usage.record_tokens(model, usage)
 
     def _ok(self, model: str) -> None:
         self._failures.pop(model, None)
@@ -337,6 +345,7 @@ class LLM:
         execute: Callable[[ToolCall], Awaitable[dict[str, Any]]],
         on_notice: Callable[[str], None] | None = None,
         max_rounds: int | Callable[[], int] = 8,
+        find_tools: Callable[[str], list[dict[str, Any]]] | None = None,
     ) -> str:
         """Let the model call tools until it produces a final answer. Returns that answer.
 
@@ -382,8 +391,18 @@ class LLM:
             rounds += 1
             if not step.calls:
                 return step.text
-            results = [(call, await execute(call)) for call in step.calls]
+            results = []
+            for call in step.calls:
+                if call.name == MORE_TOOLS and find_tools:  # tool search: load the tools asked for, from the next step on
+                    found = find_tools(str(call.args.get("need") or ""))
+                    session.add_tools(found)
+                    results.append((call, {"ok": True, "loaded": [{"name": t["name"], "does": t["description"][:120]} for t in found]
+                                           or "Nothing matches; try other words, or do without."}))
+                else:
+                    results.append((call, await execute(call)))
             session.add_results(results)
+            if rounds >= TRIM_AFTER_ROUNDS:  # a long task: old tool results shrink to stubs, keeping requests small
+                session.trim_results(keep=KEEP_RESULTS)
             step, model = await self._next_step(session, model, on_notice)
         return step.text or "I stopped after several steps without finishing; tell me if you want me to keep going."
 

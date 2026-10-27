@@ -74,6 +74,8 @@ const clock = (epoch: number) => new Date(epoch * 1000).toLocaleTimeString([], {
 
 /** Today's free-tier usage as JARVIS counted it. Neither Google nor most gateways report remaining
  *  quota, so limits appear once a provider's own quota error has named them. */
+const kilo = (n: number) => (n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1000 ? `${(n / 1000).toFixed(1)}k` : `${n}`);
+
 function QuotaStrip({ conn, activity }: { conn: Connection | null; activity: Activity }) {
   const [q, setQ] = useState<Quota | null>(null);
   const [open, setOpen] = useState(false);
@@ -117,6 +119,12 @@ function QuotaStrip({ conn, activity }: { conn: Connection | null; activity: Act
               </span>
             </div>
           ))}
+          {q.tokens && q.tokens.input + q.tokens.output > 0 && (
+            <div className="quota-meta">
+              Today: {kilo(q.tokens.input)} tokens in, {kilo(q.tokens.output)} out
+              {q.tokens.input ? ` · ${Math.round((100 * q.tokens.cached) / q.tokens.input)}% from cache` : ""}
+            </div>
+          )}
           <div className="quota-note">Counted by JARVIS; limits appear once a quota error names them.</div>
         </div>
       )}

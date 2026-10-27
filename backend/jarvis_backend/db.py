@@ -71,6 +71,10 @@ class DB:
             cols = {r[1] for r in self._conn.execute("PRAGMA table_info(messages)")}
             if "actions" not in cols:  # added in milestone 3: what JARVIS did while answering
                 self._conn.execute("ALTER TABLE messages ADD COLUMN actions TEXT")
+            conv_cols = {r[1] for r in self._conn.execute("PRAGMA table_info(conversations)")}
+            if "summary" not in conv_cols:  # compaction: what was said before the messages still sent in full
+                self._conn.execute("ALTER TABLE conversations ADD COLUMN summary TEXT")
+                self._conn.execute("ALTER TABLE conversations ADD COLUMN summary_upto REAL NOT NULL DEFAULT 0")
             if "kind" not in {r[1] for r in self._conn.execute("PRAGMA table_info(reminders)")}:  # alarms and timers
                 self._conn.execute("ALTER TABLE reminders ADD COLUMN kind TEXT NOT NULL DEFAULT 'reminder'")
 

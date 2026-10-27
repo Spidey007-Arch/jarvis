@@ -16,12 +16,12 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
-from . import briefing, permissions, public_apis
+from . import briefing, permissions, public_apis, toolsearch
 from .db import DB
 from .extraction import EXTRACT_SCHEMA, extract_prompt
 from .bridge import AgentBridge, AgentError, AgentUnavailable
 from .llm import LLM, AgentIncomplete, LLMError, LLMNotConfigured, ToolsUnsupported
-from .providers.base import ToolCall
+from .providers.base import DYNAMIC_MARK, ToolCall
 from .monitor import Monitor
 from .reminders import ReminderError, Reminders
 from .research import ResearchError, web_research
@@ -38,6 +38,8 @@ from .settings import SettingsStore
 log = logging.getLogger("jarvis.api")
 
 HISTORY_MESSAGES = 24
+COMPACT_AFTER = 8  # once this many messages have scrolled out of the window, they are folded into the summary
+SUMMARY_SCHEMA: dict[str, Any] = {"type": "object", "properties": {"summary": {"type": "string"}}, "required": ["summary"]}
 # Facts about the user are almost always stated in the first person; other messages skip extraction.
 ABOUT_USER = re.compile(
     r"\b(i|i'm|im|i've|i'd|i'll|me|my|mine|myself|we|our|us|call me|forget|remember|don't|dont|no longer)\b", re.I
@@ -567,6 +569,33 @@ def build_router(svc: Services, require_auth: Callable[..., None]) -> APIRouter:
         _note_paths(spec.name, args, result)
         return {"ok": True, "result": _trim(result)}
 
+    async def _compact(conv_id: str) -> None:
+        """Fold messages that have scrolled out of the window into the conversation's running summary, so a long
+        conversation keeps its beginning instead of forgetting it. Runs after the reply, on the cheap model."""
+        rows = svc.db.all("SELECT created_at FROM messages WHERE conversation_id=? ORDER BY created_at DESC LIMIT ?",
+                          [conv_id, HISTORY_MESSAGES])
+        conv = svc.db.one("SELECT summary, summary_upto FROM conversations WHERE id=?", [conv_id])
+        if len(rows) < HISTORY_MESSAGES or not conv:
+            return
+        window_start = rows[-1]["created_at"]
+        old = svc.db.all("SELECT role, content, created_at FROM messages WHERE conversation_id=? AND created_at > ? AND created_at < ? "
+                         "ORDER BY created_at", [conv_id, conv["summary_upto"] or 0, window_start])
+        if len(old) < COMPACT_AFTER:
+            return
+        lines = "\n".join(f"{'User' if r['role'] == 'user' else 'JARVIS'}: {r['content'][:800]}" for r in old)
+        prompt = ("Update the running summary of a conversation between the user and their assistant JARVIS. Keep every "
+                  "decision, fact, name, number, file, open question and promise; drop greetings and filler. At most 250 words, "
+                  "plain sentences, oldest first.\n\nSummary so far:\n" + (conv["summary"] or "(none)") + "\n\nNext messages:\n" + lines)
+        try:
+            out = await svc.llm.generate_json(prompt, SUMMARY_SCHEMA)
+        except (LLMError, LLMNotConfigured) as e:
+            log.info("compaction skipped: %s", e)
+            return
+        summary = str((out or {}).get("summary") or "").strip()
+        if summary:
+            svc.db.run("UPDATE conversations SET summary=?, summary_upto=? WHERE id=?", [summary[:4000], old[-1]["created_at"], conv_id])
+            log.info("conversation compacted", extra={"fields": {"folded": len(old)}})
+
     async def _remember(user_text: str, reply: str, candidates: list[dict[str, Any]], conv_id: str) -> None:
         """Steps 6-7 of the memory pipeline; runs after the reply so it never delays the user."""
         if not ABOUT_USER.search(user_text):
@@ -618,6 +647,7 @@ def build_router(svc: Services, require_auth: Callable[..., None]) -> APIRouter:
         context = _situation(conv or "")
         context["voice"] = True
         prompt = build_system_prompt(svc.settings.public(), svc.memory.core(), [], tools_enabled=True, context=context)
+        prompt = prompt.replace(DYNAMIC_MARK, "\n\n")  # Gemini Live takes one plain instruction
         if conv:  # a continued conversation: Gemini starts each session blank, so give it what was said
             rows = svc.db.all("SELECT role, content FROM messages WHERE conversation_id=? AND role IN ('user','model') "
                               "ORDER BY created_at DESC LIMIT 12", [conv])
@@ -1013,6 +1043,10 @@ def build_router(svc: Services, require_auth: Callable[..., None]) -> APIRouter:
                 context["voice"] = body.voice
                 system = build_system_prompt(svc.settings.public(), core, relevant, tools_enabled=True, context=context)
                 history = [(m["role"], m["content"]) for m in prior] + [("user", text)]
+                earlier = svc.db.one("SELECT summary FROM conversations WHERE id=?", [conv_id])
+                if earlier and earlier.get("summary"):  # compaction: the start of a long conversation, summarised
+                    history = [("user", f"[Summary of the earlier part of this conversation]\n{earlier['summary']}"),
+                               ("model", "Understood; carrying on from there.")] + history
                 skill = svc.skills.match(text)
                 if skill:
                     system += "\n\n" + skill_guidance(skill)
@@ -1039,9 +1073,9 @@ def build_router(svc: Services, require_auth: Callable[..., None]) -> APIRouter:
                     return out
 
                 agent_task = asyncio.create_task(
-                    svc.llm.run_agent(system, history, TOOL_SCHEMAS, execute,
+                    svc.llm.run_agent(system, history, toolsearch.select(text, " ".join(c for _r, c in history[-3:-1])), execute,
                                       on_notice=lambda m: queue.put_nowait(("notice", {"message": m})),
-                                      max_rounds=lambda: task.max_rounds)
+                                      max_rounds=lambda: task.max_rounds, find_tools=toolsearch.find)
                 )
                 task.agent = agent_task
                 while True:
@@ -1086,6 +1120,7 @@ def build_router(svc: Services, require_auth: Callable[..., None]) -> APIRouter:
                 yield _sse("done", {"reply_id": reply_id})
                 if reply:
                     spawn(_remember(text, reply, core + relevant, conv_id))
+                    spawn(_compact(conv_id))
             except (LLMError, LLMNotConfigured) as e:
                 yield _sse("error", {"message": str(e)})
             finally:
