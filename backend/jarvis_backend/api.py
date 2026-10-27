@@ -1075,7 +1075,10 @@ def build_router(svc: Services, require_auth: Callable[..., None]) -> APIRouter:
                 agent_task = asyncio.create_task(
                     svc.llm.run_agent(system, history, toolsearch.select(text, " ".join(c for _r, c in history[-3:-1])), execute,
                                       on_notice=lambda m: queue.put_nowait(("notice", {"message": m})),
-                                      max_rounds=lambda: task.max_rounds, find_tools=toolsearch.find)
+                                      max_rounds=lambda: task.max_rounds, find_tools=toolsearch.find,
+                                      # a planned multi-step task thinks harder; a quick request answers fast
+                                      effort=lambda: "high" if task.plan else "medium",
+                                      on_thought=lambda t: setattr(task, "thought", t[-400:]))
                 )
                 task.agent = agent_task
                 while True:

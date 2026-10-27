@@ -118,6 +118,17 @@ class ToolCall:
 class Step:
     text: str = ""
     calls: list[ToolCall] = field(default_factory=list)
+    thought: str = ""  # a readable summary of the model's reasoning, when the provider gives one
+
+
+# How hard to think: low for background jobs, medium for conversation, high for a planned multi-step task.
+EFFORTS = ("low", "medium", "high")
+
+
+def rejects(e: "ProviderError", *words: str) -> bool:
+    """A 400 that names one of the words: the model doesn't take that setting, so retry without it."""
+    msg = str(e).lower()
+    return e.status in (400, 422) and any(w in msg for w in words)
 
 
 class ToolSession(ABC):
@@ -127,6 +138,7 @@ class ToolSession(ABC):
     # Whether a half-finished exchange may continue on a different model. False where the history
     # carries model-bound state (Gemini's thought signatures); plain message lists are portable.
     portable = False
+    effort = "medium"  # set by the agent loop before each step
 
     @abstractmethod
     async def step(self, model: str) -> Step: ...

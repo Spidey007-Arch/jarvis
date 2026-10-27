@@ -10,7 +10,16 @@ from google import genai
 from google.genai import errors, types
 
 from .base import (NETWORK_ERROR, Provider, ProviderError, is_network_error, Step, ToolCall, ToolSession, merge_turns, parse_json_loose,
-                   split_system, stub, usage_of, with_context)
+                   rejects, split_system, stub, usage_of, with_context)
+
+_LEVELS = {"low": types.ThinkingLevel.LOW, "medium": types.ThinkingLevel.MEDIUM, "high": types.ThinkingLevel.HIGH}
+_NO_LEVEL: set[str] = set()  # models that reject a thinking level (older ones think with a budget, or not at all)
+
+
+def _thinking(model: str, effort: str) -> types.ThinkingConfig | None:
+    if model in _NO_LEVEL:
+        return None
+    return types.ThinkingConfig(include_thoughts=effort != "low", thinking_level=_LEVELS.get(effort, types.ThinkingLevel.MEDIUM))
 
 EMBED_DIM = 256
 _BATCH = 100
@@ -98,11 +107,21 @@ class GeminiProvider(Provider):
             raise _err(e) from e
 
     async def generate_json(self, model: str, prompt: str, schema: dict[str, Any]) -> Any:
-        config = types.GenerateContentConfig(response_mime_type="application/json", response_json_schema=schema, temperature=0.1)
+        # The schema is enforced by Gemini itself (guaranteed JSON); background jobs think as little as possible.
+        config = types.GenerateContentConfig(response_mime_type="application/json", response_json_schema=schema, temperature=0.1,
+                                             thinking_config=_thinking(model, "low"))
         try:
             r = await self.client.aio.models.generate_content(model=model, contents=prompt, config=config)
         except Exception as e:  # noqa: BLE001
-            raise _err(e) from e
+            err = _err(e)
+            if not (config.thinking_config and rejects(err, "think")):
+                raise err from e
+            _NO_LEVEL.add(model)
+            config.thinking_config = None
+            try:
+                r = await self.client.aio.models.generate_content(model=model, contents=prompt, config=config)
+            except Exception as e2:  # noqa: BLE001
+                raise _err(e2) from e2
         self._usage(model, _usage(r))
         return parse_json_loose(r.text or "")
 
@@ -209,10 +228,19 @@ class _GeminiTools(ToolSession):
         return shrunk
 
     async def step(self, model: str) -> Step:
+        self.config.thinking_config = _thinking(model, self.effort)
         try:
             r = await self.client.aio.models.generate_content(model=model, contents=self.contents, config=self.config)
         except Exception as e:  # noqa: BLE001
-            raise _err(e) from e
+            err = _err(e)
+            if not (self.config.thinking_config and rejects(err, "think")):
+                raise err from e
+            _NO_LEVEL.add(model)  # this model doesn't take a thinking level: carry on without one
+            self.config.thinking_config = None
+            try:
+                r = await self.client.aio.models.generate_content(model=model, contents=self.contents, config=self.config)
+            except Exception as e2:  # noqa: BLE001
+                raise _err(e2) from e2
         self.p._usage(model, _usage(r))
         if not r.candidates or r.candidates[0].content is None:
             reason = getattr(r.prompt_feedback, "block_reason", None) if r.prompt_feedback else None
@@ -224,7 +252,8 @@ class _GeminiTools(ToolSession):
             for i, fc in enumerate(r.function_calls or [])
         ]
         text = "" if calls else "".join(p.text for p in (content.parts or []) if p.text and not getattr(p, "thought", False))
-        return Step(text=text, calls=calls)
+        thought = " ".join(p.text for p in (content.parts or []) if p.text and getattr(p, "thought", False)).strip()
+        return Step(text=text, calls=calls, thought=thought)
 
     def add_results(self, results: list[tuple[ToolCall, dict[str, Any]]]) -> None:
         parts = []

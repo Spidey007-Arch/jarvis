@@ -8,12 +8,20 @@ from typing import Any, AsyncIterator
 import httpx
 
 from .base import (NETWORK_ERROR, NETWORK_EXCEPTIONS, Provider, ProviderError, Step, ToolCall, ToolSession, json_instruction, merge_turns,
-                   parse_json_loose, split_system, stub, usage_of, with_context)
+                   parse_json_loose, rejects, split_system, stub, usage_of, with_context)
 from .openai_compat import _error_text, _retry_after
 
 API = "https://api.anthropic.com/v1"
 VERSION = "2023-06-01"
-MAX_TOKENS = 4096
+MAX_TOKENS = 16000  # room for adaptive thinking as well as the answer
+_PLAIN: set[str] = set()  # models that reject adaptive thinking / effort (older ones): requests go without them
+
+
+def _reasoning(model: str, effort: str) -> dict[str, Any]:
+    """Adaptive thinking with a readable summary, and how much effort to spend (low / medium / high)."""
+    if model in _PLAIN:
+        return {}
+    return {"thinking": {"type": "adaptive", "display": "summarized"}, "output_config": {"effort": effort}}
 # The fixed instructions (and the tool list before them) are the same in every request: cache them for an hour,
 # which outlasts the gaps between a person's requests. The growing conversation is cached for the default 5 minutes.
 LONG_CACHE = {"type": "ephemeral", "ttl": "1h"}
@@ -24,6 +32,18 @@ def _usage(j: dict[str, Any]) -> dict[str, int]:
     u = j.get("usage") or {}
     return usage_of(u.get("input_tokens", 0) + u.get("cache_read_input_tokens", 0) + u.get("cache_creation_input_tokens", 0),
                     u.get("output_tokens"), u.get("cache_read_input_tokens"), u.get("cache_creation_input_tokens"))
+
+
+def _closed(schema: Any) -> Any:
+    """Structured outputs need every object schema closed (additionalProperties: false)."""
+    if isinstance(schema, dict):
+        out = {k: _closed(v) for k, v in schema.items()}
+        if out.get("type") == "object":
+            out.setdefault("additionalProperties", False)
+        return out
+    if isinstance(schema, list):
+        return [_closed(x) for x in schema]
+    return schema
 
 
 def _system(static: str) -> list[dict[str, Any]]:
@@ -107,18 +127,24 @@ class AnthropicProvider(Provider):
             raise ProviderError(f"Connection to Anthropic failed: {e}", NETWORK_ERROR) from e
 
     async def generate_json(self, model: str, prompt: str, schema: dict[str, Any]) -> Any:
-        payload = {
-            "model": model,
-            "max_tokens": MAX_TOKENS,
-            "temperature": 0.1,
-            "messages": [{"role": "user", "content": prompt + json_instruction(schema)}],
-        }
-        try:
-            r = await self.http.post(f"{API}/messages", json=payload)
-        except (httpx.HTTPError, *NETWORK_EXCEPTIONS) as e:
-            raise ProviderError(f"Could not reach Anthropic: {e}", NETWORK_ERROR) from e
-        if r.status_code >= 400:
-            raise ProviderError(_error_text(r), r.status_code, _retry_after(r))
+        """Guaranteed JSON: the schema is enforced by the API (structured outputs). Older models that don't take
+        it get the schema as an instruction instead. No temperature: current models reject it."""
+        strict = {"model": model, "max_tokens": MAX_TOKENS, "messages": [{"role": "user", "content": prompt}],
+                  "output_config": {"format": {"type": "json_schema", "schema": _closed(schema)},
+                                    **({"effort": "low"} if model not in _PLAIN else {})}}
+        loose = {"model": model, "max_tokens": MAX_TOKENS, "messages": [{"role": "user", "content": prompt + json_instruction(schema)}]}
+        r = None
+        for payload in ((strict, loose) if model not in _PLAIN else (loose,)):
+            try:
+                r = await self.http.post(f"{API}/messages", json=payload)
+            except (httpx.HTTPError, *NETWORK_EXCEPTIONS) as e:
+                raise ProviderError(f"Could not reach Anthropic: {e}", NETWORK_ERROR) from e
+            if r.status_code < 400:
+                break
+            err = ProviderError(_error_text(r), r.status_code, _retry_after(r))
+            if payload is strict and rejects(err, "output_config", "format", "effort", "schema"):
+                continue
+            raise err
         self._usage(model, _usage(r.json()))
         text = "".join(b.get("text", "") for b in r.json().get("content", []) if b.get("type") == "text")
         return parse_json_loose(text)
@@ -182,19 +208,28 @@ class _AnthropicTools(ToolSession):
 
     async def step(self, model: str) -> Step:
         payload = {"model": model, "max_tokens": MAX_TOKENS, "system": self.system, "messages": _mark_last(self.messages),
-                   "tools": self.tools}
-        try:
-            r = await self.p.http.post(f"{API}/messages", json=payload)
-        except (httpx.HTTPError, *NETWORK_EXCEPTIONS) as e:
-            raise ProviderError(f"Could not reach Anthropic: {e}", NETWORK_ERROR) from e
-        if r.status_code >= 400:
-            raise ProviderError(_error_text(r), r.status_code, _retry_after(r))
+                   "tools": self.tools, **_reasoning(model, self.effort)}
+        for attempt in range(2):
+            try:
+                r = await self.p.http.post(f"{API}/messages", json=payload)
+            except (httpx.HTTPError, *NETWORK_EXCEPTIONS) as e:
+                raise ProviderError(f"Could not reach Anthropic: {e}", NETWORK_ERROR) from e
+            if r.status_code < 400:
+                break
+            err = ProviderError(_error_text(r), r.status_code, _retry_after(r))
+            if attempt == 0 and "thinking" in payload and rejects(err, "thinking", "adaptive", "effort", "output_config"):
+                _PLAIN.add(model)  # an older model: carry on without adaptive thinking
+                payload = {k: v for k, v in payload.items() if k not in ("thinking", "output_config")}
+                continue
+            raise err
         self.p._usage(model, _usage(r.json()))
         blocks = r.json().get("content", [])
         self.messages.append({"role": "assistant", "content": blocks})
         calls = [ToolCall(id=b["id"], name=b["name"], args=b.get("input") or {}) for b in blocks if b.get("type") == "tool_use"]
         text = "".join(b.get("text", "") for b in blocks if b.get("type") == "text")
-        return Step(text="" if calls else text, calls=calls)
+        # Thinking blocks stay in self.messages exactly as returned (the API needs them back unchanged).
+        thought = " ".join(b.get("thinking", "") for b in blocks if b.get("type") == "thinking").strip()
+        return Step(text="" if calls else text, calls=calls, thought=thought)
 
     def add_results(self, results: list[tuple[ToolCall, dict[str, Any]]]) -> None:
         self.messages.append({"role": "user", "content": [

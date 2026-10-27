@@ -9,7 +9,9 @@ from typing import Any, AsyncIterator
 import httpx
 
 from .base import NETWORK_ERROR, NETWORK_EXCEPTIONS, Provider, ProviderError, Step, ToolCall, ToolSession, json_instruction, merge_turns, parse_json_loose
-from .base import split_system, stub, usage_of, with_context
+from .base import rejects, split_system, stub, usage_of, with_context
+
+_REASONING = re.compile(r"(^|/)(o\d|gpt-5)", re.I)
 
 _NOT_CHAT = re.compile(
     r"whisper|tts|dall-e|davinci|babbage|moderation|image|audio|realtime|transcribe|embed|search|computer-use|sora|codex-mini"
@@ -134,7 +136,7 @@ class OpenAICompatProvider(Provider):
         base = {"model": model, "temperature": 0.1}
         attempts = [
             {"messages": [{"role": "user", "content": prompt}],
-             "response_format": {"type": "json_schema", "json_schema": {"name": "result", "schema": schema}}},
+             "response_format": {"type": "json_schema", "json_schema": {"name": "result", "schema": schema, "strict": True}}},
             {"messages": [{"role": "user", "content": prompt + json_instruction(schema)}], "response_format": {"type": "json_object"}},
             {"messages": [{"role": "user", "content": prompt + json_instruction(schema)}]},
         ]
@@ -251,7 +253,18 @@ class _OpenAITools(ToolSession):
         return shrunk
 
     async def step(self, model: str) -> Step:
-        j = await self.p._post("/chat/completions", {"model": model, "messages": self.messages, "tools": self.tools, "temperature": 0.4})
+        body: dict[str, Any] = {"model": model, "messages": self.messages, "tools": self.tools}
+        if _REASONING.search(model):  # reasoning models take an effort instead of a temperature
+            body["reasoning_effort"] = self.effort
+        else:
+            body["temperature"] = 0.4
+        try:
+            j = await self.p._post("/chat/completions", body)
+        except ProviderError as e:
+            if "reasoning_effort" not in body or not rejects(e, "reasoning"):
+                raise
+            body.pop("reasoning_effort")
+            j = await self.p._post("/chat/completions", body)
         self.p._note(model, j)
         try:
             msg = j["choices"][0]["message"]

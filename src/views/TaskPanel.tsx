@@ -71,6 +71,7 @@ export default function TaskPanel({ conn }: { conn: Connection | null }) {
             ))}
           </ol>
         )}
+        {t.thought && <p className="task-thought" title={t.thought}>{t.thought}</p>}
         {t.actions.length > 0 && (
           <ul className="task-acts">
             {t.actions.slice(-3).map((a, i) => (

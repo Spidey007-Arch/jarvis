@@ -346,6 +346,8 @@ class LLM:
         on_notice: Callable[[str], None] | None = None,
         max_rounds: int | Callable[[], int] = 8,
         find_tools: Callable[[str], list[dict[str, Any]]] | None = None,
+        effort: Callable[[], str] | None = None,
+        on_thought: Callable[[str], None] | None = None,
     ) -> str:
         """Let the model call tools until it produces a final answer. Returns that answer.
 
@@ -354,6 +356,8 @@ class LLM:
         p = self.provider()
         preferred = self.chat_model
         session = p.tool_session(system, history, tools)
+        if effort:
+            session.effort = effort()
         model = None
         step: Step | None = None
         last: ProviderError | None = None
@@ -389,6 +393,8 @@ class LLM:
         rounds = 0
         while rounds < (max_rounds() if callable(max_rounds) else max_rounds):  # a planned task may raise the limit
             rounds += 1
+            if step.thought and on_thought:
+                on_thought(step.thought)
             if not step.calls:
                 return step.text
             results = []
@@ -403,6 +409,8 @@ class LLM:
             session.add_results(results)
             if rounds >= TRIM_AFTER_ROUNDS:  # a long task: old tool results shrink to stubs, keeping requests small
                 session.trim_results(keep=KEEP_RESULTS)
+            if effort:
+                session.effort = effort()
             step, model = await self._next_step(session, model, on_notice)
         return step.text or "I stopped after several steps without finishing; tell me if you want me to keep going."
 

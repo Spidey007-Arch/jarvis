@@ -158,6 +158,7 @@ export interface TaskView {
   current: number;
   actions: { label: string; status: string }[];
   steps_taken: number;
+  thought?: string; // the model's latest reasoning summary
 }
 export interface TaskOffer {
   id: string;
