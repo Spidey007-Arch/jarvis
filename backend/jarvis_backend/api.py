@@ -1160,7 +1160,7 @@ def build_router(svc: Services, require_auth: Callable[..., None]) -> APIRouter:
 
                 reviews = {"n": 0}
                 progress = {"at": time.monotonic()}
-                searches = {"n": 0}
+                searches, tabs = {"n": 0}, {"n": 0}
 
                 async def advise(rounds: int, results: list[tuple[ToolCall, dict[str, Any]]]) -> str | None:
                     """The advisor: during a planned task, every few rounds and after a failure."""
@@ -1186,6 +1186,11 @@ def build_router(svc: Services, require_auth: Callable[..., None]) -> APIRouter:
                                                       "may have changed. Look again (look_at_screen, read_window, list_windows) "
                                                       "before continuing, then carry on."}
                     step = len(actions)
+                    if call.name == "web_search":  # each one opens a browser tab: one per request is plenty
+                        tabs["n"] += 1
+                        if tabs["n"] > 1:
+                            return {"ok": False, "error": "A search page is already open for this request; don't open more tabs. "
+                                    "For places use maps_search; for an answer use web_research."}
                     if call.name in RESEARCH_TOOLS:
                         searches["n"] += 1
                         if searches["n"] > MAX_SEARCHES:

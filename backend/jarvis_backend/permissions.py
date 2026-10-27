@@ -26,12 +26,13 @@ CAPABILITIES: dict[str, tuple[str, bool]] = {
     "see_screen": ("Look at and read the screen", False),
     "read_messages": ("Read Gmail and WhatsApp", False),
     "downloads": ("Download files", False),
+    "location": ("Know where this PC is (for maps, directions and places near you)", False),
     "connectors": ("Act through connectors (Slack, Notion, GitHub...): reading is always allowed", False),
 }
 POLICIES = ("allow", "ask", "block")
 ALLOWED_BY_DEFAULT = frozenset({"see_screen", "read_messages", "downloads"})
 # What "Full control" (the owner's own PC) allows without asking.
-FULL_CONTROL = frozenset({"change_files", "delete_files", "run_commands", "end_processes", "close_windows"})
+FULL_CONTROL = frozenset({"change_files", "delete_files", "run_commands", "end_processes", "close_windows", "location"})
 
 RISKY_CLICK = re.compile(
     r"\b(send|pay|payment|buy|purchase|order|checkout|check out|delete|remove|uninstall|erase|format|wipe|submit|post|publish|tweet|"
@@ -56,6 +57,11 @@ _MESSAGES = frozenset({"gmail_list", "gmail_open", "whatsapp_chats", "whatsapp_r
 _CHANGE_FILES = frozenset({"write_file", "edit_file", "create_folder", "move_path", "copy_path", "organize_folder", "create_document"})
 
 
+def _near_me(name: str, args: dict[str, Any]) -> bool:
+    where = str(args.get("near" if name == "maps_search" else "origin") or "me").strip().lower()
+    return where in ("me", "here", "my location", "current location")
+
+
 def capability(spec: ToolSpec, args: dict[str, Any]) -> str | None:
     """The kind of action a tool call is, or None when it needs no permission."""
     name = spec.name
@@ -70,6 +76,8 @@ def capability(spec: ToolSpec, args: dict[str, Any]) -> str | None:
         return "read_messages"
     if name == "download_file":
         return "downloads"
+    if name == "my_location" or name in ("maps_search", "maps_directions") and _near_me(name, args):
+        return "location"
     if name == "organize_folder":
         return None if args.get("dry_run", True) is not False else "change_files"  # a dry run only reports a plan
     if name in _CHANGE_FILES:

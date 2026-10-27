@@ -25,7 +25,7 @@ MORE_TOOLS_SCHEMA: dict[str, Any] = {
 CORE = (
     "system_status", "open_app", "open_url", "web_search", "web_research", "look_at_screen", "click_text", "screen_click",
     "type_text", "press_keys", "find_files", "open_path", "read_file", "run_command", "set_reminder", "set_plan",
-    "list_windows", "window_control", "volume", "media", "play_music",
+    "list_windows", "window_control", "volume", "media", "play_music", "maps_search", "my_location",
 )
 EXTRA = 12  # matched tools added on top of the core set
 
@@ -50,6 +50,9 @@ SYNONYMS = {
     "document": "create_document read_document", "pdf": "read_document create_document", "report": "create_document read_document",
     "slides": "create_document", "presentation": "create_document", "spreadsheet": "create_document read_document",
     "file": "read_document find_files", "read": "read_document read_webpage",
+    "near": "maps_search my_location", "nearby": "maps_search", "location": "my_location maps_search", "where": "my_location",
+    "map": "maps_search maps_directions", "directions": "maps_directions", "route": "maps_directions", "distance": "maps_directions",
+    "restaurant": "maps_search", "cafe": "maps_search", "hotel": "maps_search", "hospital": "maps_search",
     "link": "read_webpage", "url": "read_webpage", "page": "read_webpage", "website": "read_webpage", "article": "read_webpage", "store": "store_file stored_files",
 }
 

@@ -57,5 +57,18 @@ class SpotifySearch(unittest.TestCase):
         self.assertEqual(rows[0]["artist"], "Hamza Mark, Zain Zohaib")
 
 
+class GoogleMaps(unittest.TestCase):
+    def test_a_result_card_becomes_name_rating_reviews_and_details(self) -> None:
+        from jarvis_agent import maps
+
+        card = {"name": "Mind Space", "url": "https://www.google.com/maps/place/Mind+Space",
+                "text": "Mind Space · 4.3(233) · Mind Space · Cafe · ₹200–400 · Closed · Opens 8 am Wed"}
+        p = maps._place(card)
+        self.assertEqual((p["rating"], p["reviews"]), (4.3, "233"))
+        self.assertNotIn("Mind Space", p["details"])
+        self.assertTrue(p["details"].startswith("Cafe"))
+        self.assertIsNone(maps._place({"name": "New place", "text": "New place · Cafe"})["rating"])
+
+
 if __name__ == "__main__":
     unittest.main()

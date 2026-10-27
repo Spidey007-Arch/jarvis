@@ -44,6 +44,20 @@ TOOLS: list[ToolSpec] = [
              obj({"name": S}, ["name"]), risk="confirm", agent_action="close_app", label="Close {name}"),
     ToolSpec("open_url", "Open a web address in the default browser, or in a specific browser (chrome, edge, firefox, brave, opera).",
              obj({"url": S, "browser": S}, ["url"]), agent_action="open_url", label="Opening {url}"),
+    ToolSpec("my_location", "Where this PC is right now: coordinates, the area's name, and whether it is exact (Windows location) "
+             "or approximate (from the internet connection). Use it for anything 'near me', local weather or time, never the "
+             "user's home town from chat or memory.",
+             obj({}), agent_action="my_location", timeout=40, label="Finding your location"),
+    ToolSpec("maps_search", "Search Google Maps and read the results back: name, rating, number of reviews, kind, address and "
+             "whether it is open. near: 'me' (default: the user's real location) or a place name. min_rating filters, e.g. 4.0. "
+             "Use this for any place, shop, restaurant, cafe, hospital, ATM, petrol pump or 'near me' question; one search "
+             "is enough, and it reuses one Maps tab.",
+             obj({"query": S, "near": S, "min_rating": {"type": "number"}, "limit": I}, ["query"]), agent_action="maps_search",
+             timeout=90, label="Searching Google Maps for {query}"),
+    ToolSpec("maps_directions", "Directions on Google Maps from the user's location (or origin) to destination: time and distance "
+             "of each route. mode: driving (default), walking, transit, bicycling or two-wheeler.",
+             obj({"destination": S, "origin": S, "mode": S}, ["destination"]), agent_action="maps_directions", timeout=90,
+             label="Getting directions to {destination}"),
     ToolSpec("web_search", "Open a search results page in the browser for the user to look at. Engines: google, bing, duckduckgo, youtube, github, wikipedia, amazon, maps.",
              obj({"query": S, "engine": S, "browser": S}, ["query"]), agent_action="web_search", label="Searching for {query}"),
     ToolSpec("web_research", "Search the web yourself and read the top results to answer a factual or current-events question directly, with sources. Use this instead of web_search when the user wants an answer, not a browser tab.",

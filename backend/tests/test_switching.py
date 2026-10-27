@@ -139,5 +139,17 @@ class GatewayStart(unittest.TestCase):
         self.assertIn("isn't installed", r["error"])
 
 
+class LocationPermission(unittest.TestCase):
+    def test_near_me_needs_the_location_permission_a_named_place_does_not(self) -> None:
+        from jarvis_backend import permissions
+        from jarvis_backend.tools import TOOLS
+
+        spec = {t.name: t for t in TOOLS}
+        self.assertEqual(permissions.capability(spec["my_location"], {}), "location")
+        self.assertEqual(permissions.capability(spec["maps_search"], {"query": "cafes"}), "location")
+        self.assertIsNone(permissions.capability(spec["maps_search"], {"query": "cafes", "near": "Panaji"}))
+        self.assertEqual(permissions.capability(spec["maps_directions"], {"destination": "Goa airport"}), "location")
+
+
 if __name__ == "__main__":
     unittest.main()
