@@ -52,7 +52,21 @@ foreach ($e in $all) {
 }
 $items = @($found | Sort-Object @{ e = { -not $_.exact } }, @{ e = { -not $_.enabled } })
 $out = @{ window = $win.Current.Name; count = $items.Count }
-if ($a.mode -eq 'click') {
+if ($a.mode -eq 'type') {
+  $fields = @($items | Where-Object { $_.type -in @('Edit', 'ComboBox', 'Document') })
+  if ($fields.Count -eq 0) { $fields = $items }
+  if ($fields.Count -eq 0) { $out.done = 'none' }
+  else {
+    $pick = $fields[[Math]::Min([int]$a.index, $fields.Count - 1)]
+    $out.picked = @{ name = $pick.name; type = $pick.type; x = $pick.x; y = $pick.y; w = $pick.w; h = $pick.h }
+    $p = $null
+    if ($pick.el.TryGetCurrentPattern([Windows.Automation.ValuePattern]::Pattern, [ref]$p) -and -not $p.Current.IsReadOnly) {
+      $p.SetValue([string]$a.value); $out.done = 'set'
+    } else {
+      try { $pick.el.SetFocus(); $out.done = 'focused' } catch { $out.done = 'point' }
+    }
+  }
+} elseif ($a.mode -eq 'click') {
   if ($items.Count -eq 0) { $out.done = 'none' }
   else {
     $pick = $items[[Math]::Min([int]$a.index, $items.Count - 1)]
@@ -225,6 +239,22 @@ def _bring_up(hwnd: int) -> None:
     time.sleep(0.25)
 
 
+def snapshot() -> Any:
+    """A tiny grey picture of the whole screen, to tell whether an action changed anything."""
+    from PIL import ImageGrab
+
+    with win.physical_pixels():
+        return ImageGrab.grab(all_screens=True).convert("L").resize((192, 108))
+
+
+def changed(before: Any, after: Any) -> bool:
+    """Whether the screen visibly changed between two snapshots (a menu opened, a page loaded, text appeared)."""
+    from PIL import ImageChops, ImageStat
+
+    diff = ImageChops.difference(before, after)
+    return ImageStat.Stat(diff).mean[0] > 0.6 or diff.point(lambda v: 255 if v > 40 else 0).getbbox() is not None
+
+
 def _click_point(x: int, y: int, button: str = "left", double: bool = False) -> None:
     left, top, w, h = win.virtual_screen()
     fx, fy = (x - left) / w, (y - top) / h
@@ -303,6 +333,16 @@ def click_text(args: dict[str, Any]) -> dict[str, Any]:
     index = max(0, int(args.get("index") or 0))
     w = _target(_str(args, "window", False) or "")
     _bring_up(w["hwnd"])
+    before = snapshot()
+    out = _click_text(w, text, index, button, double)
+    time.sleep(0.4)
+    out["screen_changed"] = changed(before, snapshot())
+    if not out["screen_changed"]:
+        out["note"] = "Nothing visibly changed. Check with read_window or look_at_screen before assuming it worked."
+    return out
+
+
+def _click_text(w: dict[str, Any], text: str, index: int, button: str, double: bool) -> dict[str, Any]:
     pointer = button != "left" or double  # right clicks and double clicks need the real mouse
     try:
         out = _ps(_UIA_SCRIPT, {"hwnd": w["hwnd"], "text": text, "mode": "click", "index": index, "pointer": pointer}, timeout=40)
@@ -325,6 +365,34 @@ def click_text(args: dict[str, Any]) -> dict[str, Any]:
     hit = hits[min(index, len(hits) - 1)]
     _click_point(left + hit["x"] + hit["w"] // 2, top + hit["y"] + hit["h"] // 2, button, double)
     return {"window": w["title"], "clicked": hit["text"], "via": "ocr", "other_matches": len(hits) - 1}
+
+
+@action
+def type_into(args: dict[str, Any]) -> dict[str, Any]:
+    """Type into a field found by its label (e.g. 'Email', 'Search', 'Message'): set through UI Automation where the
+    field allows it, else focused (or clicked) and typed into. submit=true presses Enter after."""
+    from .actions import type_text
+
+    label = _str(args, "label").strip()
+    value = str(args.get("text") or "")
+    w = _target(_str(args, "window", False) or "")
+    _bring_up(w["hwnd"])
+    out = _ps(_UIA_SCRIPT, {"hwnd": w["hwnd"], "text": label, "mode": "type", "value": value,
+                            "index": max(0, int(args.get("index") or 0))}, timeout=40)
+    done = out.get("done")
+    if done == "none":
+        raise ActionError(f"No field labelled '{label}' in {w['title'] or w['app']}. Try find_controls to see the field names.")
+    if done in ("focused", "point"):
+        if done == "point":
+            p = out["picked"]
+            _click_point(p["x"] + p["w"] // 2, p["y"] + p["h"] // 2)
+        win.press("ctrl", "a")
+        type_text({"text": value})
+    if args.get("submit"):
+        time.sleep(0.15)
+        win.press("enter")
+    return {"window": w["title"], "field": out["picked"]["name"], "control": out["picked"]["type"],
+            "how": "set directly" if done == "set" else "typed", "characters": len(value), "submitted": bool(args.get("submit"))}
 
 
 @action

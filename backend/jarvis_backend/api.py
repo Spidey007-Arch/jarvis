@@ -38,6 +38,18 @@ from .settings import SettingsStore
 log = logging.getLogger("jarvis.api")
 
 HISTORY_MESSAGES = 24
+ADVISE_EVERY = 4  # rounds of a planned task between reviews by the advisor (and after any failure)
+ADVICE_MAX = 4  # reviews per task
+ADVISOR_PROMPT = """You are the senior reviewer for JARVIS, an assistant working through a task on the user's Windows PC.
+Goal: {goal}
+Plan: {plan}
+Now on step: {current}
+Recent steps (newest last):
+{steps}
+
+Is this on track? If a step failed or the approach is going in circles, say what to do instead, concretely (a better tool,
+a different order, checking the screen first, asking the user). If it is on track, say so in a few words and name the next
+step. At most three sentences. Never suggest paying, sending or deleting anything the user did not ask for."""
 COMPACT_AFTER = 8  # once this many messages have scrolled out of the window, they are folded into the summary
 SUMMARY_SCHEMA: dict[str, Any] = {"type": "object", "properties": {"summary": {"type": "string"}}, "required": ["summary"]}
 # Facts about the user are almost always stated in the first person; other messages skip extraction.
@@ -474,7 +486,7 @@ def build_router(svc: Services, require_auth: Callable[..., None]) -> APIRouter:
                                   f"If the user wants it, call screen_click again with target naming '{label}' so they are asked to approve it.")
             done = await svc.bridge.call("mouse_click", {"x": spot["x"], "y": spot["y"], "button": args.get("button") or "left",
                                                           "double": bool(args.get("double"))}, timeout=15)
-            return {"clicked": label, "kind": spot.get("kind"), "at": done.get("clicked"),
+            return {"clicked": label, "kind": spot.get("kind"), "at": done.get("clicked"), "screen_changed": done.get("screen_changed"),
                     "next": "Check the result with look_at_screen before the next step if anything is uncertain."}
         if spec.name == "screen_drag":
             src = await _locate_on_screen(str(args.get("source") or ""))
@@ -1056,6 +1068,22 @@ def build_router(svc: Services, require_auth: Callable[..., None]) -> APIRouter:
                 done_calls: dict[str, tuple[int, int, dict[str, Any]]] = {}
                 task = svc.tasks.begin(text, conv_id, actions)
 
+                reviews = {"n": 0}
+
+                async def advise(rounds: int, results: list[tuple[ToolCall, dict[str, Any]]]) -> str | None:
+                    """The advisor: during a planned task, every few rounds and after a failure."""
+                    failed = any(not r.get("ok", True) for _c, r in results)
+                    if not task.plan or reviews["n"] >= ADVICE_MAX or not (failed or rounds % ADVISE_EVERY == 0):
+                        return None
+                    reviews["n"] += 1
+                    steps = "\n".join(f"- {a['label']}: {a['status']}" + (f" ({a.get('error', '')[:160]})" if a["status"] == "failed" else "")
+                                      for a in actions[-12:])
+                    note = await svc.llm.advise(ADVISOR_PROMPT.format(goal=text[:500], plan="; ".join(task.plan),
+                                                                      current=task.plan[task.current] if task.plan else "-", steps=steps))
+                    if note:
+                        task.advice = note[:400]
+                    return note
+
                 async def execute(call: ToolCall) -> dict[str, Any]:
                     try:
                         signal = await svc.tasks.checkpoint(task)
@@ -1080,7 +1108,8 @@ def build_router(svc: Services, require_auth: Callable[..., None]) -> APIRouter:
                                       max_rounds=lambda: task.max_rounds, find_tools=toolsearch.find,
                                       # a planned multi-step task thinks harder; a quick request answers fast
                                       effort=lambda: "high" if task.plan else "medium",
-                                      on_thought=lambda t: setattr(task, "thought", t[-400:]))
+                                      on_thought=lambda t: setattr(task, "thought", t[-400:]),
+                                      advise=advise)
                 )
                 task.agent = agent_task
                 while True:

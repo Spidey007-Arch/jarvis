@@ -46,6 +46,64 @@ class LongTasks(unittest.TestCase):
         self.assertIn("cleared_to_save_space", stub(json.dumps(big)))
 
 
+class AgentLoop(unittest.TestCase):
+    """The loop's own pieces: more_tools loads tools, effort is set per step, the advisor's note reaches the model."""
+
+    def test_more_tools_effort_and_advisor(self) -> None:
+        import asyncio
+
+        from jarvis_backend.llm import LLM
+        from jarvis_backend.providers.base import Step, ToolSession
+
+        class Session(ToolSession):
+            def __init__(self) -> None:
+                self.n, self.added, self.efforts, self.results = 0, [], [], []
+
+            async def step(self, model: str) -> Step:
+                self.efforts.append(self.effort)
+                self.n += 1
+                if self.n == 1:
+                    return Step(calls=[ToolCall(id="a", name="more_tools", args={"need": "gmail"})], thought="I need mail tools")
+                if self.n == 2:
+                    return Step(calls=[ToolCall(id="b", name="gmail_list", args={})])
+                return Step(text="Two new mails, sir.")
+
+            def add_results(self, results) -> None:
+                self.results.append(results)
+
+            def add_tools(self, tools) -> None:
+                self.added += [t["name"] for t in tools]
+
+        class FakeLLM(LLM):
+            chat_model = "m"
+            provider_id = "gemini"
+
+        llm = object.__new__(FakeLLM)
+        llm._cooldown, llm._failures, llm.usage = {}, {}, None
+        session = Session()
+        llm.provider = lambda: type("P", (), {"tool_session": lambda *a: session})()
+
+        async def candidates():
+            return ["m"]
+
+        llm._chat_candidates = candidates
+        thoughts: list[str] = []
+
+        async def execute(call):
+            return {"ok": False, "error": "Gmail is not signed in"}
+
+        async def advise(rounds, results):
+            return "Ask the user to sign in to Gmail in the JARVIS browser window." if not results[-1][1].get("ok", True) else None
+
+        reply = asyncio.run(llm.run_agent("sys", [("user", "any mail?")], [], execute, effort=lambda: "high", on_thought=thoughts.append,
+                                          advise=advise, find_tools=toolsearch.find))
+        self.assertEqual(reply, "Two new mails, sir.")
+        self.assertIn("gmail_list", session.added)
+        self.assertEqual(set(session.efforts), {"high"})
+        self.assertEqual(thoughts, ["I need mail tools"])
+        self.assertIn("sign in to Gmail", session.results[1][-1][1]["advisor"])
+
+
 class ToolSearch(unittest.TestCase):
     def test_requests_get_core_plus_what_matches(self) -> None:
         names = [t["name"] for t in toolsearch.select("any important mail today?")]

@@ -61,7 +61,7 @@ def capability(spec: ToolSpec, args: dict[str, Any]) -> str | None:
     if name == "screen_click" and RISKY_CLICK.search(str(args.get("target", ""))) or \
             name == "click_text" and RISKY_CLICK.search(str(args.get("text", ""))):
         return "send_or_pay"
-    if name in _SCREEN or name == "screen_scroll" and args.get("over"):
+    if name in _SCREEN or name == "type_into" or name == "screen_scroll" and args.get("over"):
         return "see_screen"
     if name in _MESSAGES:
         return "read_messages"

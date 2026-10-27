@@ -54,6 +54,7 @@ class Task:
     max_rounds: int = 8
     handed_back: bool = False
     thought: str = ""  # the model's latest reasoning summary, for the panel
+    advice: str = ""  # the advisor's latest review
     agent: asyncio.Task | None = None
     resume: asyncio.Event = field(default_factory=asyncio.Event)
 
@@ -64,7 +65,8 @@ class Task:
     def view(self) -> dict[str, Any]:
         return {"id": self.id, "goal": self.goal, "status": self.status, "plan": self.plan, "current": self.current,
                 "actions": [{"label": a["label"], "status": a["status"]} for a in self.actions[-6:]],
-                "steps_taken": len(self.actions), "started": self.created_at, "thought": self.thought}
+                "steps_taken": len(self.actions), "started": self.created_at, "thought": self.thought,
+                "advice": self.advice}
 
 
 class Tasks:

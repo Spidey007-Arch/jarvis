@@ -653,11 +653,17 @@ def mouse_click(args: dict[str, Any]) -> dict[str, Any]:
     button = str(args.get("button") or "left").lower()
     if button not in ("left", "right", "middle"):
         raise ActionError("button must be left, right or middle.")
+    from .uictl import changed, snapshot
+
+    before = snapshot()
     with _out_of_the_way(fx, fy):
         win.mouse_click(fx, fy, button, bool(args.get("double")))
         time.sleep(0.25)
+    time.sleep(0.3)
+    moved = changed(before, snapshot())
     left, top, w, h = win.virtual_screen()
-    return {"clicked": {"x": left + int(fx * w), "y": top + int(fy * h)}, "button": button, "double": bool(args.get("double"))}
+    return {"clicked": {"x": left + int(fx * w), "y": top + int(fy * h)}, "button": button, "double": bool(args.get("double")),
+            "screen_changed": moved, **({} if moved else {"note": "Nothing visibly changed; look before assuming it worked."})}
 
 
 @action

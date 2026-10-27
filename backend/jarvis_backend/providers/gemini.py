@@ -180,6 +180,12 @@ class GeminiProvider(Provider):
         lite = [n for n in pool if "lite" in n][:1]
         return full + lite
 
+    @staticmethod
+    def pick_advisor(models: list[dict[str, Any]], chat_model: str) -> str:
+        pool = [m["name"] for m in models if m["kind"] == "chat" and "pro" in m["name"] and not _SKIP.search(m["name"])
+                and re.search(r"gemini-\d", m["name"])]
+        return max(pool, key=_version_key) if pool else chat_model
+
     def tool_session(self, system: str, history: list[tuple[str, str]], tools: list[dict[str, Any]]) -> ToolSession:
         return _GeminiTools(self, system, history, tools)
 

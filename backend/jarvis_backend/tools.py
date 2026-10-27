@@ -103,6 +103,11 @@ TOOLS: list[ToolSpec] = [
              "the target has visible text. index picks among several matches (0 = best); button right or double=true use the mouse.",
              obj({"text": S, "window": S, "index": I, "button": S, "double": B}, ["text"]), agent_action="click_text", timeout=60,
              label="Pressing \"{text}\""),
+    ToolSpec("type_into", "Type into a field by its label, in a window (by title or app; default the frontmost app), e.g. label "
+             "'Search', 'Email', 'To', 'Message'. Sets the value through Windows UI Automation where it can, else focuses the "
+             "field and types. submit=true presses Enter after. More reliable than clicking a field and using type_text.",
+             obj({"label": S, "text": S, "window": S, "index": I, "submit": B}, ["label", "text"]), agent_action="type_into",
+             timeout=60, label="Typing into {label}"),
     ToolSpec("find_controls", "List the controls in a window whose visible name contains text (all named controls when text is "
              "empty): name, type (Button, MenuItem, Edit, ListItem...), position, enabled. Use it to see what can be pressed.",
              obj({"window": S, "text": S, "limit": I}), agent_action="find_controls", timeout=60, label="Looking at the controls"),
@@ -236,7 +241,7 @@ TOOLS: list[ToolSpec] = [
 
 # Repeating these is normal (another key press, the next track), never a loop.
 STEPWISE_TOOLS = frozenset({"set_plan", "press_keys", "type_text", "volume", "media", "brightness", "web_click", "web_type", "screen_click", "screen_scroll",
-                            "click_text", "window_control", "screen_drag", "wait_for_window"})
+                            "click_text", "window_control", "screen_drag", "wait_for_window", "type_into"})
 # Read-only looks whose answer can change after other actions.
 OBSERVE_TOOLS = frozenset({"look_at_screen", "system_status", "clipboard_get", "list_folder", "find_files", "list_reminders", "web_read",
                            "gmail_list", "gmail_open", "whatsapp_chats", "whatsapp_read", "find_apis", "call_api",

@@ -44,7 +44,7 @@ SYNONYMS = {
     "paste": "clipboard_get", "gpu": "hardware_info", "temperature": "hardware_info", "hot": "hardware_info",
     "process": "list_processes kill_process", "kill": "kill_process", "close": "close_app window_control", "edit": "edit_file write_file",
     "write": "write_file edit_file", "code": "write_file edit_file run_command", "screenshot": "screenshot", "scroll": "screen_scroll",
-    "drag": "screen_drag", "select": "select_files", "startup": "autostart", "start": "autostart",
+    "drag": "screen_drag", "type": "type_into type_text", "fill": "type_into", "field": "type_into", "form": "type_into", "select": "select_files", "startup": "autostart", "start": "autostart",
     "word": "create_document read_document", "excel": "create_document read_document", "powerpoint": "create_document read_document",
     "document": "create_document read_document", "pdf": "read_document create_document", "report": "create_document read_document",
     "slides": "create_document", "presentation": "create_document", "spreadsheet": "create_document read_document",

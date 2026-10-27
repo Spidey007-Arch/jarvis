@@ -216,6 +216,23 @@ class LLM:
             except Exception:  # noqa: BLE001 - quota bookkeeping must never break a reply
                 log.exception("could not record a quota rejection")
 
+    async def advise(self, prompt: str) -> str | None:
+        """Ask the strongest available model (the provider's pick) for a short review; None if it can't answer."""
+        p = self.provider()
+        try:
+            advisor = p.pick_advisor(await self._models(), self.chat_model)
+        except LLMError:
+            advisor = self.chat_model
+        schema = {"type": "object", "properties": {"on_track": {"type": "boolean"}, "advice": {"type": "string"}},
+                  "required": ["on_track", "advice"]}
+        try:
+            out = await self._first_success(self._available(list(dict.fromkeys([advisor, self.chat_model]))),
+                                            lambda m: p.generate_json(m, prompt, schema), timeout=45.0)
+        except (LLMError, ProviderError):
+            return None
+        advice = str((out or {}).get("advice") or "").strip()
+        return advice or None
+
     def _tokens(self, model: str, usage: dict[str, int]) -> None:
         if self.usage:
             self.usage.record_tokens(model, usage)
@@ -348,6 +365,7 @@ class LLM:
         find_tools: Callable[[str], list[dict[str, Any]]] | None = None,
         effort: Callable[[], str] | None = None,
         on_thought: Callable[[str], None] | None = None,
+        advise: Callable[[int, list[tuple[ToolCall, dict[str, Any]]]], Awaitable[str | None]] | None = None,
     ) -> str:
         """Let the model call tools until it produces a final answer. Returns that answer.
 
@@ -406,6 +424,11 @@ class LLM:
                                            or "Nothing matches; try other words, or do without."}))
                 else:
                     results.append((call, await execute(call)))
+            if advise and results:  # now and then, a stronger model reviews the task; its note rides on the last result
+                note = await advise(rounds, results)
+                if note:
+                    last_call, last = results[-1]
+                    results[-1] = (last_call, {**last, "advisor": note})
             session.add_results(results)
             if rounds >= TRIM_AFTER_ROUNDS:  # a long task: old tool results shrink to stubs, keeping requests small
                 session.trim_results(keep=KEEP_RESULTS)

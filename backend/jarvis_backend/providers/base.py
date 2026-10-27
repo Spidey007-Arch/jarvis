@@ -221,5 +221,10 @@ class Provider(ABC):
     def fallbacks(models: list[dict[str, Any]], primary: str) -> list[str]:
         return []
 
+    @staticmethod
+    def pick_advisor(models: list[dict[str, Any]], chat_model: str) -> str:
+        """The strongest model available, to review a long task's progress now and then."""
+        return chat_model
+
     async def aclose(self) -> None:
         return None

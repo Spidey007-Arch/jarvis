@@ -164,6 +164,11 @@ class AnthropicProvider(Provider):
     def pick_embed(models: list[dict[str, Any]]) -> str:
         return ""
 
+    @staticmethod
+    def pick_advisor(models: list[dict[str, Any]], chat_model: str) -> str:
+        opus = [m["name"] for m in models if "opus" in m["name"]]
+        return opus[0] if opus else chat_model
+
     def tool_session(self, system: str, history: list[tuple[str, str]], tools: list[dict[str, Any]]) -> ToolSession:
         return _AnthropicTools(self, system, history, tools)
 
