@@ -201,10 +201,11 @@ export const speak = (c: Connection, text: string, queue = false) =>
   call<{ spoken: boolean }>(c, "/api/voice/speak", { method: "POST", body: JSON.stringify({ text, queue }) });
 export const stopSpeaking = (c: Connection) => call<{ stopped: boolean }>(c, "/api/voice/stop", { method: "POST", body: "{}" });
 
-/** A reply as it should sound: no markdown, links or lists; long answers trimmed at a sentence. */
+/** A reply as it should sound: the whole of it, without markdown symbols, link targets or list bullets.
+ *  A code block is not read out symbol by symbol; it is announced instead. */
 export function forSpeech(text: string): string {
-  let t = text
-    .replace(/```[\s\S]*?```/g, " (code on screen) ")
+  return text
+    .replace(/```[\s\S]*?```/g, " The code is on screen. ")
     .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
     .replace(/https?:\/\/\S+/g, "")
     .replace(/^#+\s*/gm, "")
@@ -212,12 +213,6 @@ export function forSpeech(text: string): string {
     .replace(/[*_`>#|]/g, "")
     .replace(/\s+/g, " ")
     .trim();
-  if (t.length > 700) {
-    const cut = t.slice(0, 700);
-    const end = Math.max(cut.lastIndexOf(". "), cut.lastIndexOf("? "), cut.lastIndexOf("! "));
-    t = (end > 200 ? cut.slice(0, end + 1) : cut) + " The rest is on screen.";
-  }
-  return t;
 }
 
 export const getModels = (c: Connection) => call<{ chat: ModelInfo[]; embed: ModelInfo[] }>(c, "/api/models");

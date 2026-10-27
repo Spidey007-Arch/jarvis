@@ -175,15 +175,15 @@ export default function ChatView({
     let failed = false;
     let full = "";
     // JARVIS always answers out loud, typed or spoken: each sentence is spoken as soon as it has streamed in, instead of
-    // waiting for the whole reply. Code is left on screen, and a long answer stops after ~700 characters.
+    // waiting for the whole reply. Everything on screen is spoken, however long; a finished code block is announced
+    // ("The code is on screen") and speech carries on after it. A code block still streaming in is waited for.
     let said = 0;
-    let saidChars = 0;
     let firstSpeech = true;
-    let speechOver = false;
     const sayUpTo = (final: boolean) => {
-      if (speechOver || !conn) return;
-      const fence = full.indexOf("```");
-      const text = fence >= 0 ? full.slice(0, fence) : full;
+      if (!conn) return;
+      const blocks = full.replace(/```[\s\S]*?```/g, "\n⟦code⟧\n");  // finished blocks: stable as the reply grows
+      const open = blocks.indexOf("```");  // only a block still streaming in has a bare fence left
+      const text = open >= 0 ? blocks.slice(0, open) : blocks;
       const rest = text.slice(said);
       let cut = final ? rest.length : 0;
       if (!final) {
@@ -191,14 +191,8 @@ export default function ChatView({
       }
       if (cut <= 0) return;
       said += cut;
-      let piece = forSpeech(rest.slice(0, cut));
-      if (final && fence >= 0) piece = `${piece} The code is on screen.`.trim();
+      const piece = forSpeech(rest.slice(0, cut).replace(/⟦code⟧/g, " The code is on screen. "));
       if (!piece) return;
-      if (saidChars + piece.length > 700) {
-        piece = "The rest is on screen.";
-        speechOver = true;
-      }
-      saidChars += piece.length;
       speak(conn, piece, !firstSpeech).catch((e) => setNotice({ tone: "warn", text: `Could not speak the reply: ${(e as Error).message}` }));
       firstSpeech = false;
     };
