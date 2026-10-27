@@ -41,6 +41,8 @@ log = logging.getLogger("jarvis.api")
 HISTORY_MESSAGES = 24
 ADVISE_EVERY = 4  # rounds of a planned task between reviews by the advisor (and after any failure)
 ADVICE_MAX = 4  # reviews per task
+MAX_SEARCHES = 3  # web searches per request; more than this is a loop, not research
+RESEARCH_TOOLS = frozenset({"web_research"})
 STALL_S = 360.0  # no step, tool or event for this long (outside a running tool) means a task is stuck; stop it
 ADVISOR_PROMPT = """You are the senior reviewer for JARVIS, an assistant working through a task on the user's Windows PC.
 Goal: {goal}
@@ -1158,6 +1160,7 @@ def build_router(svc: Services, require_auth: Callable[..., None]) -> APIRouter:
 
                 reviews = {"n": 0}
                 progress = {"at": time.monotonic()}
+                searches = {"n": 0}
 
                 async def advise(rounds: int, results: list[tuple[ToolCall, dict[str, Any]]]) -> str | None:
                     """The advisor: during a planned task, every few rounds and after a failure."""
@@ -1183,6 +1186,11 @@ def build_router(svc: Services, require_auth: Callable[..., None]) -> APIRouter:
                                                       "may have changed. Look again (look_at_screen, read_window, list_windows) "
                                                       "before continuing, then carry on."}
                     step = len(actions)
+                    if call.name in RESEARCH_TOOLS:
+                        searches["n"] += 1
+                        if searches["n"] > MAX_SEARCHES:
+                            return {"ok": False, "error": f"Already searched {MAX_SEARCHES} times for this request. Don't search "
+                                    "again: answer now from the results you have, and say plainly what is still unknown."}
                     if (cached := repeat_of(call, done_calls, step)) is not None:
                         audit.info("repeated call skipped", extra={"fields": {"tool": call.name}})
                         return cached

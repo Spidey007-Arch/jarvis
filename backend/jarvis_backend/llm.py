@@ -560,6 +560,11 @@ class LLM:
                                            or "Nothing matches; try other words, or do without."}))
                 else:
                     results.append((call, await execute(call)))
+            if results and rounds + 1 >= (max_rounds() if callable(max_rounds) else max_rounds):
+                # The next step is the last one allowed: it must answer from what was gathered, not start something new.
+                last_call, last_result = results[-1]
+                results[-1] = (last_call, {**last_result, "last_step": "This is your final step: answer the user now from "
+                                           "everything gathered so far, with no more tool calls, and say what is still unknown."})
             if advise and results:  # now and then, a stronger model reviews the task; its note rides on the last result
                 note = await advise(rounds, results)
                 if note:
