@@ -12,7 +12,6 @@ import HistoryPanel from "./views/HistoryPanel";
 import MemoryView from "./views/MemoryView";
 import SettingsView from "./views/SettingsView";
 import SystemPanel from "./views/SystemPanel";
-import GlobeView from "./views/GlobeView";
 
 type Drawer = "history" | "memory" | "settings" | "system" | null;
 
@@ -195,8 +194,6 @@ function VoiceLink({ conn, onState, onTurn }: { conn: Connection | null; onState
             setHeard(e.text);
             put("off");
             window.dispatchEvent(new CustomEvent("jarvis:voice-text", { detail: e.text }));
-          } else if (e.event === "globe") {
-            window.dispatchEvent(new CustomEvent("jarvis:globe", { detail: e.text ?? "" }));
           } else if (e.event === "emergency_stop") {
             setCaption("");
             setNote("Stopped everything");
@@ -267,13 +264,6 @@ export default function App() {
   const [status, setStatus] = useState<ShellStatus | null>(null);
   const [conn, setConn] = useState<Connection | null>(null);
   const [drawer, setDrawer] = useState<Drawer>(null);
-  // The globe is a full screen of its own, not a drawer; once opened it stays loaded while hidden.
-  const [globe, setGlobe] = useState<{ open: boolean; started: boolean; target: string | null }>({ open: false, started: false, target: null });
-  useEffect(() => {
-    const show = (e: Event) => setGlobe({ open: true, started: true, target: (e as CustomEvent<string>).detail || null });
-    window.addEventListener("jarvis:globe", show);
-    return () => window.removeEventListener("jarvis:globe", show);
-  }, []);
   const [configured, setConfigured] = useState(false);
   const [address, setAddress] = useState("sir");
   const [activity, setActivity] = useState<Activity>("idle");
@@ -380,14 +370,6 @@ export default function App() {
           </button>
         ))}
         <button
-          className={globe.open ? "on" : ""}
-          onClick={() => setGlobe((g) => ({ ...g, open: !g.open, started: true }))}
-          title="Globe (God's Eye View)"
-          aria-label="Globe (God's Eye View)"
-        >
-          <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" /><path d="M3 12h18M12 3c3 3.5 3 14.5 0 18M12 3c-3 3.5-3 14.5 0 18" /></svg>
-        </button>
-        <button
           className="rail-new"
           title="New conversation"
           aria-label="New conversation"
@@ -418,8 +400,6 @@ export default function App() {
           voice={voice}
         />
       </main>
-
-      {globe.started && <GlobeView conn={conn} open={globe.open} target={globe.target} onClose={() => setGlobe((g) => ({ ...g, open: false }))} />}
 
       {drawer && <div className="scrim" onClick={() => setDrawer(null)} />}
       <aside className={`glass drawer ${drawer ? "open" : ""} ${drawer === "memory" ? "wide" : ""} ${drawer === "settings" ? "xwide" : ""}`} aria-hidden={!drawer}>

@@ -19,7 +19,7 @@ from fastapi.responses import JSONResponse
 
 from jarvis_common.paths import data_dir, logs_dir, runtime_file
 
-from . import __version__, gateway, globe
+from . import __version__, gateway
 from .api import Services, build_router
 from .providers import PRESETS
 from .bridge import AgentBridge, AgentError, AgentUnavailable, HEARTBEAT_TIMEOUT_S
@@ -126,7 +126,6 @@ def create_app(port: int, token: str | None = None) -> FastAPI:
             if initiative:
                 initiative.cancel()
             await services.connectors.close()
-            globe.stop()
             db.close()
             _remove_runtime()
             log.info("backend stopped")

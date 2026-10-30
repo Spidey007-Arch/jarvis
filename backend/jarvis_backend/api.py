@@ -12,12 +12,11 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Literal
 
-import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
-from . import briefing, gateway, globe, permissions, public_apis, toolsearch
+from . import briefing, gateway, permissions, public_apis, toolsearch
 from .db import DB
 from .extraction import EXTRACT_SCHEMA, extract_prompt
 from .bridge import AgentBridge, AgentError, AgentUnavailable
@@ -474,44 +473,10 @@ def build_router(svc: Services, require_auth: Callable[..., None]) -> APIRouter:
 
     async def _run_tool(spec: ToolSpec, args: dict[str, Any]) -> Any:
         if spec.risk in ("connector", "connector_read"):
-            on_globe = spec.name.startswith("globe__")
-            if on_globe and not (up := await globe.ensure()).get("running"):  # its tools read from the running app
-                raise ToolFailure(up.get("error") or "The globe isn't running.")
             try:
-                out = await svc.connectors.call(spec.name, args)
+                return await svc.connectors.call(spec.name, args)
             except ConnectorError as e:
                 raise ToolFailure(str(e)) from e
-            if on_globe and (link := globe.view_link(out.get("result", ""))):
-                svc.bridge.voice_event({"type": "voice", "event": "globe", "text": link})  # the Globe screen flies there
-                out["shown"] = "Shown on the Globe screen in JARVIS."
-            return out
-        if spec.name == "globe_show":
-            up = await _globe_up()
-            if not up.get("running"):
-                raise ToolFailure(up.get("error") or "The globe didn't start.")
-            place = str(args.get("place") or "").strip()
-            layers = [x for x in (args.get("layers") or []) if x in globe.LAYERS]
-            view: dict[str, Any] = {"layers": layers} if layers else {}
-            where = None
-            if place:
-                try:
-                    where = await globe.geocode(place)
-                except (ValueError, httpx.HTTPError) as e:
-                    raise ToolFailure(str(e)) from e
-                view["area"] = {"bbox": where["bbox"]}
-            await svc.connectors.ensure()
-            if "globe__show_in_gods_eye_view" not in svc.connectors.tools:
-                raise ToolFailure("The globe's tools aren't connected yet; " + str(svc.connectors.status.get("globe", {}).get("error", "try again in a moment.")))
-            out = await _run_tool(_spec("globe__show_in_gods_eye_view"), view)
-            return {**out, **({"place": where["name"], "lat": where["lat"], "lon": where["lon"]} if where else {}),
-                    "note": "Shown on the Globe screen. For live data about this area, the globe__ tools take area {lat, lon, radius_km}."}
-        if spec.name == "open_globe":
-            up = await _globe_up()
-            if not up.get("running"):
-                raise ToolFailure(up.get("error") or "The globe didn't start.")
-            svc.bridge.voice_event({"type": "voice", "event": "globe", "text": ""})
-            return {"shown": "The Globe screen is open in JARVIS.",
-                    "note": "To show a place or live data on it, use the globe__ tools (e.g. globe__show_in_gods_eye_view)."}
         if spec.agent_action:
             return await svc.bridge.call(spec.agent_action, args, timeout=spec.timeout)
         if spec.name == "web_research":
@@ -1002,18 +967,6 @@ def build_router(svc: Services, require_auth: Callable[..., None]) -> APIRouter:
     async def stop_all() -> dict[str, Any]:
         await _emergency_stop()
         return {"stopped": True}
-
-    async def _globe_up() -> dict[str, Any]:
-        """Start the globe and make its MCP server a connector (once), so JARVIS can ask it things."""
-        out = await globe.ensure()
-        if out.get("running") and not any(c["name"] == "globe" for c in svc.connectors.configs()):
-            svc.settings.set_connectors(svc.connectors.configs() + [globe.connector_config()])
-            spawn(svc.connectors.ensure())
-        return out
-
-    @r.post("/globe/start")
-    async def globe_start() -> dict[str, Any]:
-        return await _globe_up()
 
     @r.post("/gateway/start")
     async def gateway_start() -> dict[str, Any]:
