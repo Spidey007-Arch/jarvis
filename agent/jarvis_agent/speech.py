@@ -158,7 +158,7 @@ class Speaker:
         self.emit, self.levels = emit, levels
         self.piper: Piper | None = None
         self._text: queue.Queue[tuple[int, str]] = queue.Queue()
-        self._audio: queue.Queue[tuple[int, Path | None]] = queue.Queue()
+        self._audio: queue.Queue[tuple[int, Path | None, str]] = queue.Queue()  # (generation, audio, the sentence it says)
         self._gen = 0
         self._busy = False
         self._threads: list[threading.Thread] = []
@@ -207,11 +207,11 @@ class Speaker:
             if gen != self._gen or self.piper is None:
                 continue
             try:
-                self._audio.put((gen, self.piper.synth(text)))
+                self._audio.put((gen, self.piper.synth(text), text))
             except Exception as e:  # noqa: BLE001
                 log.exception("speech synthesis failed")
                 self.emit({"event": "error", "message": f"Could not speak: {e}"})
-                self._audio.put((gen, None))
+                self._audio.put((gen, None, text))
 
     def _play_loop(self) -> None:
         """One output stream stays open for a whole reply, with a generous buffer, so sentences run on without
@@ -223,7 +223,7 @@ class Speaker:
         out_rate = 0
         while True:
             try:
-                gen, path = self._audio.get(timeout=2.0 if out is not None else None)
+                gen, path, said = self._audio.get(timeout=2.0 if out is not None else None)
             except queue.Empty:
                 out = _close(out)  # nothing more to say: release the device
                 continue
@@ -237,6 +237,7 @@ class Speaker:
                 if not self._busy:
                     self._busy = True
                     self.emit({"event": "speaking"})
+                self.emit({"event": "saying", "text": said})  # the caption shows each sentence as it is heard
                 if out is None or rate != out_rate:
                     _close(out)
                     out, out_rate = open_output(rate), rate

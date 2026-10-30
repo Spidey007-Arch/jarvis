@@ -196,7 +196,20 @@ class LiveVoice:
         opened.set_result(None)
         log.info("live session open", extra={"fields": {"model": model, "origin": origin}})
         state = {"last": time.monotonic(), "playing_until": 0.0, "user": said, "jarvis": "", "bye": False, "opening": bool(opening), "done": False, "reconnecting": False, "heard_at": time.monotonic(),
-                 "reply_t0": 0.0, "reply_bytes": 0, "acted": False}
+                 "reply_t0": 0.0, "reply_bytes": 0, "acted": False, "captions": []}
+
+        def caption(text: str) -> None:
+            """Show JARVIS's words when they are heard, not when they arrive: the transcript comes ahead of the audio,
+            which is still queued in the speakers, so each piece waits until the audio queued before it has played."""
+            wait = max(0.0, state["playing_until"] - time.monotonic())
+            loop = asyncio.get_running_loop()
+            state["captions"] = [h for h in state["captions"] if not h.cancelled()]
+            state["captions"].append(loop.call_later(wait, self.emit, {"event": "jarvis_text", "text": text}))
+
+        def drop_captions() -> None:
+            for h in state["captions"]:
+                h.cancel()
+            state["captions"] = []
         reconnects = 0
         slow: SlowLine | None = None
         try:
@@ -259,6 +272,7 @@ class LiveVoice:
                             log.info("live: reply interrupted by audio from the microphone")
                             await self.push_agent({"type": "speaker_flush"})
                             state["playing_until"] = 0.0
+                            drop_captions()  # what was cut off is never heard, so never shown
                         if sc.input_transcription and sc.input_transcription.text:
                             state["user"] += sc.input_transcription.text
                             state["last"] = time.monotonic()
@@ -266,7 +280,7 @@ class LiveVoice:
                         if sc.output_transcription and sc.output_transcription.text:
                             state["jarvis"] += sc.output_transcription.text
                             state["done"] = False
-                            self.emit({"event": "jarvis_text", "text": state["jarvis"].strip()})
+                            caption(state["jarvis"].strip())
                         if sc.model_turn:
                             for part in sc.model_turn.parts or []:
                                 if part.inline_data and part.inline_data.data:

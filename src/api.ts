@@ -105,7 +105,7 @@ export interface VoiceEvent {
   at: number;
   event:
     | "listening" | "transcribing" | "transcript" | "speaking" | "idle" | "error"
-    | "live_connecting" | "live_start" | "user_text" | "jarvis_text" | "live_tool" | "live_turn" | "live_end" | "briefing" | "levels" | "emergency_stop";
+    | "live_connecting" | "live_start" | "user_text" | "jarvis_text" | "live_tool" | "live_turn" | "live_end" | "briefing" | "levels" | "emergency_stop" | "saying";
   conversation_id?: string | null;
   tool?: string;
   model?: string;

@@ -186,7 +186,8 @@ function VoiceLink({ conn, onState, onTurn }: { conn: Connection | null; onState
             put("listening");
           } else if (e.event === "transcribing") put("transcribing");
           else if (e.event === "speaking") put("speaking");
-          else if (e.event === "briefing" && e.text) {
+          else if (e.event === "briefing" && e.text) put("speaking"); // its sentences arrive one by one as they are spoken
+          else if (e.event === "saying" && e.text) {
             setCaption(e.text);
             put("speaking");
           }
@@ -242,21 +243,28 @@ function VoiceLink({ conn, onState, onTurn }: { conn: Connection | null; onState
 
   if (state === "off" && !heard && !note) return null;
   const live = state === "connecting" || state === "live" || (state === "speaking" && !!caption);
+  const spoken = live && caption ? nowSaying(caption) : "";
   const label =
     state === "connecting" ? "Connecting"
-    : live && caption ? caption
+    : spoken ? spoken
     : state === "live" ? "Live · listening"
     : state === "listening" ? "Listening" : state === "transcribing" ? "Understanding" : state === "speaking" ? "Speaking" : "";
   return (
-    <div className={`voice-pill glass ${state} ${live ? "is-live" : ""}`} role="status"
+    <div className={spoken ? `voice-caption ${state}` : `voice-pill glass ${state} ${live ? "is-live" : ""}`} role="status"
          onClick={() => conn && state !== "off" && stopSpeaking(conn).catch(() => {})}
          title={live ? "Click to end the conversation (or say “that's all”)" : state === "speaking" ? "Click to stop" : undefined}>
       {state !== "off" && (
         <span className="voice-bars" aria-hidden="true"><i /><i /><i /><i /><i /></span>
       )}
-      <span>{label || (heard ? `“${heard}”` : note)}</span>
+      <span key={spoken || "pill"}>{label || (heard ? `“${heard}”` : note)}</span>
     </div>
   );
+}
+
+/** The sentence being spoken now: live voice sends its whole reply so far, the offline voice one sentence at a time. */
+function nowSaying(text: string): string {
+  const parts = text.trim().split(/(?<=[.!?])\s+/).filter(Boolean);
+  return parts[parts.length - 1] ?? "";
 }
 
 export default function App() {
