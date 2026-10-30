@@ -105,7 +105,7 @@ export interface VoiceEvent {
   at: number;
   event:
     | "listening" | "transcribing" | "transcript" | "speaking" | "idle" | "error"
-    | "live_connecting" | "live_start" | "user_text" | "jarvis_text" | "live_tool" | "live_turn" | "live_end" | "briefing" | "levels" | "emergency_stop";
+    | "live_connecting" | "live_start" | "user_text" | "jarvis_text" | "live_tool" | "live_turn" | "live_end" | "briefing" | "levels" | "emergency_stop" | "globe";
   conversation_id?: string | null;
   tool?: string;
   model?: string;
@@ -176,6 +176,8 @@ export const getAutostart = (c: Connection) => call<{ starts_with_windows: boole
 export const setAutostart = (c: Connection, enabled: boolean) =>
   call<{ starts_with_windows: boolean }>(c, "/api/autostart", { method: "PUT", body: JSON.stringify({ enabled }) });
 export const stopEverything = (c: Connection) => call<{ stopped: boolean }>(c, "/api/stop-all", { method: "POST" });
+export const startGlobe = (c: Connection) =>
+  call<{ running: boolean; url?: string; error?: string }>(c, "/api/globe/start", { method: "POST" });
 export const startGateway = (c: Connection) =>
   call<{ running: boolean; started?: boolean; error?: string }>(c, "/api/gateway/start", { method: "POST" });
 

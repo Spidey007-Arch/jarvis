@@ -19,8 +19,9 @@ from fastapi.responses import JSONResponse
 
 from jarvis_common.paths import data_dir, logs_dir, runtime_file
 
-from . import __version__
+from . import __version__, gateway, globe
 from .api import Services, build_router
+from .providers import PRESETS
 from .bridge import AgentBridge, AgentError, AgentUnavailable, HEARTBEAT_TIMEOUT_S
 from .db import DB
 from .usage import QuotaTracker
@@ -113,6 +114,8 @@ def create_app(port: int, token: str | None = None) -> FastAPI:
         reminders = asyncio.create_task(services.reminders.run())
         monitor = asyncio.create_task(services.monitor.run())
         initiative = asyncio.create_task(services.initiative.run()) if services.initiative else None
+        if services.settings.provider == "gateway" and gateway.installed():  # the chosen AI needs it: warm it up now
+            gateway.start_soon((services.settings.provider_cfg("gateway").get("base_url") or PRESETS["gateway"]["base_url"]).strip())
         try:
             yield
         finally:
@@ -123,6 +126,7 @@ def create_app(port: int, token: str | None = None) -> FastAPI:
             if initiative:
                 initiative.cancel()
             await services.connectors.close()
+            globe.stop()
             db.close()
             _remove_runtime()
             log.info("backend stopped")

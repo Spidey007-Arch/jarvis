@@ -151,5 +151,24 @@ class LocationPermission(unittest.TestCase):
         self.assertEqual(permissions.capability(spec["maps_directions"], {"destination": "Goa airport"}), "location")
 
 
+class Globe(unittest.TestCase):
+    def test_a_view_link_in_an_answer_is_found_on_jarvis_address(self) -> None:
+        from jarvis_backend import globe
+
+        text = 'Open 30 km around 19.070, 72.870 in the globe: http://localhost:4173/#v=2&lat=19.07&lon=72.87 {"url": "x"}'
+        self.assertEqual(globe.view_link(text), "http://127.0.0.1:4173/?embed=1#v=2&lat=19.07&lon=72.87")
+        self.assertIsNone(globe.view_link("no link here, or http://example.com:4173/#v=2"))
+
+    def test_missing_pieces_are_named_not_started(self) -> None:
+        from unittest import mock
+
+        from jarvis_backend import globe
+
+        with mock.patch.object(globe, "state", return_value={"app": True, "packages": False, "node": True, "url": globe.URL}):
+            r = asyncio.run(globe.ensure())
+        self.assertFalse(r["running"])
+        self.assertIn("packages", r["error"])
+
+
 if __name__ == "__main__":
     unittest.main()

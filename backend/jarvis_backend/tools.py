@@ -58,6 +58,15 @@ TOOLS: list[ToolSpec] = [
              "of each route. mode: driving (default), walking, transit, bicycling or two-wheeler.",
              obj({"destination": S, "origin": S, "mode": S}, ["destination"]), agent_action="maps_directions", timeout=90,
              label="Getting directions to {destination}"),
+    ToolSpec("open_globe", "Open the Globe screen in JARVIS: God's Eye View, a live 3D globe with flights, ships, satellites, "
+             "earthquakes, fires and public cameras. To show a particular place or live data on it, use the globe__ tools "
+             "(they appear once the globe has been opened once).",
+             obj({}), timeout=260, label="Opening the globe"),
+    ToolSpec("globe_show", "Show a place on the Globe screen (God's Eye View) with live layers on, e.g. place 'Mumbai' with layers "
+             "['flights']. Layers: flights, military, satellites, ais-live-vessels (ships), earthquakes, fire-perimeters, local-firms "
+             "(fires), weather-radar, weather-satellite, weather-cyclones, weather-lightning, wind, air-quality, traffic, transit, "
+             "cctv, rocket-launches, telegeography-submarine-cables, recent-imagery, street-level. No place: just the layers.",
+             obj({"place": S, "layers": {"type": "array", "items": S}}), timeout=300, label="Showing {place} on the globe"),
     ToolSpec("web_search", "Open a search results page in the browser for the user to look at. Engines: google, bing, duckduckgo, youtube, github, wikipedia, amazon, maps.",
              obj({"query": S, "engine": S, "browser": S}, ["query"]), agent_action="web_search", label="Searching for {query}"),
     ToolSpec("web_research", "Search the web yourself and read the top results to answer a factual or current-events question directly, with sources. Use this instead of web_search when the user wants an answer, not a browser tab.",

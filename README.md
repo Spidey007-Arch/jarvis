@@ -107,6 +107,17 @@ agent/       Background process that executes OS actions for the backend
 common/      Shared Python: logging, paths, Windows DPAPI encryption
 ```
 
+## Globe (God's Eye View)
+
+The Globe screen shows [God's Eye View](https://github.com/bilawalsidhu/gods-eye-view) by Bilawal Sidhu (MIT), a live 3D
+globe of flights, ships, satellites, earthquakes, fires and weather. It is included unchanged as a git submodule in
+`apps/gods-eye-view`; JARVIS runs it on this PC only (127.0.0.1:4173) with Node 24 from its own runtime folder, shows its
+embed page (which it allows only JARVIS's window to frame), and uses its MCP server as a connector.
+
+Setup after cloning: `git submodule update --init --depth 1`, then `npm ci` in `apps/gods-eye-view`, and put Node 24 in
+`%LOCALAPPDATA%\JARVIS\runtime\node24`. Its code is MIT; some datasets it bundles or fetches are not (see its `LICENSE` and
+`DATA_SOURCES.md`; e.g. the submarine-cable map is non-commercial).
+
 ## License
 
 [MIT](LICENSE)

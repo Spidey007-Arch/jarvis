@@ -1,0 +1,4 @@
+[submodule "apps/gods-eye-view"]
+	path = apps/gods-eye-view
+	url = https://github.com/bilawalsidhu/gods-eye-view.git
+	shallow = true

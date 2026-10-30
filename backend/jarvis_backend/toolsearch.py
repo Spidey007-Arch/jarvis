@@ -50,6 +50,8 @@ SYNONYMS = {
     "document": "create_document read_document", "pdf": "read_document create_document", "report": "create_document read_document",
     "slides": "create_document", "presentation": "create_document", "spreadsheet": "create_document read_document",
     "file": "read_document find_files", "read": "read_document read_webpage",
+    "globe": "open_globe globe_show", "flight": "globe_show", "flights": "globe_show", "satellite": "globe_show",
+    "earthquake": "globe_show", "ship": "globe_show", "aircraft": "globe_show", "plane": "globe_show", "god": "open_globe globe_show",
     "near": "maps_search my_location", "nearby": "maps_search", "location": "my_location maps_search", "where": "my_location",
     "map": "maps_search maps_directions", "directions": "maps_directions", "route": "maps_directions", "distance": "maps_directions",
     "restaurant": "maps_search", "cafe": "maps_search", "hotel": "maps_search", "hospital": "maps_search",
