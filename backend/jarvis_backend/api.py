@@ -41,6 +41,7 @@ log = logging.getLogger("jarvis.api")
 HISTORY_MESSAGES = 24
 ADVISE_EVERY = 4  # rounds of a planned task between reviews by the advisor (and after any failure)
 ADVICE_MAX = 4  # reviews per task
+LIVE_READ_S = 600.0  # in a voice conversation, sending out after a private read asks for this long
 MAX_SEARCHES = 3  # web searches per request; more than this is a loop, not research
 RESEARCH_TOOLS = frozenset({"web_research"})
 STALL_S = 360.0  # no step, tool or event for this long (outside a running tool) means a task is stuck; stop it
@@ -528,8 +529,14 @@ def build_router(svc: Services, require_auth: Callable[..., None]) -> APIRouter:
             return public_apis.find(str(args.get("query") or ""), str(args.get("category") or ""), bool(args.get("no_key_only")),
                                     int(args.get("limit") or 12), has_key=lambda n: bool(svc.settings.service_key(n)))
         if spec.name == "call_api":
-            key, use = "", str(args.get("use_key") or "").strip()
+            key, use, key_for = "", str(args.get("use_key") or "").strip(), ""
             if use:
+                if ":" in use:  # connector tokens and other stored secrets are never call_api keys
+                    raise ToolFailure(f"'{use}' is not an API key name.")
+                try:
+                    key_for = public_apis.key_site(use)
+                except public_apis.APIError as e:
+                    raise ToolFailure(str(e)) from e
                 key = svc.settings.service_key(use)
                 if not key:
                     raise ToolFailure(f"No key is saved for '{use}'. The user can add one in Settings > API keys "
@@ -537,7 +544,7 @@ def build_router(svc: Services, require_auth: Callable[..., None]) -> APIRouter:
             params = public_apis.parse_params(args.get("params"))
             try:
                 return await public_apis.call(str(args.get("url", "")), params, key, str(args.get("key_param") or ""),
-                                              str(args.get("key_header") or ""))
+                                              str(args.get("key_header") or ""), key_for=key_for)
             except public_apis.APIError as e:
                 raise ToolFailure(str(e)) from e
         if spec.name == "set_reminder":
@@ -586,7 +593,9 @@ def build_router(svc: Services, require_auth: Callable[..., None]) -> APIRouter:
             entry.update(status=status, **extra)
             queue.put_nowait(("tool", {k: v for k, v in entry.items() if not k.startswith("_")}))
 
-        decision, cap = permissions.decide(spec, args, svc.settings.get("permissions"), bool(svc.settings.get("full_control")))
+        read_private = any(a["tool"] in permissions.PRIVATE_READS and a["status"] == "done" for a in actions)
+        decision, cap = permissions.decide(spec, args, svc.settings.get("permissions"), bool(svc.settings.get("full_control")),
+                                           read_private=read_private)
         if decision == "block":
             emit("declined", error="blocked in Settings")
             return {"ok": False, "error": permissions.blocked_message(cap)}
@@ -654,7 +663,8 @@ def build_router(svc: Services, require_auth: Callable[..., None]) -> APIRouter:
         except Exception:  # noqa: BLE001 - extraction must never break chat; the failure is logged
             log.exception("memory extraction failed")
 
-    voice_pending: dict[str, int] = {}  # a call waiting for a spoken yes -> the voice turn it was asked in
+    voice_pending: dict[str, int] = {}
+    live_read = {"at": -1e9}  # when the voice conversation last read private data  # a call waiting for a spoken yes -> the voice turn it was asked in
 
     async def _live_tool(name: str, args: dict[str, Any]) -> dict[str, Any]:
         """A tool call made by the live voice model. One that needs a yes runs only after the user says yes out loud
@@ -662,7 +672,9 @@ def build_router(svc: Services, require_auth: Callable[..., None]) -> APIRouter:
         spec = _spec(name)
         if spec is None:
             return {"ok": False, "error": f"There is no tool named '{name}'."}
-        decision, cap = permissions.decide(spec, args, svc.settings.get("permissions"), bool(svc.settings.get("full_control")))
+        read_private = time.monotonic() - live_read["at"] < LIVE_READ_S  # a voice conversation has no single request
+        decision, cap = permissions.decide(spec, args, svc.settings.get("permissions"), bool(svc.settings.get("full_control")),
+                                           read_private=read_private)
         if decision == "block":
             return {"ok": False, "error": permissions.blocked_message(cap)}
         if decision == "ask":
@@ -677,6 +689,8 @@ def build_router(svc: Services, require_auth: Callable[..., None]) -> APIRouter:
                                  "If they then say yes, call this tool again with exactly the same arguments; otherwise drop it."}
             voice_pending.clear()
         audit.info("tool call", extra={"fields": {"tool": spec.name, "args": args, "via": "live"}})
+        if spec.name in permissions.PRIVATE_READS:
+            live_read["at"] = time.monotonic()
         try:
             return {"ok": True, "result": _trim(await _run_tool(spec, args))}
         except (AgentUnavailable, AgentError, ResearchError, ReminderError, ToolFailure, LLMError, LLMNotConfigured) as e:

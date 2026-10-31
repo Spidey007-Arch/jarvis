@@ -27,6 +27,7 @@ CAPABILITIES: dict[str, tuple[str, bool]] = {
     "read_messages": ("Read Gmail and WhatsApp", False),
     "downloads": ("Download files", False),
     "location": ("Know where this PC is (for maps, directions and places near you)", False),
+    "send_data_out": ("Send to a website after reading private data (files, mail, messages, the screen)", True),
     "connectors": ("Act through connectors (Slack, Notion, GitHub...): reading is always allowed", False),
 }
 POLICIES = ("allow", "ask", "block")
@@ -51,6 +52,16 @@ _COMMANDS: list[tuple[str, re.Pattern[str]]] = [
                               r"git\s+(push\b.*(\s-f\b|--force)|reset\s+--hard|clean\s+-[a-z]*f)|drop\s+(table|database)|truncate\s+table", re.I)),
     ("end_processes", re.compile(r"\b(stop-process|taskkill|kill)\b", re.I)),
 ]
+
+# Tools that bring private data into the conversation, and tools that can carry it to an address the model chose. One of
+# the second kind after one of the first, in the same request, is how a prompt injection would leak a file: it asks.
+PRIVATE_READS = frozenset({"read_file", "read_document", "clipboard_get", "gmail_list", "gmail_open", "whatsapp_chats", "whatsapp_read",
+                           "look_at_screen", "read_window", "screenshot", "find_controls", "recent_files", "recent_downloads",
+                           "find_files", "list_folder", "stored_files", "my_location", "run_command", "list_processes",
+                           "hardware_info"})
+SENDS_OUT = frozenset({"call_api", "read_webpage", "download_file", "open_url", "web_open"})
+_UPLOADS = re.compile(r"\b(invoke-webrequest|invoke-restmethod|iwr|irm|curl(\.exe)?|wget|net\.webclient|uploadstring|uploadfile|"
+                      r"uploaddata|httpclient|bitsadmin|start-bitstransfer|ftp|scp|sftp|send-mailmessage)\b", re.I)
 
 _SCREEN = frozenset({"look_at_screen", "screenshot", "read_window", "screen_click", "screen_drag", "click_text", "find_controls"})
 _MESSAGES = frozenset({"gmail_list", "gmail_open", "whatsapp_chats", "whatsapp_read"})
@@ -111,9 +122,12 @@ def policy(cap: str, saved: dict[str, str] | None, full_control: bool) -> str:
     return chosen
 
 
-def decide(spec: ToolSpec, args: dict[str, Any], saved: dict[str, str] | None = None, full_control: bool = False) -> tuple[str, str | None]:
-    """(allow | ask | block, capability) for one tool call."""
+def decide(spec: ToolSpec, args: dict[str, Any], saved: dict[str, str] | None = None, full_control: bool = False,
+           read_private: bool = False) -> tuple[str, str | None]:
+    """(allow | ask | block, capability) for one tool call. read_private: private data was read earlier in this request."""
     cap = capability(spec, args)
+    if read_private and (spec.name in SENDS_OUT or spec.name == "run_command" and _UPLOADS.search(str(args.get("command", "")))):
+        cap = "send_data_out"
     if cap is None:
         return "allow", None
     return policy(cap, saved, full_control), cap

@@ -46,10 +46,20 @@ def _inside(path, roots):
 def _hook(event, args):
     # ctypes was set up before this hook (numpy needs the module); from here on no native library or function may be
     # looked up, because calling Windows directly is how code would get round every other rule here.
+    # _winapi reaches Windows directly (CreateFile writes anywhere, OpenProcess/TerminateProcess touch other programs).
     if event.startswith(("socket.", "subprocess.", "os.exec", "os.spawn", "os.posix_spawn", "ctypes.dlopen", "ctypes.dlsym",
-                         "ctypes.call_function",
-                         "winreg.", "_winapi.CreateProcess", "webbrowser.")) or event in ("os.system", "os.startfile", "os.kill"):
+                         "ctypes.call_function", "_winapi.", "msvcrt.", "_wmi.",
+                         "winreg.", "webbrowser.")) or event in ("os.system", "os.startfile", "os.kill"):
         raise PermissionError(f"Not allowed in the sandbox: {event}")
+    # Libraries such as numpy register their own DLL folder; only folders of the installed libraries, never the sandbox's.
+    if event == "os.add_dll_directory" and args and (_inside(args[0], [ROOT]) or not _inside(args[0], READ_OK)):
+        raise PermissionError(f"Not allowed in the sandbox: {event} {args[0]}")
+    # A native module (.pyd/.dll) is machine code: only the ones that come with Python and JARVIS's libraries may load,
+    # never one written into the sandbox folder.
+    if event == "import" and len(args) > 1 and args[1]:
+        found = os.fsdecode(args[1])
+        if _inside(found, [ROOT]) and not found.endswith(".py") or found.lower().endswith((".pyd", ".dll")) and not _inside(found, READ_OK):
+            raise PermissionError(f"Not allowed in the sandbox: loading {found}")
     if event == "open" and args and isinstance(args[0], (str, bytes, os.PathLike)):
         path, mode, flags = args[0], args[1] or "r", args[2] or 0
         writing = any(c in str(mode) for c in "wax+") or bool(flags & _W)

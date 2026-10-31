@@ -52,6 +52,16 @@ class Sandbox(unittest.TestCase):
             self.assertIn("PermissionError", out["errors"], code)
         self.assertFalse((Path(self.dir.name) / "planted.txt").exists())
 
+    def test_windows_api_and_planted_native_modules_are_refused(self) -> None:
+        planted = Path(self.dir.name) / "via_winapi.txt"
+        for code in (f"import _winapi; _winapi.CreateFile(r'{planted}', 0x40000000, 0, 0, 2, 0, 0)",  # GENERIC_WRITE, CREATE_ALWAYS
+                     "import _winapi, os; _winapi.OpenProcess(0x1000, False, os.getppid())",
+                     "import shutil, sys, _decimal; shutil.copy(_decimal.__file__, 'evil.pyd'); sys.path.insert(0, '.'); import evil"):
+            out = self.run_code(code)
+            self.assertNotEqual(out["exit_code"], 0, code)
+            self.assertIn("PermissionError", out["errors"], code)
+        self.assertFalse(planted.exists())
+
     def test_time_limit(self) -> None:
         out = self.run_code("while True: pass", timeout=5)
         self.assertTrue(out["timed_out"])

@@ -100,6 +100,25 @@ def source_of(url: str, name: str = "") -> str:
     return f"{hit['name']} · {hit['category']}" if hit else (host or "an API")
 
 
+_TWO_PART = {"co", "com", "org", "net", "gov", "ac", "edu", "or", "ne", "go"}
+
+
+def site(host: str) -> str:
+    """The registrable part of a host name: api.openweathermap.org -> openweathermap.org, x.co.uk -> x.co.uk."""
+    parts = host.lower().strip(".").removeprefix("www.").split(".")
+    n = 3 if len(parts) >= 3 and len(parts[-1]) == 2 and parts[-2] in _TWO_PART else 2
+    return ".".join(parts[-n:])
+
+
+def key_site(name: str) -> str:
+    """Where a saved key may be sent: the site of that API's own catalog entry. Nowhere for anything else."""
+    hit = lookup(name)
+    host = urllib.parse.urlsplit(hit["link"]).hostname if hit else None
+    if not host:
+        raise APIError(f"'{name}' is not an API in the catalog, so its key can't be sent anywhere.")
+    return site(host)
+
+
 def parse_params(raw: Any) -> dict[str, Any]:
     """Query parameters given as a dict, a JSON object string or 'a=1&b=2'."""
     if isinstance(raw, dict):
@@ -141,24 +160,30 @@ def _text(body: str) -> str:
 
 
 async def call(url: str, params: dict[str, Any] | None = None, key: str = "", key_param: str = "", key_header: str = "",
-               max_chars: int = 6000) -> dict[str, Any]:
-    """GET an API endpoint (or its docs page) and return JSON, or readable text for HTML/plain text."""
+               max_chars: int = 6000, key_for: str = "") -> dict[str, Any]:
+    """GET an API endpoint (or its docs page) and return JSON, or readable text for HTML/plain text. A key goes only to
+    key_for (the site of the API it was saved for), added on each hop separately, never along a redirect elsewhere."""
     url = url.strip()
     if not re.match(r"^https?://", url, re.I):
         raise APIError(f"'{url}' is not an http(s) address.")
     headers = {"User-Agent": UA, "Accept": "application/json, text/plain;q=0.9, text/html;q=0.8, */*;q=0.5"}
     query = {str(k): str(v) for k, v in (params or {}).items() if v is not None}
-    if key:
-        if key_header:
-            headers[key_header] = key
-        else:
-            query[key_param or "apikey"] = key
+    if key and not key_for:
+        raise APIError("A key must name the API it belongs to.")
+    if key and site(urllib.parse.urlsplit(url).hostname or "") != key_for:
+        raise APIError(f"That key is for {key_for}; it is never sent to {urllib.parse.urlsplit(url).hostname}.")
     async with httpx.AsyncClient(timeout=httpx.Timeout(20.0, connect=10.0), follow_redirects=False, headers=headers) as c:
         for _ in range(6):  # follow redirects ourselves, checking each hop
             parts = urllib.parse.urlsplit(url)
             _public_host(parts.hostname or "")
+            hop_headers, hop_query = {}, dict(query)
+            if key and site(parts.hostname or "") == key_for:  # the key rides only on hops to its own site
+                if key_header:
+                    hop_headers[key_header] = key
+                else:
+                    hop_query[key_param or "apikey"] = key
             try:
-                async with c.stream("GET", url, params=query or None) as r:
+                async with c.stream("GET", url, params=hop_query or None, headers=hop_headers) as r:
                     if r.is_redirect and r.headers.get("location"):
                         url, query = urllib.parse.urljoin(str(r.url), r.headers["location"]), {}
                         continue
