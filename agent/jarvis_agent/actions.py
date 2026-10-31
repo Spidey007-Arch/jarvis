@@ -742,7 +742,7 @@ def _guard(p: Path) -> None:
     s = str(p).lower()
     if any(s == r.lower() or s.startswith(r.lower() + "\\") for r in _SYSTEM_ROOTS if r):
         raise ActionError(f"{p} is a protected system location; I won't modify it.")
-    if p == p.anchor or p == Path.home():
+    if p == Path(p.anchor) or p == Path.home():  # a whole drive (C:\) or the whole home folder
         raise ActionError(f"Refusing to operate on {p} as a whole.")
 
 

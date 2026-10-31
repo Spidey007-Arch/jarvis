@@ -115,26 +115,35 @@ class Reminders:
             raise ReminderError(f"No pending reminder, alarm or timer has id '{rid}'.")
         return {"cancelled": rid}
 
-    def take_missed(self, now: float | None = None) -> list[dict[str, Any]]:
-        """Pending ones that came due while JARVIS was off, marked as missed."""
+    def overdue(self, now: float | None = None) -> list[dict[str, Any]]:
+        """Pending ones that came due while JARVIS was off (or couldn't speak), still pending until they are mentioned."""
         now = time.time() if now is None else now
-        rows = self.db.all("SELECT * FROM reminders WHERE status='pending' AND due_at <= ?", [now - MISSED_S])
+        return self.db.all("SELECT * FROM reminders WHERE status='pending' AND due_at <= ?", [now - MISSED_S])
+
+    def mark_missed(self, rows: list[dict[str, Any]], now: float | None = None) -> None:
+        now = time.time() if now is None else now
         for r in rows:
-            self.db.run("UPDATE reminders SET status='missed', fired_at=? WHERE id=?", [now, r["id"]])
-        return rows
+            self.db.run("UPDATE reminders SET status='missed', fired_at=? WHERE id=? AND status='pending'", [now, r["id"]])
 
     async def run(self) -> None:
         """Deliver due reminders. If the agent is offline or cannot speak yet, keep them pending and retry."""
         while True:
-            missed = self.take_missed()
+            if not getattr(self.bridge, "connected", True):  # on a cold start the voice isn't there yet: nothing can be said
+                await asyncio.sleep(2)
+                continue
+            # Missed ones are marked only once the line was actually spoken.
+            missed = self.overdue()
             if missed:
                 items = "; ".join(f"{'your ' + (r.get('kind') or 'reminder')} at {_clock(r['due_at'])}" + (f", {r['text']}" if r["text"] else "")
                                   for r in missed[:5])
                 line = (f"While I was off, you missed {len(missed)} " + ("thing" if len(missed) == 1 else "things") + f": {items}.")
                 try:
                     await self.bridge.call("speak", {"text": line, "queue": True}, timeout=20)
+                    self.mark_missed(missed)
                 except (AgentUnavailable, AgentError) as e:
-                    log.warning("could not mention missed reminders: %s", e)
+                    log.warning("could not mention missed reminders yet: %s", e)
+                    await asyncio.sleep(10)
+                    continue  # keep them for the next pass; don't also try them one by one as if just due
             due = self.db.all("SELECT * FROM reminders WHERE status='pending' AND due_at <= ?", [time.time()])
             for r in due:
                 try:

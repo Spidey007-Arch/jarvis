@@ -48,9 +48,69 @@ class Alarms(unittest.TestCase):
                     [time.time() - 3600, time.time() - 7200])
         self.db.run("INSERT INTO reminders (id, text, due_at, created_at, status, kind) VALUES ('b','now',?,?,'pending','reminder')",
                     [time.time() - 5, time.time() - 60])
-        self.assertEqual([r["id"] for r in self.r.take_missed()], ["a"])
-        self.assertEqual(self.r.take_missed(), [])
-        self.assertEqual([p["id"] for p in self.r.pending()], ["b"])  # just due: rung now, not missed
+        missed = self.r.overdue()
+        self.assertEqual([r["id"] for r in missed], ["a"])  # just due ("b") is rung now, not missed
+        self.r.mark_missed(missed)
+        self.assertEqual(self.r.overdue(), [])
+        self.assertEqual([p["id"] for p in self.r.pending()], ["b"])
+
+    def test_missed_line_survives_a_voice_that_isnt_ready(self) -> None:
+        """Issue #1: on a cold start the first attempt fails; the missed reminder must still be said once it can be."""
+        import asyncio
+
+        from jarvis_backend.bridge import AgentUnavailable
+
+        class Bridge:
+            def __init__(self) -> None:
+                self.connected, self.said, self.tries = True, [], 0
+
+            async def call(self, action, args, timeout=0):
+                self.tries += 1
+                if self.tries == 1:
+                    raise AgentUnavailable("not connected yet")
+                self.said.append(args["text"])
+
+        self.db.run("INSERT INTO reminders (id, text, due_at, created_at, status, kind) VALUES ('a','call Papa',?,?,'pending','reminder')",
+                    [time.time() - 3600, time.time() - 7200])
+        bridge = Bridge()
+        r = Reminders(self.db, bridge=bridge)
+
+        async def two_passes() -> None:
+            task = asyncio.create_task(r.run())
+            while not bridge.said:
+                await asyncio.sleep(0.05)
+            task.cancel()
+
+        import jarvis_backend.reminders as rem
+        real_sleep = rem.asyncio.sleep
+        rem.asyncio.sleep = lambda s: real_sleep(0.01)  # don't wait 10 s between passes in a test
+        try:
+            asyncio.run(asyncio.wait_for(two_passes(), 5))
+        finally:
+            rem.asyncio.sleep = real_sleep
+        self.assertIn("call Papa", bridge.said[0])
+        self.assertEqual(self.db.one("SELECT status FROM reminders WHERE id='a'")["status"], "missed")
+
+    def test_nothing_is_marked_while_the_voice_is_offline(self) -> None:
+        import asyncio
+
+        class Offline:
+            connected = False
+
+            async def call(self, *a, **k):
+                raise AssertionError("must not try to speak while offline")
+
+        self.db.run("INSERT INTO reminders (id, text, due_at, created_at, status, kind) VALUES ('a','x',?,?,'pending','reminder')",
+                    [time.time() - 3600, time.time() - 7200])
+        r = Reminders(self.db, bridge=Offline())
+
+        async def a_while() -> None:
+            task = asyncio.create_task(r.run())
+            await asyncio.sleep(0.2)
+            task.cancel()
+
+        asyncio.run(a_while())
+        self.assertEqual(self.db.one("SELECT status FROM reminders WHERE id='a'")["status"], "pending")
 
 
 if __name__ == "__main__":

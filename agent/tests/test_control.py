@@ -57,6 +57,15 @@ class SpotifySearch(unittest.TestCase):
         self.assertEqual(rows[0]["artist"], "Hamza Mark, Zain Zohaib")
 
 
+class Guard(unittest.TestCase):
+    def test_a_whole_drive_or_home_is_refused(self) -> None:
+        """Issue #2: a Path never equals the str anchor, so drive roots used to get through."""
+        for p in (Path("C:\\"), Path("D:\\"), Path.home()):
+            with self.assertRaises(actions.ActionError):
+                actions._guard(p)
+        actions._guard(Path.home() / "Documents" / "notes")  # an ordinary folder is fine
+
+
 class GoogleMaps(unittest.TestCase):
     def test_a_result_card_becomes_name_rating_reviews_and_details(self) -> None:
         from jarvis_agent import maps
