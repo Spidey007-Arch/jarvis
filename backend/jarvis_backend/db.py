@@ -25,6 +25,13 @@ CREATE TABLE IF NOT EXISTS memories (
 );
 CREATE INDEX IF NOT EXISTS idx_mem_status_type ON memories(status, type);
 CREATE INDEX IF NOT EXISTS idx_mem_subject ON memories(subject);
+-- Which earlier memories a summary fact was made from, so deleting the fact deletes exactly its own history.
+CREATE TABLE IF NOT EXISTS memory_sources (
+    memory_id TEXT NOT NULL,
+    source_id TEXT NOT NULL,
+    PRIMARY KEY (memory_id, source_id)
+);
+CREATE INDEX IF NOT EXISTS idx_mem_sources_source ON memory_sources(source_id);
 
 CREATE TABLE IF NOT EXISTS conversations (
     id         TEXT PRIMARY KEY,

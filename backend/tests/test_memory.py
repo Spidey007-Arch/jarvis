@@ -227,6 +227,46 @@ class MemoryTests(unittest.TestCase):
         self.assertTrue(self.store.delete(cur["id"]))
         self.assertEqual(self.db.all("SELECT * FROM memories"), [])
 
+    def test_delete_removes_every_earlier_version_of_a_fact(self):
+        run(self.store.apply_ops([self.op(content="Likes black coffee.")], "c1"))
+        for content in ("Likes coffee with oat milk.", "Likes iced coffee with oat milk."):
+            [cur] = self.store.list()
+            run(self.store.apply_ops([self.op(op="update", target_id=cur["id"], content=content)], "c1"))
+        [cur] = self.store.list()
+        self.assertEqual(len(self.db.all("SELECT * FROM memories")), 3)  # A -> B -> C
+        self.assertTrue(self.store.delete(cur["id"]))
+        self.assertEqual(self.db.all("SELECT content FROM memories"), [])  # the first version is gone too
+        self.assertFalse(self.store.delete(cur["id"]))
+
+    def _summarize_two(self, with_sources: bool):
+        ops = [self.op(type="project", subject="project: jarvis", content=f"Note {i}: detail about topic t{i}.")
+               for i in range(mem.SUMMARIZE_AT)]
+        run(self.store.apply_ops(ops, "c1"))
+        half = mem.SUMMARIZE_AT // 2
+        first = {"content": "JARVIS has a voice.", "importance": 0.7}
+        second = {"content": "JARVIS has a memory.", "importance": 0.7}
+        if with_sources:
+            first["from"], second["from"] = list(range(1, half + 1)), list(range(half + 1, mem.SUMMARIZE_AT + 1))
+        self.llm.json_replies.append({"memories": [first, second]})
+        run(self.store.maybe_summarize())
+        return {m["content"]: m["id"] for m in self.store.list()}, half
+
+    def test_deleting_a_summary_fact_removes_only_its_own_sources(self):
+        facts, half = self._summarize_two(with_sources=True)
+        self.assertTrue(self.store.delete(facts["JARVIS has a memory."]))
+        left = {r["content"] for r in self.db.all("SELECT content FROM memories")}
+        self.assertIn("JARVIS has a voice.", left)
+        self.assertEqual({c for c in left if c.startswith("Note")}, {f"Note {i}: detail about topic t{i}." for i in range(half)})
+        self.assertTrue(self.store.delete(facts["JARVIS has a voice."]))
+        self.assertEqual(self.db.all("SELECT * FROM memories"), [])
+        self.assertEqual(self.db.all("SELECT * FROM memory_sources"), [])
+
+    def test_a_summary_fact_without_sources_takes_them_all_when_deleted(self):
+        facts, _half = self._summarize_two(with_sources=False)
+        self.assertTrue(self.store.delete(facts["JARVIS has a memory."]))
+        left = [r["content"] for r in self.db.all("SELECT content FROM memories")]
+        self.assertEqual(left, ["JARVIS has a voice."])  # it may have been made from any of them
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

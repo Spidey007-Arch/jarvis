@@ -35,7 +35,8 @@ SUMMARY_SCHEMA: dict[str, Any] = {
             "type": "array",
             "items": {
                 "type": "object",
-                "properties": {"content": {"type": "string"}, "importance": {"type": "number"}},
+                "properties": {"content": {"type": "string"}, "importance": {"type": "number"},
+                               "from": {"type": "array", "items": {"type": "integer"}}},
                 "required": ["content", "importance"],
             },
         }
@@ -83,11 +84,12 @@ def extract_prompt(existing: list[dict[str, Any]], user_text: str, assistant_tex
 
 
 def summary_prompt(type_: str, subject: str, rows: list[dict[str, Any]]) -> str:
-    items = [{"content": r["content"], "importance": r["importance"]} for r in rows]
+    items = [{"n": i, "content": r["content"], "importance": r["importance"]} for i, r in enumerate(rows, 1)]
     return (
         "These memories about the user share one subject and have accumulated over time. Merge them into the "
         "smallest set of clear, non-overlapping facts. Where facts conflict, the later item (listed last) wins. "
         "Keep every distinct, still-true detail; drop duplicates and outdated statements. "
-        "Write each fact as one third-person sentence and keep the highest relevant importance.\n\n"
+        "Write each fact as one third-person sentence and keep the highest relevant importance. In `from`, list the "
+        "numbers (n) of every memory the fact draws on.\n\n"
         f"type: {type_}\nsubject: {subject}\nmemories (oldest first):\n{json.dumps(items, ensure_ascii=False)}"
     )

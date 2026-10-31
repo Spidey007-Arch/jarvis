@@ -312,8 +312,16 @@ class MemoryStore:
                     self._insert(g["type"], g["subject"], m["content"].strip()[:600], _clamp(m.get("importance")), "summary", v)
                     for m, v in zip(items, vecs)
                 ]
+                # Record exactly which old memories each new fact was made from; a fact that doesn't say may hold any of
+                # them. Each old memory then points at the first fact made from it.
+                first: dict[str, str] = {}
+                for new_id, m in zip(new_ids, items):
+                    picked = [rows[n - 1] for n in dict.fromkeys(m.get("from") or []) if isinstance(n, int) and 1 <= n <= len(rows)]
+                    for r in picked or rows:
+                        self.db.run("INSERT OR IGNORE INTO memory_sources (memory_id, source_id) VALUES (?, ?)", [new_id, r["id"]])
+                        first.setdefault(r["id"], new_id)
                 for r in rows:
-                    self._retire(r["id"], "summarized", new_ids[0])
+                    self._retire(r["id"], "summarized", first.get(r["id"], new_ids[0]))
             merged += len(rows)
             log.info("summarized memories", extra={"fields": {"subject": g["subject"], "from": len(rows), "to": len(items)}})
         return merged
@@ -342,6 +350,8 @@ class MemoryStore:
             "DELETE FROM memories WHERE status IN ('superseded','summarized','retracted','expired') AND updated_at < ?",
             [now - RETENTION_DAYS * DAY],
         )
+        self.db.run("DELETE FROM memory_sources WHERE memory_id NOT IN (SELECT id FROM memories)"
+                    " OR source_id NOT IN (SELECT id FROM memories)")
         return {"expired": expired, "faded": faded, "purged": purged}
 
     # ---------- manual management (Settings > Memory) ----------
@@ -367,9 +377,29 @@ class MemoryStore:
         )
         return self.get(mem_id)
 
+    def history(self, mem_id: str) -> set[str]:
+        """A memory and everything it came from: every earlier version it replaced, however many updates back, and the
+        memories a summary fact was made from (and their own earlier versions)."""
+        found, frontier = {mem_id}, [mem_id]
+        while frontier:
+            marks = ",".join("?" * len(frontier))
+            older = [r["id"] for r in self.db.all(f"SELECT id FROM memories WHERE superseded_by IN ({marks})", frontier)]
+            older += [r["source_id"] for r in self.db.all(f"SELECT source_id FROM memory_sources WHERE memory_id IN ({marks})", frontier)]
+            frontier = [i for i in dict.fromkeys(older) if i not in found]
+            found.update(frontier)
+        return found
+
     def delete(self, mem_id: str) -> bool:
-        """User-requested deletion is permanent, including the history of that memory."""
-        return self.db.run("DELETE FROM memories WHERE id=? OR superseded_by=?", [mem_id, mem_id]) > 0
+        """User-requested deletion is permanent, including the whole history of that memory."""
+        if not self.db.one("SELECT id FROM memories WHERE id=?", [mem_id]):
+            return False
+        ids = sorted(self.history(mem_id))
+        for i in range(0, len(ids), 400):  # stay under SQLite's limit on query parameters
+            chunk = ids[i:i + 400]
+            marks = ",".join("?" * len(chunk))
+            self.db.run(f"DELETE FROM memories WHERE id IN ({marks})", chunk)
+            self.db.run(f"DELETE FROM memory_sources WHERE memory_id IN ({marks}) OR source_id IN ({marks})", chunk + chunk)
+        return True
 
     def export(self) -> list[dict[str, Any]]:
         rows = self.db.all("SELECT type, subject, content, importance, created_at, updated_at FROM memories WHERE status='active'")
