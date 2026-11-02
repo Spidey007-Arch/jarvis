@@ -729,13 +729,29 @@ _SYSTEM_ROOTS = [os.environ.get("SystemRoot", r"C:\Windows"), os.environ.get("Pr
                  os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)"), os.environ.get("ProgramData", r"C:\ProgramData")]
 
 
+def _jarvis_dir() -> Path:
+    return Path(os.environ.get("JARVIS_DATA_DIR") or Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "JARVIS").resolve()
+
+
+# JARVIS's own saved keys (settings.dat, encrypted for this Windows user) and the token that unlocks its backend
+# (runtime.json). No tool may open, copy or list them: a web page or file that talks the AI into it must find nothing.
+_SECRET_FILES = ("settings.dat", "settings.tmp", "settings.unreadable", "runtime.json", "runtime.tmp")
+
+
+def _is_secret(p: Path) -> bool:
+    return p.parent == _jarvis_dir() and p.name.lower() in _SECRET_FILES
+
+
 def _resolve(path: str) -> Path:
     p = Path(os.path.expandvars(os.path.expanduser(path.strip().strip('"'))))
     if not p.is_absolute():
         first = p.parts[0].lower() if p.parts else ""
         named = next((d for d in _USER_DIRS if d.lower() == first), None)
         p = (Path.home() / named / Path(*p.parts[1:])) if named else (Path.home() / p)
-    return p.resolve()
+    p = p.resolve()
+    if _is_secret(p):
+        raise ActionError(f"{p.name} holds JARVIS's saved keys and login token; no tool may open it.")
+    return p
 
 
 def _guard(p: Path) -> None:
@@ -744,6 +760,9 @@ def _guard(p: Path) -> None:
         raise ActionError(f"{p} is a protected system location; I won't modify it.")
     if p == Path(p.anchor) or p == Path.home():  # a whole drive (C:\) or the whole home folder
         raise ActionError(f"Refusing to operate on {p} as a whole.")
+    jd = _jarvis_dir()
+    if p == jd or jd in p.parents:  # its settings, memory database and logs: changed only by JARVIS itself
+        raise ActionError(f"{p} is JARVIS's own data folder; tools may read its logs but not change it.")
 
 
 @action
@@ -953,6 +972,8 @@ _WRECK = re.compile(
     r"\bformat(\.com)?\s+[a-z]:|\b(clear-disk|initialize-disk|diskpart|bcdedit)\b|(vssadmin|wbadmin)\s+delete|cipher\s+/w|"
     r"set-mppreference\b.*-disable|\breg(\.exe)?\s+delete\s+hklm|"
     r"\b(remove-item|rd|rmdir|del|rm)\b.*c:\\windows\b|\b(remove-item|rd|rmdir|del|rm)\b[^|;]*\s['\"]?c:\\['\"*]?(\s|$)", re.I)
+# Commands that go after JARVIS's own secrets: the key store, the backend token, or Windows' decryption of them.
+_SECRETS = re.compile(r"settings\.(dat|unreadable)|runtime\.json|JARVIS_TOKEN|ProtectedData|CryptUnprotectData|JARVIS-settings", re.I)
 MAX_OUTPUT = 12000
 
 
@@ -981,7 +1002,9 @@ def run_command(args: dict[str, Any]) -> dict[str, Any]:
     command = _str(args, "command")
     if _WRECK.search(command):
         raise ActionError("That command could break Windows itself (formatting, boot config, wiping system folders), so I won't run it.")
-    cwd = _resolve(_str(args, "cwd", False) or str(Path.home()))
+    if _SECRETS.search(command):
+        raise ActionError("That command reaches for JARVIS's saved keys or login token, which no command may read.")
+    cwd =_resolve(_str(args, "cwd", False) or str(Path.home()))
     if not cwd.is_dir():
         raise ActionError(f"{cwd} is not a folder.")
     shell = (_str(args, "shell", False) or "powershell").lower()

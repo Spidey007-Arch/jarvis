@@ -178,6 +178,8 @@ async def call(url: str, params: dict[str, Any] | None = None, key: str = "", ke
             _public_host(parts.hostname or "")
             hop_headers, hop_query = {}, dict(query)
             if key and site(parts.hostname or "") == key_for:  # the key rides only on hops to its own site
+                if parts.scheme.lower() != "https":
+                    raise APIError("A saved key is only sent over https; use the API's https address.")
                 if key_header:
                     hop_headers[key_header] = key
                 else:
@@ -194,7 +196,8 @@ async def call(url: str, params: dict[str, Any] | None = None, key: str = "", ke
                             break
                     status, ctype, final = r.status_code, r.headers.get("content-type", "").lower(), str(r.url)
             except httpx.HTTPError as e:
-                raise APIError(f"The request to {parts.hostname} failed: {e}") from e
+                why = str(e).replace(urllib.parse.quote(key, safe=""), "***").replace(key, "***") if key else str(e)
+                raise APIError(f"The request to {parts.hostname} failed: {why}") from e
             break
         else:
             raise APIError("Too many redirects.")

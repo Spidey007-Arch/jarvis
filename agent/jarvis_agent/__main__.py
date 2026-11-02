@@ -210,7 +210,8 @@ async def _watch_parent(parent_pid: int, log: logging.Logger) -> None:
 async def amain() -> int:
     log = logs.setup("agent")
     port = os.environ.get("JARVIS_PORT")
-    token = os.environ.get("JARVIS_TOKEN")
+    # Taken out of the environment, so the commands and apps the agent starts never inherit the backend's token.
+    token = os.environ.pop("JARVIS_TOKEN", None)
     if not port or not token:
         log.error("JARVIS_PORT and JARVIS_TOKEN must be set by the launcher")
         return 2

@@ -84,7 +84,7 @@ def create_app(port: int, token: str | None = None) -> FastAPI:
     llm.usage.prune()
     services = Services(settings=settings, llm=llm, db=db, memory=MemoryStore(db, llm), bridge=bridge, reminders=Reminders(db, bridge),
                         monitor=Monitor(bridge, settings), tasks=Tasks(db), skills=Skills(db),
-                        connectors=Connectors(settings))
+                        connectors=Connectors(settings), token=token)
 
     # Housekeeping waits until the user isn't using the PC (jobs.py).
     jobs = Jobs(db, stats=lambda: bridge.stats if bridge.connected else {},

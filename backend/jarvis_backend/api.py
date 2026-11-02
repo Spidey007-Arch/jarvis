@@ -6,6 +6,7 @@ import json
 import logging
 import re
 import time
+import urllib.parse
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -83,6 +84,10 @@ class Services:
     offline_voice_until: float = 0.0  # Live voice paused until then: the connection was too slow for it
     agent_event: Callable[[dict[str, Any]], None] | None = None  # set by the router: events the agent reports on its own
     recent_downloads: list[dict[str, Any]] = field(default_factory=list)  # browser downloads noticed this session, newest last
+    token: str = ""  # the backend's own login token, set in main; scrubbed from tool output like the saved keys
+
+    def secrets(self) -> list[str]:
+        return sorted({*self.settings.secret_values(), *([self.token] if self.token else [])}, key=len, reverse=True)
 
     def voice_mode(self) -> str:
         """The voice engine to use now: the chosen one, except offline while the line is too slow for Live."""
@@ -124,6 +129,40 @@ def _trim(value: Any, limit: int = 6000) -> Any:
     if len(text) <= limit:
         return value
     return {"truncated": True, "partial_json": text[:limit]}
+
+
+def _host(url: str) -> str:
+    return (urllib.parse.urlsplit((url or "").strip()).hostname or "").lower()
+
+
+def key_route_problem(url: str, old_url: str, key_was_entered: bool) -> str | None:
+    """Why a key must not go to this address, or None. A saved key goes only where it was entered (changing the
+    address needs the key typed again), and only over https unless the address is this PC."""
+    if not key_was_entered and _host(url) != _host(old_url):
+        return "The address changed, so enter the key again: a saved key is only sent to the address it was entered for."
+    if url.strip().lower().startswith("http://") and _host(url) not in ("127.0.0.1", "localhost", "::1"):
+        return "Keys are only sent over https (or to this PC), never as plain http across the network."
+    return None
+
+
+def scrub(value: Any, secrets: list[str]) -> Any:
+    """Replace every saved key or token in a tool's result with [hidden key], however the tool came by it (a command's
+    output, an API echoing its request, a file), so none ever reaches the AI, the chat or the conversation history."""
+    if not secrets:
+        return value
+    if isinstance(value, str):
+        for s in secrets:
+            if s in value:
+                value = value.replace(s, "[hidden key]")
+            q = urllib.parse.quote(s, safe="")
+            if q != s and q in value:
+                value = value.replace(q, "[hidden key]")
+        return value
+    if isinstance(value, dict):
+        return {k: scrub(v, secrets) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [scrub(v, secrets) for v in value]
+    return value
 
 
 def call_key(call: ToolCall) -> str:
@@ -277,6 +316,10 @@ def build_router(svc: Services, require_auth: Callable[..., None]) -> APIRouter:
         elif pid != svc.settings.provider or key is not None or base_url is not None:
             cand_key = key.strip() if key is not None else svc.settings.api_key(pid)
             cand_base = base_url.strip() if base_url is not None else svc.settings.provider_cfg(pid)["base_url"]
+            if cand_key and cand_base:
+                problem = key_route_problem(cand_base, svc.settings.provider_cfg(pid)["base_url"], key is not None)
+                if problem:
+                    raise HTTPException(status_code=400, detail=problem)
             if PRESETS[pid]["needs_key"] and not cand_key:
                 # Switch now; the UI then asks for this provider's key.
                 if base_url is not None:
@@ -617,12 +660,13 @@ def build_router(svc: Services, require_auth: Callable[..., None]) -> APIRouter:
         try:
             result = await _run_tool(spec, args)
         except (AgentUnavailable, AgentError, ResearchError, ReminderError, ToolFailure, LLMError, LLMNotConfigured) as e:
-            emit("failed", error=str(e))
-            audit.warning("tool failed", extra={"fields": {"tool": spec.name, "error": str(e)}})
-            return {"ok": False, "error": str(e)}
+            error = scrub(str(e), svc.secrets())
+            emit("failed", error=error)
+            audit.warning("tool failed", extra={"fields": {"tool": spec.name, "error": error}})
+            return {"ok": False, "error": error}
         emit("done")
         _note_paths(spec.name, args, result)
-        return {"ok": True, "result": _trim(result)}
+        return {"ok": True, "result": _trim(scrub(result, svc.secrets()))}
 
     async def _compact(conv_id: str) -> None:
         """Fold messages that have scrolled out of the window into the conversation's running summary, so a long
@@ -692,10 +736,11 @@ def build_router(svc: Services, require_auth: Callable[..., None]) -> APIRouter:
         if spec.name in permissions.PRIVATE_READS:
             live_read["at"] = time.monotonic()
         try:
-            return {"ok": True, "result": _trim(await _run_tool(spec, args))}
+            return {"ok": True, "result": _trim(scrub(await _run_tool(spec, args), svc.secrets()))}
         except (AgentUnavailable, AgentError, ResearchError, ReminderError, ToolFailure, LLMError, LLMNotConfigured) as e:
-            audit.warning("tool failed", extra={"fields": {"tool": spec.name, "error": str(e)}})
-            return {"ok": False, "error": str(e)}
+            error = scrub(str(e), svc.secrets())
+            audit.warning("tool failed", extra={"fields": {"tool": spec.name, "error": error}})
+            return {"ok": False, "error": error}
 
     def _recent_conversation(max_age_s: float) -> str | None:
         row = svc.db.one("SELECT id FROM conversations WHERE updated_at > ? ORDER BY updated_at DESC LIMIT 1", [time.time() - max_age_s])
@@ -1036,12 +1081,17 @@ def build_router(svc: Services, require_auth: Callable[..., None]) -> APIRouter:
             raise HTTPException(status_code=400, detail="A web connector needs its https address.")
         if body.kind == "local" and not body.command.strip():
             raise HTTPException(status_code=400, detail="A local connector needs the command that starts it, e.g. npx.")
+        old = json.loads(svc.settings.service_key(f"connector:{name}") or "{}")
+        if body.kind == "web" and (body.token or body.token is None and old.get("token")):
+            before = next((c.get("url", "") for c in svc.connectors.configs() if c["name"] == name), body.url)
+            problem = key_route_problem(body.url, before, bool(body.token))
+            if problem:
+                raise HTTPException(status_code=400, detail=problem.replace("key", "token"))
         items = [c for c in svc.connectors.configs() if c["name"] != name]
         items.append({"name": name, "kind": body.kind, "command": body.command.strip(), "args": body.args, "url": body.url.strip(),
                       "enabled": body.enabled})
         svc.settings.set_connectors(items)
-        old = json.loads(svc.settings.service_key(f"connector:{name}") or "{}")
-        secrets = {"token": body.token if body.token is not None else old.get("token", ""),
+        secrets ={"token": body.token if body.token is not None else old.get("token", ""),
                    "env": {**old.get("env", {}), **(body.env or {})}}
         svc.settings.set_service_key(f"connector:{name}", json.dumps(secrets))
         await svc.connectors.drop(name)
@@ -1081,6 +1131,8 @@ def build_router(svc: Services, require_auth: Callable[..., None]) -> APIRouter:
 
     @r.delete("/apikeys/{service}")
     async def delete_api_key(service: str) -> dict[str, Any]:
+        if ":" in service:  # connector secrets are removed with their connector, not here
+            raise HTTPException(status_code=400, detail="Not a public API name.")
         svc.settings.set_service_key(service, "")
         return {"saved": svc.settings.service_keys()}
 

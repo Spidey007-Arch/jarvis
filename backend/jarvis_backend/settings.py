@@ -163,6 +163,21 @@ class SettingsStore:
         with self._lock:
             return sorted(k.split(":", 1)[1] for k in self._data["secrets"] if k.startswith("service_key:") and not k.startswith("service_key:connector:"))
 
+    def secret_values(self) -> list[str]:
+        """Every saved key, token and connector secret, longest first, so tool output can be scrubbed of them."""
+        with self._lock:
+            found: set[str] = set()
+            for name, value in self._data["secrets"].items():
+                if name.startswith("service_key:connector:"):
+                    try:
+                        saved = json.loads(value or "{}")
+                    except ValueError:
+                        saved = {}
+                    found.update([str(saved.get("token") or ""), *(str(v) for v in (saved.get("env") or {}).values())])
+                else:
+                    found.add(str(value))
+        return sorted((s for s in found if len(s) >= 8), key=len, reverse=True)
+
     def set_connectors(self, items: list[dict[str, Any]]) -> None:
         with self._lock:
             self._data["connectors"] = items

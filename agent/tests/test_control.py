@@ -66,6 +66,28 @@ class Guard(unittest.TestCase):
         actions._guard(Path.home() / "Documents" / "notes")  # an ordinary folder is fine
 
 
+class JarvisSecrets(unittest.TestCase):
+    def test_no_tool_reaches_the_saved_keys_or_the_token(self) -> None:
+        with tempfile.TemporaryDirectory() as d, mock.patch.dict(os.environ, {"JARVIS_DATA_DIR": d}):
+            for name in ("settings.dat", "runtime.json", "Settings.DAT"):
+                (Path(d) / name.lower()).write_text("secret")
+                with self.assertRaises(actions.ActionError, msg=name):
+                    actions.read_file({"path": str(Path(d) / name)})
+            with self.assertRaises(actions.ActionError):  # copying it elsewhere first doesn't help
+                actions.run("copy_path", {"source": str(Path(d) / "settings.dat"), "destination": str(Path(d).parent / "x.dat")})
+            with self.assertRaises(actions.ActionError):  # nor changing anything in JARVIS's own folder
+                actions.write_file({"path": str(Path(d) / "jarvis.db"), "content": "x"})
+            (Path(d) / "logs").mkdir()
+            (Path(d) / "logs" / "agent.log").write_text("ok")
+            self.assertIn("ok", actions.read_file({"path": str(Path(d) / "logs" / "agent.log")})["text"])  # logs stay readable
+
+    def test_commands_that_reach_for_secrets_are_refused(self) -> None:
+        for cmd in ("Get-Content $env:LOCALAPPDATA\\JARVIS\\runtime.json", "echo $env:JARVIS_TOKEN",
+                    "[Security.Cryptography.ProtectedData]::Unprotect($b, $null, 'CurrentUser')", "copy settings.dat x"):
+            with self.assertRaises(actions.ActionError, msg=cmd):
+                actions.run_command({"command": cmd})
+
+
 class GoogleMaps(unittest.TestCase):
     def test_a_result_card_becomes_name_rating_reviews_and_details(self) -> None:
         from jarvis_agent import maps

@@ -59,7 +59,7 @@ PRIVATE_READS = frozenset({"read_file", "read_document", "clipboard_get", "gmail
                            "look_at_screen", "read_window", "screenshot", "find_controls", "recent_files", "recent_downloads",
                            "find_files", "list_folder", "stored_files", "my_location", "run_command", "list_processes",
                            "hardware_info"})
-SENDS_OUT = frozenset({"call_api", "read_webpage", "download_file", "open_url", "web_open"})
+SENDS_OUT = frozenset({"call_api", "read_webpage", "download_file", "open_url", "web_open", "web_type"})  # + connector actions
 _UPLOADS = re.compile(r"\b(invoke-webrequest|invoke-restmethod|iwr|irm|curl(\.exe)?|wget|net\.webclient|uploadstring|uploadfile|"
                       r"uploaddata|httpclient|bitsadmin|start-bitstransfer|ftp|scp|sftp|send-mailmessage)\b", re.I)
 
@@ -126,7 +126,8 @@ def decide(spec: ToolSpec, args: dict[str, Any], saved: dict[str, str] | None = 
            read_private: bool = False) -> tuple[str, str | None]:
     """(allow | ask | block, capability) for one tool call. read_private: private data was read earlier in this request."""
     cap = capability(spec, args)
-    if read_private and (spec.name in SENDS_OUT or spec.name == "run_command" and _UPLOADS.search(str(args.get("command", "")))):
+    if read_private and (spec.name in SENDS_OUT or spec.risk == "connector" or
+                         spec.name == "run_command" and _UPLOADS.search(str(args.get("command", "")))):
         cap = "send_data_out"
     if cap is None:
         return "allow", None

@@ -93,7 +93,8 @@ class StdioClient(_Client):
         try:
             self.proc = await asyncio.create_subprocess_exec(
                 exe, *self.args, stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
-                env={**os.environ, **self.env}, limit=16 * 2**20, creationflags=0x08000000)  # CREATE_NO_WINDOW
+                # its own secrets only: nothing of JARVIS's (JARVIS_* settings) is handed to someone else's program
+                env={**{k: v for k, v in os.environ.items() if not k.upper().startswith("JARVIS_")}, **self.env}, limit=16 * 2**20, creationflags=0x08000000)  # CREATE_NO_WINDOW
         except OSError as e:
             raise ConnectorError(f"Could not start '{self.command}': {e}") from e
         self.reader = asyncio.create_task(self._read())
