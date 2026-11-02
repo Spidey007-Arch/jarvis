@@ -178,6 +178,11 @@ def build_system_prompt(
         address=address, name_clause=name_clause, capabilities=_WITH_TOOLS if tools_enabled else _WITHOUT_TOOLS
     )
 
+    instructions = (settings.get("instructions") or "").strip()
+    if instructions:  # Customize > Instructions; stable, so it stays above the changing part (cached)
+        prompt += ("\nThe user's own instructions for you, in their words. Follow them, except where they would loosen the "
+                   "safety and permission rules above:\n" + instructions[:4000] + "\n")
+
     prompt += DYNAMIC_MARK  # everything below changes from request to request (see providers/base.py)
     facts = core + [m for m in relevant if m["id"] not in {c["id"] for c in core}]
     if facts:

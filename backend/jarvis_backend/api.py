@@ -29,7 +29,7 @@ from .research import ResearchError, read_webpage, web_research
 from .live import LiveError, LiveVoice
 from .connectors import ConnectorError
 from .initiative import Initiative
-from .skills import guidance as skill_guidance
+from .skills import guidance as skill_guidance, my_guidance
 from .tasks import TaskStopped
 from .tools import BY_NAME, OBSERVE_TOOLS, STEPWISE_TOOLS, TOOLS, ToolSpec, describe_call
 from .providers import PRESETS
@@ -197,6 +197,7 @@ class SettingsIn(BaseModel):
     presence_greetings: bool | None = None
     followups: bool | None = None
     onboarded: bool | None = None
+    instructions: str | None = Field(default=None, max_length=4000)
     permissions: dict[str, str] | None = None
     provider: str | None = None
     api_key: str | None = Field(default=None, max_length=300)
@@ -241,6 +242,14 @@ class VoiceIn(BaseModel):
 class ServiceKeyIn(BaseModel):
     service: str = Field(min_length=1, max_length=80)
     key: str = Field(min_length=1, max_length=500)
+
+
+class MySkillIn(BaseModel):
+    id: str | None = Field(default=None, max_length=20)  # set to change an existing skill
+    name: str = Field(min_length=1, max_length=80)
+    when_to: str = Field(default="", max_length=300)
+    body: str = Field(min_length=1, max_length=6000)
+    enabled: bool = True
 
 
 class VoiceModeIn(BaseModel):
@@ -295,7 +304,7 @@ def build_router(svc: Services, require_auth: Callable[..., None]) -> APIRouter:
     async def put_settings(body: SettingsIn) -> dict[str, Any]:
         changes = body.model_dump(exclude_unset=True)
         profile = {k: changes.pop(k) for k in ("user_name", "address", "proactive_alerts", "startup_briefing",
-                                                   "full_control", "permissions", "presence_greetings", "followups", "onboarded") if k in changes}
+                                                   "full_control", "permissions", "presence_greetings", "followups", "onboarded", "instructions") if k in changes}
         if "permissions" in profile:
             bad = {k: v for k, v in (profile["permissions"] or {}).items() if k not in permissions.CAPABILITIES or v not in permissions.POLICIES}
             if bad:
@@ -1052,6 +1061,25 @@ def build_router(svc: Services, require_auth: Callable[..., None]) -> APIRouter:
     async def list_skills() -> list[dict[str, Any]]:
         return svc.skills.list()
 
+    @r.get("/skills/mine")
+    async def my_skills() -> list[dict[str, Any]]:
+        return svc.skills.mine()
+
+    @r.put("/skills/mine")
+    async def save_my_skill(body: MySkillIn) -> dict[str, Any]:
+        try:
+            return svc.skills.save_mine(body.name, body.when_to, body.body, body.enabled, body.id)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        except KeyError as e:
+            raise HTTPException(status_code=404, detail="No such skill.") from e
+
+    @r.delete("/skills/mine/{skill_id}")
+    async def remove_my_skill(skill_id: str) -> dict[str, Any]:
+        if not svc.skills.remove_mine(skill_id):
+            raise HTTPException(status_code=404, detail="No such skill.")
+        return {"removed": skill_id}
+
     @r.delete("/skills/{skill_id}")
     async def forget_skill(skill_id: str) -> dict[str, Any]:
         if not svc.skills.forget(skill_id):
@@ -1225,6 +1253,8 @@ def build_router(svc: Services, require_auth: Callable[..., None]) -> APIRouter:
                 if svc.connectors and svc.connectors.configs():
                     await svc.connectors.ensure()
                     connector_tools = svc.connectors.schemas()
+                for mine in svc.skills.match_mine(text):  # the user's own skills come first
+                    system += "\n\n" + my_guidance(mine)
                 skill = svc.skills.match(text)
                 if skill:
                     system += "\n\n" + skill_guidance(skill)

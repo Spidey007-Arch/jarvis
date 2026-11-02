@@ -28,7 +28,19 @@ CREATE TABLE IF NOT EXISTS skills (
     created_at REAL NOT NULL,
     last_used  REAL NOT NULL
 );
+CREATE TABLE IF NOT EXISTS my_skills (
+    id         TEXT PRIMARY KEY,
+    name       TEXT NOT NULL,
+    when_to    TEXT NOT NULL DEFAULT '',
+    body       TEXT NOT NULL,
+    enabled    INTEGER NOT NULL DEFAULT 1,
+    uses       INTEGER NOT NULL DEFAULT 0,
+    created_at REAL NOT NULL,
+    updated_at REAL NOT NULL
+);
 """
+MINE_MATCH = 0.5  # word overlap with a skill's name and "use when" for it to be handed to JARVIS
+MINE_MAX = 2  # at most this many of the user's skills per request
 
 _STOP = {"the", "a", "an", "to", "and", "or", "of", "in", "on", "for", "my", "me", "please", "can", "you", "it", "this",
          "that", "with", "jarvis", "sir", "i", "is", "be", "do", "from", "at", "into", "all", "some", "now", "then"}
@@ -45,7 +57,9 @@ def _overlap(a: set[str], b: set[str]) -> float:
 class Skills:
     def __init__(self, db: DB) -> None:
         self.db = db
-        db.run(SCHEMA)
+        for stmt in SCHEMA.split(";"):
+            if stmt.strip():
+                db.run(stmt)
 
     def match(self, request: str) -> dict[str, Any] | None:
         """The most reliable workflow for a request that reads alike, if any."""
@@ -97,6 +111,46 @@ class Skills:
     def forget(self, sid: str) -> bool:
         return self.db.run("DELETE FROM skills WHERE id=?", [sid]) > 0
 
+    # ---------- the user's own skills (Customize > Skills): written by them, followed when a request fits ----------
+
+    def mine(self) -> list[dict[str, Any]]:
+        return [{**r, "enabled": bool(r["enabled"])} for r in self.db.all("SELECT * FROM my_skills ORDER BY name COLLATE NOCASE")]
+
+    def save_mine(self, name: str, when_to: str, body: str, enabled: bool = True, sid: str | None = None) -> dict[str, Any]:
+        name, when_to, body = name.strip()[:80], when_to.strip()[:300], body.strip()[:6000]
+        if not name or not body:
+            raise ValueError("A skill needs a name and its steps.")
+        clash = self.db.one("SELECT id FROM my_skills WHERE lower(name)=lower(?) AND id<>?", [name, sid or ""])
+        if clash:
+            raise ValueError(f"There is already a skill called '{name}'.")
+        now = time.time()
+        if sid:
+            if not self.db.run("UPDATE my_skills SET name=?, when_to=?, body=?, enabled=?, updated_at=? WHERE id=?",
+                               [name, when_to, body, int(enabled), now, sid]):
+                raise KeyError(sid)
+        else:
+            sid = uuid.uuid4().hex[:10]
+            self.db.run("INSERT INTO my_skills (id, name, when_to, body, enabled, created_at, updated_at) VALUES (?,?,?,?,?,?,?)",
+                        [sid, name, when_to, body, int(enabled), now, now])
+        return next(s for s in self.mine() if s["id"] == sid)
+
+    def remove_mine(self, sid: str) -> bool:
+        return self.db.run("DELETE FROM my_skills WHERE id=?", [sid]) > 0
+
+    def match_mine(self, request: str) -> list[dict[str, Any]]:
+        """The user's enabled skills that fit a request: named in it, or alike enough to its "use when"."""
+        want, low = _words(request), request.lower()
+        scored = []
+        for s in self.db.all("SELECT * FROM my_skills WHERE enabled=1"):
+            named = s["name"].lower() in low
+            score = 1.0 if named else _overlap(want, _words(s["name"] + " " + s["when_to"]))
+            if score >= MINE_MATCH:
+                scored.append((score, s))
+        picked = [s for _score, s in sorted(scored, key=lambda x: -x[0])[:MINE_MAX]]
+        for s in picked:
+            self.db.run("UPDATE my_skills SET uses=uses+1 WHERE id=?", [s["id"]])
+        return picked
+
 
 def guidance(skill: dict[str, Any]) -> str:
     """The workflow as a hint for the system prompt."""
@@ -107,3 +161,10 @@ def guidance(skill: dict[str, Any]) -> str:
     return (f"A workflow that worked before for a similar request (\"{skill['goal']}\", worked {skill['successes']} time(s), "
             f"failed {skill['failures']}):\n" + "\n".join(lines) +
             "\nUse it as a guide, not a script: check the current state, adapt names and paths, and skip steps that don't apply.")
+
+
+def my_guidance(skill: dict[str, Any]) -> str:
+    """One of the user's own skills, for the system prompt."""
+    when = f" (use when: {skill['when_to']})" if skill.get("when_to") else ""
+    return (f"The user's skill \"{skill['name']}\"{when}. They wrote these steps for this kind of request; follow them, "
+            f"adapting to what you find:\n{skill['body']}")

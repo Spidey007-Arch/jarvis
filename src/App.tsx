@@ -10,10 +10,11 @@ import Onboarding from "./views/Onboarding";
 import ChatView from "./views/ChatView";
 import HistoryPanel from "./views/HistoryPanel";
 import MemoryView from "./views/MemoryView";
+import CustomizeView from "./views/CustomizeView";
 import SettingsView from "./views/SettingsView";
 import SystemPanel from "./views/SystemPanel";
 
-type Drawer = "history" | "memory" | "settings" | "system" | null;
+type Drawer = "history" | "memory" | "customize" | "settings" | "system" | null;
 
 const LABEL: Record<Overall, string> = {
   starting: "STARTING",
@@ -39,6 +40,7 @@ const ICONS: Record<Exclude<Drawer, null>, ReactNode> = {
       <path d="M12 2v4M12 18v4M2 12h4M18 12h4M5 5l3 3M16 16l3 3M19 5l-3 3M8 16l-3 3" />
     </>
   ),
+  customize: <path d="M4 6h9M17 6h3M4 12h3M11 12h9M4 18h11M19 18h1M15 4v4M9 10v4M17 16v4" />,
   system: <path d="M3 12h4l3-8 4 16 3-8h4" />,
   settings: (
     <>
@@ -51,6 +53,7 @@ const ICONS: Record<Exclude<Drawer, null>, ReactNode> = {
 const TITLES: Record<Exclude<Drawer, null>, string> = {
   history: "Conversations",
   memory: "Memory",
+  customize: "Customize",
   system: "System",
   settings: "Settings",
 };
@@ -410,7 +413,7 @@ export default function App() {
       </main>
 
       {drawer && <div className="scrim" onClick={() => setDrawer(null)} />}
-      <aside className={`glass drawer ${drawer ? "open" : ""} ${drawer === "memory" ? "wide" : ""} ${drawer === "settings" ? "xwide" : ""}`} aria-hidden={!drawer}>
+      <aside className={`glass drawer ${drawer ? "open" : ""} ${drawer === "memory" ? "wide" : ""} ${drawer === "settings" || drawer === "customize" ? "xwide" : ""}`} aria-hidden={!drawer}>
         {drawer && (
           <>
             <header className="drawer-head">
@@ -430,6 +433,7 @@ export default function App() {
                 />
               )}
               {drawer === "memory" && <MemoryView conn={conn} />}
+              {drawer === "customize" && <CustomizeView conn={conn} />}
               {drawer === "settings" && <SettingsView conn={conn} onChanged={refreshSettings} />}
               {drawer === "system" && <SystemPanel status={status} conn={conn} tel={tel} />}
             </div>

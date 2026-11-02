@@ -31,6 +31,7 @@ export interface Settings {
   presence_greetings: boolean;
   onboarded: boolean;
   followups: boolean;
+  instructions: string;
   permissions: Record<string, Policy>;
   provider: string;
   base_url: string;
@@ -61,7 +62,7 @@ export interface ModelInfo {
   kind: "chat" | "embed";
 }
 
-export type SettingsUpdate = Partial<Pick<Settings, "user_name" | "address" | "proactive_alerts" | "startup_briefing" | "full_control" | "permissions" | "presence_greetings" | "followups" | "onboarded" | "provider" | "base_url" | "chat_model" | "embed_model">> & {
+export type SettingsUpdate = Partial<Pick<Settings, "user_name" | "address" | "proactive_alerts" | "startup_briefing" | "full_control" | "permissions" | "presence_greetings" | "followups" | "onboarded" | "instructions" | "provider" | "base_url" | "chat_model" | "embed_model">> & {
   api_key?: string;
 };
 
@@ -229,6 +230,15 @@ export interface Permission {
   policy: Policy;
 }
 export const getPermissions = (c: Connection) => call<Permission[]>(c, "/api/permissions");
+
+export type MySkill = { id: string; name: string; when_to: string; body: string; enabled: boolean; uses: number; updated_at: number };
+export type LearnedSkill = { id: string; goal: string; steps: string[]; successes: number; failures: number; last_used: number };
+export const getMySkills = (c: Connection) => call<MySkill[]>(c, "/api/skills/mine");
+export const saveMySkill = (c: Connection, s: { id?: string; name: string; when_to: string; body: string; enabled: boolean }) =>
+  call<MySkill>(c, "/api/skills/mine", { method: "PUT", body: JSON.stringify(s) });
+export const removeMySkill = (c: Connection, id: string) => call<{ removed: string }>(c, `/api/skills/mine/${encodeURIComponent(id)}`, { method: "DELETE" });
+export const getLearnedSkills = (c: Connection) => call<LearnedSkill[]>(c, "/api/skills");
+export const forgetLearnedSkill = (c: Connection, id: string) => call<{ forgotten: string }>(c, `/api/skills/${encodeURIComponent(id)}`, { method: "DELETE" });
 
 export const getApiKeys = (c: Connection) => call<ApiKeys>(c, "/api/apikeys");
 export const saveApiKey = (c: Connection, service: string, key: string) =>

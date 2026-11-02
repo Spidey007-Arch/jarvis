@@ -1,20 +1,16 @@
 import { useCallback, useEffect, useState } from "react";
-import ApiKeysCard from "./ApiKeysCard";
 import PermissionsCard from "./PermissionsCard";
 import SystemCard from "./SystemCard";
-import ConnectorsCard from "./ConnectorsCard";
 import { ApiError, ModelInfo, ProviderPreset, Settings, SettingsUpdate, VoiceStatus, enrollVoice, forgetVoice, getModels, getProviders, getSettings, getVoice, putSettings, setVoice, setVoiceMode, startGateway } from "../api";
 import type { Connection } from "../shell";
 
 type Note = { tone: "ok" | "bad"; text: string } | null;
-type Tab = "general" | "ai" | "voice" | "permissions" | "connectors" | "keys" | "system";
+type Tab = "general" | "ai" | "voice" | "permissions" | "system";
 const TABS: { id: Tab; label: string }[] = [
   { id: "general", label: "General" },
   { id: "ai", label: "AI & models" },
   { id: "voice", label: "Voice" },
   { id: "permissions", label: "PC control & safety" },
-  { id: "connectors", label: "Connectors" },
-  { id: "keys", label: "API keys" },
   { id: "system", label: "System" },
 ];
 const TAB_KEY = "jarvis.settingsTab";
@@ -471,8 +467,6 @@ export default function SettingsView({ conn, onChanged }: { conn: Connection | n
           </>
         )}
         {tab === "permissions" && <PermissionsCard conn={conn} fullControl={!!s.full_control} onChanged={() => { onChanged(); load(); }} />}
-        {tab === "connectors" && <ConnectorsCard conn={conn} />}
-        {tab === "keys" && <ApiKeysCard conn={conn} />}
         {tab === "system" && <SystemCard conn={conn} />}
       </div>
     </div>

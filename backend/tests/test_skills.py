@@ -61,5 +61,41 @@ class Focus(unittest.TestCase):
         self.assertIn("ask which one", p)
 
 
+
+class MySkills(unittest.TestCase):
+    """Customize > Skills: skills the user writes, followed when a request names or fits them."""
+
+    def setUp(self) -> None:
+        self.dir = tempfile.TemporaryDirectory()
+        self.db = DB(Path(self.dir.name) / "t.db")
+        self.skills = Skills(self.db)
+
+    def tearDown(self) -> None:
+        self.db.close()
+        self.dir.cleanup()
+
+    def test_write_match_edit_and_remove(self) -> None:
+        s = self.skills.save_mine("Morning setup", "start my work day, open work apps", "1. Open Outlook\n2. Open VS Code")
+        self.assertEqual([m["name"] for m in self.skills.match_mine("start my work day please")], ["Morning setup"])
+        self.assertEqual(len(self.skills.match_mine("use morning setup")), 1)  # named
+        self.assertEqual(self.skills.match_mine("play some music"), [])
+        self.skills.save_mine("Morning setup", "", "x", enabled=False, sid=s["id"])
+        self.assertEqual(self.skills.match_mine("morning setup"), [])  # turned off
+        with self.assertRaises(ValueError):
+            self.skills.save_mine("morning SETUP", "", "y")  # names are unique
+        with self.assertRaises(ValueError):
+            self.skills.save_mine("Empty", "", "  ")
+        self.assertTrue(self.skills.remove_mine(s["id"]))
+        self.assertEqual(self.skills.mine(), [])
+
+    def test_instructions_go_into_the_prompt(self) -> None:
+        from jarvis_backend.persona import build_system_prompt
+        from jarvis_backend.providers.base import DYNAMIC_MARK
+
+        p = build_system_prompt({"instructions": "Always answer in Hinglish."}, [], [])
+        self.assertIn("Always answer in Hinglish.", p.split(DYNAMIC_MARK)[0])  # in the stable, cached part
+        self.assertNotIn("own instructions", build_system_prompt({}, [], []))
+
+
 if __name__ == "__main__":
     unittest.main()

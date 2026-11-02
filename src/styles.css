@@ -625,3 +625,19 @@ label { display: flex; flex-direction: column; gap: 5px; font-size: 11px; letter
 .reactor .bars.user rect { fill: #e8fbff; }
 .reactor .ripple circle { stroke: var(--core); }
 .reactor .ripple.user circle { stroke: #e8fbff; }
+
+/* ---------- Customize ---------- */
+.card-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.card-head h2 { margin: 0; }
+textarea.instructions { width: 100%; box-sizing: border-box; margin-top: 8px; line-height: 1.5; }
+.skill-form { display: flex; flex-direction: column; gap: 10px; margin: 10px 0 4px; padding: 12px; border: 1px solid var(--edge); border-radius: 10px; }
+.skill-form textarea { width: 100%; box-sizing: border-box; line-height: 1.5; }
+.skills { list-style: none; margin: 10px 0 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.skills > li { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; padding: 9px 12px; border: 1px solid var(--edge); border-radius: 10px; }
+.skills > li.off { opacity: 0.55; }
+.skill-main { display: flex; flex-direction: column; gap: 3px; min-width: 0; flex: 1; }
+.skill-main summary { cursor: pointer; }
+.skill-main ol { margin: 6px 0 0; padding-left: 18px; font-size: 12px; color: var(--dim); }
+.skill-actions { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+.skill-actions .switch { margin-top: 0; }
+@media (max-width: 560px) { .skills > li { flex-direction: column; } }
