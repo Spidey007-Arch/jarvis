@@ -435,7 +435,7 @@ JARVIS gets better with real people using it on real PCs. Any of these helps a l
 - **🎨 Design:** ideas or mock-ups for the interface.
 - **🔧 Code:** pick an issue labelled `good first issue` or `help wanted`, or anything on the roadmap. Read
   [CONTRIBUTING.md](CONTRIBUTING.md) first.
-- **💬 Questions and rough ideas** that aren't a feature request yet: [open a question](https://github.com/Spidey007-Arch/jarvis/issues/new?template=question.yml).
+- **💬 Questions, rough ideas and showing what you built** with JARVIS: start a [Discussion](https://github.com/Spidey007-Arch/jarvis/discussions).
 
 **Specific questions we'd love answers to:**
 1. Which should come first: the installer, undo/checkpoints, or parallel tasks?

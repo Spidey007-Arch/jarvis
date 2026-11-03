@@ -7,9 +7,8 @@ here. Thank you for looking.
 
 Please report it **privately**, not in a public issue:
 
-- Use **Security → Report a vulnerability** on this repository (GitHub's private reporting), or
-- if that isn't available, open an issue that says only "security report, please contact me", without details, and
-  we'll arrange a private channel.
+- [**Report a vulnerability**](https://github.com/Spidey007-Arch/jarvis/security/advisories/new) (the Security tab →
+  Report a vulnerability). Only the maintainers see it.
 
 Please include what an attacker can do, the steps or a proof of concept, and the version (commit) you tested. We'll
 acknowledge the report, keep you updated, and credit you in the fix unless you'd rather not be named.

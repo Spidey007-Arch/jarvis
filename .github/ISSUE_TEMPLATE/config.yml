@@ -1,5 +1,8 @@
 blank_issues_enabled: false
 contact_links:
   - name: 🔒 Security problem
-    url: https://github.com/Spidey007-Arch/jarvis/blob/main/SECURITY.md
-    about: Please report vulnerabilities privately, not in a public issue.
+    url: https://github.com/Spidey007-Arch/jarvis/security/advisories/new
+    about: Report a vulnerability privately; only the maintainers see it.
+  - name: 💬 Questions and ideas
+    url: https://github.com/Spidey007-Arch/jarvis/discussions
+    about: Ask, share what you built, or float an idea before it's a feature request.
