@@ -128,35 +128,7 @@ OpenRouter, a local Ollama, or any OpenAI-compatible service. Your keys stay enc
 
 JARVIS is four cooperating programs on your PC:
 
-```mermaid
-flowchart LR
-    subgraph Shell["Desktop shell (Tauri, Rust)"]
-        UI["Window (React)\nchat · core · panels"]
-        SUP["Supervisor\nstarts, health-checks,\nrestarts, shuts down"]
-    end
-    subgraph Backend["Backend (Python, FastAPI) — the brain"]
-        CHAT["Chat & agent loop"]
-        MEM["Memory"]
-        PERM["Permissions"]
-        LLM["AI providers\n+ model switching"]
-        SCHED["Reminders · Automations\nJobs · Initiative"]
-        PHONE["Phone link\n(Telegram)"]
-    end
-    subgraph Agent["Desktop agent (Python) — the hands"]
-        ACT["Apps · files · commands\nscreen · UI Automation"]
-        WEB["Its own browser\n(shops, Gmail, WhatsApp, Maps)"]
-        VOICE["Microphone · speakers\nwake word · offline voice"]
-    end
-    AI[("Your AI provider\nGemini · OpenAI · Claude · Ollama …")]
-    TG[("Telegram")]
-
-    UI <-- "HTTP + token" --> CHAT
-    SUP -. launches .-> Backend
-    SUP -. launches .-> Agent
-    Agent <-- "WebSocket + token" --> Backend
-    LLM <--> AI
-    PHONE <--> TG
-```
+```mermaid<br/>flowchart LR<br/>    subgraph Shell["Desktop shell (Tauri, Rust)"]<br/>        UI["Window (React)\nchat · core · panels"]<br/>        SUP["Supervisor\nstarts, health-checks,\nrestarts, shuts down"]<br/>    end<br/>    subgraph Backend["Backend (Python, FastAPI): the brain"]<br/>        CHAT["Chat & agent loop"]<br/>        MEM["Memory"]<br/>        PERM["Permissions"]<br/>        LLM["AI providers\n+ model switching"]<br/>        SCHED["Reminders · Automations\nJobs · Initiative"]<br/>        PHONE["Phone link\n(Telegram)"]<br/>    end<br/>    subgraph Agent["Desktop agent (Python): the hands"]<br/>        ACT["Apps · files · commands\nscreen · UI Automation"]<br/>        WEB["Its own browser\n(shops, Gmail, WhatsApp, Maps)"]<br/>        VOICE["Microphone · speakers\nwake word · offline voice"]<br/>    end<br/>    AI[("Your AI provider\nGemini · OpenAI · Claude · Ollama …")]<br/>    TG[("Telegram")]<br/><br/>    UI <-- "HTTP + token" --> CHAT<br/>    SUP -. launches .-> Backend<br/>    SUP -. launches .-> Agent<br/>    Agent <-- "WebSocket + token" --> Backend<br/>    LLM <--> AI<br/>    PHONE <--> TG<br/>```
 
 - **The shell** (`src-tauri/`) is the app you open. It starts the backend and agent hidden, checks they're healthy,
   restarts them if they crash, and closes everything cleanly when you quit.
