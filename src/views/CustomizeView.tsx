@@ -2,19 +2,17 @@ import { useCallback, useEffect, useState } from "react";
 import ApiKeysCard from "./ApiKeysCard";
 import ConnectorsCard from "./ConnectorsCard";
 import AutomationsCard from "./AutomationsCard";
-import PhoneCard from "./PhoneCard";
 import {
-  LearnedSkill, MySkill, PhoneStatus, forgetLearnedSkill, getPhone, getLearnedSkills, getMySkills, getSettings, putSettings, removeMySkill, saveMySkill,
+  LearnedSkill, MySkill, forgetLearnedSkill, getLearnedSkills, getMySkills, getSettings, putSettings, removeMySkill, saveMySkill,
 } from "../api";
 import type { Connection } from "../shell";
 
 type Note = { tone: "ok" | "bad"; text: string } | null;
-type Tab = "instructions" | "skills" | "automations" | "phone" | "connectors" | "keys";
+type Tab = "instructions" | "skills" | "automations" | "connectors" | "keys";
 const TABS: { id: Tab; label: string }[] = [
   { id: "instructions", label: "Instructions" },
   { id: "skills", label: "Skills" },
   { id: "automations", label: "Automations" },
-  { id: "phone", label: "Phone" },
   { id: "connectors", label: "Connectors" },
   { id: "keys", label: "API keys" },
 ];
@@ -24,11 +22,6 @@ const EMPTY = { name: "", when_to: "", body: "", enabled: true };
 
 /** One place to shape JARVIS: how it behaves, the skills it follows, and what it is connected to. */
 export default function CustomizeView({ conn }: { conn: Connection | null }) {
-  const [phoneLinked, setPhoneLinked] = useState(false);
-  const onPhone = useCallback((s: PhoneStatus) => setPhoneLinked(s.linked), []);
-  useEffect(() => {
-    if (conn) getPhone(conn).then(onPhone).catch(() => undefined);
-  }, [conn, onPhone]);
   const [tab, setTab] = useState<Tab>(() => {
     try {
       const t = localStorage.getItem(TAB_KEY) as Tab | null;
@@ -58,8 +51,7 @@ export default function CustomizeView({ conn }: { conn: Connection | null }) {
       <div className="settings">
         {tab === "instructions" && <Instructions conn={conn} />}
         {tab === "skills" && <Skills conn={conn} />}
-        {tab === "automations" && <AutomationsCard conn={conn} phoneLinked={phoneLinked} />}
-        {tab === "phone" && <PhoneCard conn={conn} onStatus={onPhone} />}
+        {tab === "automations" && <AutomationsCard conn={conn} />}
         {tab === "connectors" && <ConnectorsCard conn={conn} />}
         {tab === "keys" && <ApiKeysCard conn={conn} />}
       </div>

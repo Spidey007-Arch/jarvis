@@ -104,12 +104,6 @@ class ApiTests(unittest.TestCase):
         self.assertIn("API key", got["last_result"])
         self.assertEqual(self.client.delete(f"/api/automations/{a['id']}", headers=AUTH).status_code, 200)
 
-    def test_phone_status_and_bad_token(self):
-        s = self.client.get("/api/phone", headers=AUTH).json()
-        self.assertFalse(s["linked"])
-        self.assertEqual(self.client.put("/api/phone", headers=AUTH, json={"token": "definitely-not-a-token"}).status_code, 400)
-        self.assertEqual(self.client.post("/api/phone/test", headers=AUTH).status_code, 400)
-
     def test_conversations_empty_and_404(self):
         self.assertEqual(self.client.get("/api/conversations", headers=AUTH).json(), [])
         self.assertEqual(self.client.get("/api/conversations/nope/messages", headers=AUTH).status_code, 404)

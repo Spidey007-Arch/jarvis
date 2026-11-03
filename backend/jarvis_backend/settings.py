@@ -29,7 +29,6 @@ DEFAULTS: dict[str, Any] = {
     "startup_briefing": True,  # JARVIS speaks first on launch: system health, open apps and processes
     "onboarded": False,  # the first-run setup was finished (or skipped); existing installs with a key count as done
     "connectors": [],  # MCP servers: {name, kind: local|web, command, args, url, enabled}; their secrets live in secrets
-    "phone": {},  # the linked Telegram chat: {chat_id, who, linked_at}; the bot token lives in secrets
     "presence_greetings": True,  # welcome the user back after they have been away a while
     "followups": True,  # follow up on its own on a conversation left hanging (initiative.py)
     "permissions": {},  # capability -> allow | ask | block (permissions.py); unset ones follow full_control
@@ -163,7 +162,7 @@ class SettingsStore:
     def service_keys(self) -> list[str]:
         """Names of the public APIs that have a saved key (not the keys)."""
         with self._lock:
-            # names with a colon are JARVIS's own (connector:..., phone:...), not public APIs
+            # names with a colon are JARVIS's own (connector:...), not public APIs
             return sorted(k.split(":", 1)[1] for k in self._data["secrets"] if k.startswith("service_key:") and ":" not in k.split(":", 1)[1])
 
     def secret_values(self) -> list[str]:
@@ -180,11 +179,6 @@ class SettingsStore:
                 else:
                     found.add(str(value))
         return sorted((s for s in found if len(s) >= 8), key=len, reverse=True)
-
-    def set_phone(self, link: dict[str, Any]) -> None:
-        with self._lock:
-            self._data["phone"] = link
-            self._save()
 
     def set_connectors(self, items: list[dict[str, Any]]) -> None:
         with self._lock:

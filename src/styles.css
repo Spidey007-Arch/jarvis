@@ -641,7 +641,5 @@ textarea.instructions { width: 100%; box-sizing: border-box; margin-top: 8px; li
 .skill-actions { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
 .skill-actions .switch { margin-top: 0; }
 @media (max-width: 560px) { .skills > li { flex-direction: column; } }
-.pair-code { font-size: 30px; letter-spacing: 0.4em; font-weight: 600; color: var(--core); text-shadow: 0 0 14px var(--core); margin: 6px 0; }
-.steps { margin: 8px 0; padding-left: 18px; line-height: 1.6; }
 .automation-result { white-space: pre-wrap; margin: 4px 0 0; }
 .chips button[aria-pressed="true"] { color: var(--text); border-color: var(--core); background: color-mix(in srgb, var(--core) 22%, transparent); }

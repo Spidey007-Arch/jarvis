@@ -24,7 +24,7 @@ body:
     id: voice
     attributes:
       label: How you asked
-      options: [Typed in the app, Live voice, Offline voice, Phone (Telegram), An automation]
+      options: [Typed in the app, Live voice, Offline voice, An automation]
   - type: textarea
     id: logs
     attributes:

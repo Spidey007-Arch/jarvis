@@ -253,7 +253,7 @@ TOOLS: list[ToolSpec] = [
     # Automations: jobs JARVIS does by itself on a schedule (not a reminder, which only speaks a line)
     ToolSpec("create_automation", "Schedule a job JARVIS does by itself, repeatedly or once, e.g. every weekday at 09:00 summarise unread "
              "mail. prompt: the request to run, written as the user would ask it. kind: daily (at HH:MM, days 0=Mon..6=Sun, empty "
-             "for every day), interval (every_min, at least 15) or once (at YYYY-MM-DDTHH:MM local). deliver: any of speak, phone. "
+             "for every day), interval (every_min, at least 15) or once (at YYYY-MM-DDTHH:MM local). deliver: ['speak'] to say the result aloud."
              "For a line said at a time, use set_reminder instead.",
              obj({"name": S, "prompt": S, "kind": S, "at": S, "days": {"type": "array", "items": I}, "every_min": I,
                   "deliver": {"type": "array", "items": S}}, ["name", "prompt", "kind"]), risk="confirm",

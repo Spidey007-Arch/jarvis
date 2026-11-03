@@ -1,10 +1,10 @@
 """Automations: jobs JARVIS runs on its own on a schedule ("every weekday at 9, go through my unread mail and tell me
 what matters"). Each run is an ordinary request through the agent, saved in that automation's own conversation, and
-its result can be spoken aloud or sent to the phone.
+its result can be spoken aloud.
 
 Schedules: once at a date-time, daily at a time (optionally only on some weekdays), or every N minutes. A run that
 came due while JARVIS was off is skipped rather than run late, unless it is less than LATE_OK_S overdue. Approvals
-work as in chat: a step that needs a yes waits for one (in the app or on the phone) and is declined after 2 minutes."""
+work as in chat: a step that needs a yes waits for one in the app and is declined after 2 minutes."""
 from __future__ import annotations
 
 import asyncio
@@ -40,7 +40,7 @@ CREATE TABLE IF NOT EXISTS automations (
 )
 """
 KINDS = ("once", "daily", "interval")
-DELIVER = ("speak", "phone")  # every run is also kept in its conversation
+DELIVER = ("speak",)  # every run is also kept in its conversation
 MIN_EVERY = 15  # minutes: more often than this would burn through the AI quota
 LATE_OK_S = 30 * 60
 CHECK_S = 20
@@ -110,7 +110,8 @@ class Automations:
         self.running: set[str] = set()
 
     def _row(self, r: dict[str, Any]) -> dict[str, Any]:
-        a = {**r, "days": json.loads(r["days"] or "[]"), "deliver": json.loads(r["deliver"] or "[]"), "enabled": bool(r["enabled"])}
+        a = {**r, "days": json.loads(r["days"] or "[]"), "enabled": bool(r["enabled"]),
+             "deliver": [d for d in json.loads(r["deliver"] or "[]") if d in DELIVER]}  # drops ways that no longer exist
         a["schedule"] = describe(a)
         a["running"] = a["id"] in self.running
         return a

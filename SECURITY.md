@@ -20,7 +20,7 @@ Especially:
   (prompt injection that gets past the permission checks)
 - Reading or sending out saved keys, the backend token, or private data
 - Getting past the sandbox, the "paying stays with the user" rule, or the permission locks
-- Anything that lets another program, user or device control JARVIS's backend or the phone link
+- Anything that lets another program, user or device control JARVIS's backend
 
 Out of scope: problems that need an attacker who already runs code as the same Windows user (they can read that
 user's data directly), and denial of service against your own PC.

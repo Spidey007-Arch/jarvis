@@ -29,7 +29,6 @@ from .research import ResearchError, read_webpage, web_research
 from .live import LiveError, LiveVoice
 from .connectors import ConnectorError
 from .automations import AutomationError
-from .phone import PhoneError
 from .initiative import Initiative
 from .skills import guidance as skill_guidance, my_guidance
 from .tasks import TaskStopped
@@ -88,7 +87,6 @@ class Services:
     recent_downloads: list[dict[str, Any]] = field(default_factory=list)  # browser downloads noticed this session, newest last
     token: str = ""  # the backend's own login token, set in main; scrubbed from tool output like the saved keys
     automations: Any = None  # Automations: scheduled jobs (automations.py)
-    phone: Any = None  # Phone: the Telegram link (phone.py)
 
     def secrets(self) -> list[str]:
         return sorted({*self.settings.secret_values(), *([self.token] if self.token else [])}, key=len, reverse=True)
@@ -264,12 +262,8 @@ class AutomationIn(BaseModel):
     at: str = Field(default="", max_length=20)
     days: list[int] = Field(default_factory=list, max_length=7)
     every_min: int = Field(default=0, ge=0, le=7 * 24 * 60)
-    deliver: list[Literal["speak", "phone"]] = Field(default_factory=list)
+    deliver: list[Literal["speak"]] = Field(default_factory=list)
     enabled: bool = True
-
-
-class PhoneIn(BaseModel):
-    token: str = Field(min_length=10, max_length=100)
 
 
 class VoiceModeIn(BaseModel):
@@ -1423,7 +1417,7 @@ def build_router(svc: Services, require_auth: Callable[..., None]) -> APIRouter:
                             log.exception("could not learn the workflow")
                 if agent_task and not agent_task.done():
                     agent_task.cancel()  # user pressed Stop or closed the window
-                mine = {a["id"] for a in actions}  # only this request's questions: an automation or the phone may be waiting too
+                mine = {a["id"] for a in actions}  # only this request's questions: an automation may be waiting too
                 for cid, fut in list(pending_confirmations.items()):
                     if cid in mine and not fut.done():
                         fut.set_result(False)
@@ -1438,9 +1432,9 @@ def build_router(svc: Services, require_auth: Callable[..., None]) -> APIRouter:
             events(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
         )
 
-    # ---------------- requests without the window: automations and the phone ----------------
+    # ---------------- requests without the window: automations ----------------
 
-    async def run_message(text: str, conv_id: str | None, on_tool: Callable[[dict[str, Any]], Awaitable[None]] | None = None) -> dict[str, Any]:
+    async def run_message(text: str, conv_id: str | None) -> dict[str, Any]:
         """Run one request through the same agent as the chat box; returns the reply and its conversation."""
         try:
             resp = await chat(ChatIn(message=text, conversation_id=conv_id), None)  # type: ignore[arg-type]
@@ -1449,7 +1443,7 @@ def build_router(svc: Services, require_auth: Callable[..., None]) -> APIRouter:
         if isinstance(resp, JSONResponse):
             return {"status": "failed", "result": json.loads(resp.body).get("message", "JARVIS isn't set up yet.")}
         meta: dict[str, Any] = {}
-        error, asked = "", set()
+        error = ""
         async for chunk in resp.body_iterator:
             for block in str(chunk if isinstance(chunk, str) else chunk.decode()).split("\n\n"):
                 head, _, data = block.partition("\ndata: ")
@@ -1462,32 +1456,15 @@ def build_router(svc: Services, require_auth: Callable[..., None]) -> APIRouter:
                     meta = payload
                 elif event == "error":
                     error = payload.get("message", "")
-                elif event == "tool" and on_tool and payload.get("status") == "awaiting_confirmation" and payload.get("id") not in asked:
-                    asked.add(payload["id"])
-                    await on_tool(payload)
         row = svc.db.one("SELECT content FROM messages WHERE id=?", [meta.get("reply_id", "")])
         reply = (row or {}).get("content", "")
         return {"status": "failed" if error and not reply else "done", "result": reply or error or "(no reply)",
                 "conversation_id": meta.get("conversation_id")}
 
-    def _confirm(cid: str, approved: bool) -> bool:
-        fut = pending_confirmations.get(cid)
-        if fut is None or fut.done():
-            return False
-        fut.set_result(approved)
-        return True
-
-    async def _phone_approval(entry: dict[str, Any]) -> None:
-        if svc.phone and svc.phone.linked:
-            try:
-                await svc.phone.ask_approval(entry["id"], entry.get("label") or entry.get("tool", "a step"))
-            except PhoneError as e:
-                log.warning("could not ask on the phone: %s", e)
-
     async def _run_automation(a: dict[str, Any]) -> dict[str, Any]:
         text = (f"[Automation “{a['name']}”, running on its schedule ({a['schedule']}). The user isn't watching: do it, then report "
                 f"the result in a few plain sentences.]\n{a['prompt']}")
-        out = await run_message(text, a.get("conv_id"), on_tool=_phone_approval)
+        out = await run_message(text, a.get("conv_id"))
         if out.get("conversation_id") and out["conversation_id"] != a.get("conv_id"):
             svc.db.run("UPDATE conversations SET title=? WHERE id=?", [f"⏱ {a['name']}"[:60], out["conversation_id"]])
         result = str(out.get("result", ""))
@@ -1496,47 +1473,10 @@ def build_router(svc: Services, require_auth: Callable[..., None]) -> APIRouter:
                 await svc.bridge.call("speak", {"text": f"{a['name']}: {result[:600]}", "queue": True}, timeout=120)
             except (AgentUnavailable, AgentError) as e:
                 log.warning("automation could not speak: %s", e)
-        if "phone" in a["deliver"] and svc.phone and svc.phone.linked:
-            try:
-                await svc.phone.send(f"⏱ {a['name']}\n\n{result}")
-            except PhoneError as e:
-                log.warning("automation could not reach the phone: %s", e)
         return out
-
-    phone_state: dict[str, Any] = {"conv": None, "busy": False}
-
-    async def _phone_message(text: str) -> None:
-        cmd = text.split()[0].lower() if text.startswith("/") else ""
-        if cmd in ("/start", "/help"):
-            await svc.phone.send("Send any request, as you would type it in JARVIS.\n/stop stops what it's doing\n/new starts a fresh conversation")
-            return
-        if cmd == "/new":
-            phone_state["conv"] = None
-            await svc.phone.send("Fresh conversation. What's next?")
-            return
-        if cmd == "/stop":
-            if svc.emergency_stop:
-                await svc.emergency_stop()
-            await svc.phone.send("Stopped.")
-            return
-        if phone_state["busy"]:
-            await svc.phone.send("Still working on the last request. Send /stop to stop it.")
-            return
-        phone_state["busy"] = True
-        try:
-            await svc.phone.typing()
-            out = await run_message(f"[Sent from the user's phone; they can't see the screen, so describe results in words.]\n{text}",
-                                    phone_state["conv"], on_tool=_phone_approval)
-            phone_state["conv"] = out.get("conversation_id") or phone_state["conv"]
-            await svc.phone.send(str(out.get("result", "")))
-        finally:
-            phone_state["busy"] = False
 
     if svc.automations:
         svc.automations.runner = _run_automation
-    if svc.phone:
-        svc.phone.on_message = _phone_message
-        svc.phone.on_confirm = _confirm
 
     def _automation_404(e: KeyError) -> HTTPException:
         return HTTPException(status_code=404, detail="No such automation.")
@@ -1579,33 +1519,6 @@ def build_router(svc: Services, require_auth: Callable[..., None]) -> APIRouter:
         if not svc.automations.delete(aid):
             raise HTTPException(status_code=404, detail="No such automation.")
         return {"deleted": aid}
-
-    @r.get("/phone")
-    async def phone_status() -> dict[str, Any]:
-        return svc.phone.status()
-
-    @r.put("/phone")
-    async def phone_link(body: PhoneIn) -> dict[str, Any]:
-        try:
-            return await svc.phone.set_token(body.token)
-        except PhoneError as e:
-            raise HTTPException(status_code=400, detail=str(e)) from e
-
-    @r.post("/phone/test")
-    async def phone_test() -> dict[str, Any]:
-        if not svc.phone.linked:
-            raise HTTPException(status_code=400, detail="No phone is linked yet.")
-        try:
-            await svc.phone.send("Test from JARVIS: your phone link works.")
-        except PhoneError as e:
-            raise HTTPException(status_code=400, detail=str(e)) from e
-        return {"sent": True}
-
-    @r.delete("/phone")
-    async def phone_unlink() -> dict[str, Any]:
-        svc.phone.unlink()
-        phone_state["conv"] = None
-        return svc.phone.status()
 
     # ---------------- memory management ----------------
 

@@ -4,7 +4,7 @@
 
 It talks and listens, remembers you across conversations, and actually does things on your computer: opens apps,
 runs commands, edits files, reads your screen and clicks for you, researches the web, reads your documents, plays
-your music, finds places on Google Maps, runs jobs on a schedule, and answers you on your phone through Telegram.
+your music, finds places on Google Maps, and runs jobs on a schedule.
 You decide how much it may do, action by action.
 
 **Bring your own AI.** JARVIS ships with no keys and no account. Use Google Gemini, OpenAI, Anthropic Claude,
@@ -46,8 +46,6 @@ OpenRouter, a local Ollama, or any OpenAI-compatible service. Your keys stay enc
   NVIDIA Parakeet or Whisper for speech recognition, Piper for speech, all running on your PC.
 - **Answers only you**, if you want: teach it your voice once and other people saying "Jarvis" are ignored
   (speaker verification, offline).
-- **Your phone.** Pair your own Telegram bot and message JARVIS from anywhere; steps that need your OK arrive as
-  Approve / Decline buttons.
 - **Start-up briefing**: when it opens, JARVIS tells you how the PC is doing, what's running, and what's due today.
 - **Initiative**: welcomes you back after you've been away, and follows up on a conversation left hanging (at
   most 3 times an hour, and only with a reason). Both can be turned off.
@@ -104,8 +102,7 @@ OpenRouter, a local Ollama, or any OpenAI-compatible service. Your keys stay enc
   - **Learned workflows**: multi-step jobs that worked are remembered and reused as a guide next time; ones that
     keep failing are dropped.
   - **Automations**: jobs it does by itself on a schedule ("every weekday at 9, go through my unread mail and tell
-    me what needs a reply"), with results spoken and/or sent to your phone. You can also just ask for one in chat.
-  - **Phone**: link Telegram.
+    me what needs a reply"), with the result spoken aloud if you like. You can also just ask for one in chat.
   - **Connectors**: any MCP server (Slack, Notion, GitHub, calendars, databases…) becomes JARVIS tools.
   - **API keys** for public APIs that need one.
 
@@ -113,7 +110,7 @@ OpenRouter, a local Ollama, or any OpenAI-compatible service. Your keys stay enc
 - **Task mode:** a longer job shows its plan and progress; you can pause, take over the mouse and hand back, or
   stop at any step. A job cut short by a restart is offered once, never resumed on its own.
 - **An advisor model** reviews long tasks every few steps and after failures.
-- **Emergency stop** stops everything at once (also `/stop` from the phone).
+- **Emergency stop** stops everything at once.
 
 ### Gets the most out of any AI
 - Prompt caching, token counting, tool search (only the relevant tools are sent each time), conversation
@@ -140,7 +137,6 @@ flowchart LR
         PERM["Permissions"]
         LLM["AI providers<br/>+ model switching"]
         SCHED["Reminders · Automations<br/>Jobs · Initiative"]
-        PHONE["Phone link<br/>(Telegram)"]
     end
     subgraph Agent["Desktop agent (Python): the hands"]
         ACT["Apps · files · commands<br/>screen · UI Automation"]
@@ -148,14 +144,12 @@ flowchart LR
         VOICE["Microphone · speakers<br/>wake word · offline voice"]
     end
     AI[("Your AI provider<br/>Gemini · OpenAI · Claude · Ollama …")]
-    TG[("Telegram")]
 
     UI <-- "HTTP + token" --> CHAT
     SUP -. launches .-> Backend
     SUP -. launches .-> Agent
     Agent <-- "WebSocket + token" --> Backend
     LLM <--> AI
-    PHONE <--> TG
 ```
 
 - **The shell** (`src-tauri/`) is the app you open. It starts the backend and agent hidden, checks they're healthy,
@@ -171,7 +165,7 @@ flowchart LR
 
 ### What happens when you ask for something
 
-1. **You ask**, by typing, speaking, a Telegram message, or an automation firing.
+1. **You ask**, by typing or speaking, or an automation fires.
 2. **The backend gathers context:** the memories relevant to your message, your instructions, any of your skills
    or learned workflows that match, the time, the PC's state, recent files, and the tools that fit the request.
 3. **The AI answers or calls a tool.** Each tool call goes through the **permission check** (allow, ask, or
@@ -259,7 +253,6 @@ is tested against a local server that speaks that provider's API. **Reports from
 | Live speech-to-speech voice | A Google Gemini key. Without it, the offline voice is used |
 | Web research, Google Maps, the public-APIs list | Nothing extra (some public APIs want their own key: Customize → API keys) |
 | Offline voice, wake word, answering only you | Nothing: local models (see [Voice setup](#voice-setup)) |
-| Phone | Your own free Telegram bot |
 
 ---
 
@@ -302,15 +295,6 @@ Also install `pip install numpy onnxruntime sherpa-onnx` into the app's environm
 
 Say **"Jarvis"** with your request ("Jarvis, open Spotify"). Say "Hey JARVIS" while it talks to stop it.
 
-### Phone setup
-
-1. In Telegram, open **@BotFather**, send `/newbot`, and pick a name.
-2. In JARVIS, open **Customize → Phone** and paste the token BotFather gives you.
-3. Send your new bot the 6-digit code JARVIS shows. That chat, and only that chat, now talks to JARVIS.
-
-In the chat, send any request; `/stop` stops what JARVIS is doing and `/new` starts a fresh conversation. No open
-port or server is needed, but JARVIS must be running on your PC.
-
 ---
 
 ## Using JARVIS
@@ -326,7 +310,7 @@ Some things to try:
 | "Summarise chapter 3 of the PDF on my desktop" | Reads it locally, answers with page numbers |
 | "Make an Excel sheet of my expenses from this CSV" | Analyses in the sandbox, creates the workbook |
 | "Clean up my Downloads folder" | Shows a plan first, then moves files into folders |
-| "Every weekday at 9, check my mail and send me what matters" | Creates an automation (asks you first), sends results to your phone |
+| "Every weekday at 9, check my mail and tell me what matters" | Creates an automation (asks you first) and speaks the result each morning |
 | "Remind me to call Papa at 7" | Speaks the reminder at 7 |
 | "Run the tests in D:\Projects\app and fix what fails" | Runs commands, reads and edits files (with backups), reports the real output |
 
@@ -348,7 +332,7 @@ backend/     FastAPI brain
     persona.py       JARVIS's character and the system prompt
     permissions.py   Allow / Ask / Block per capability, prompt-injection guards
     tools.py         every tool JARVIS can call; toolsearch.py picks the relevant ones
-    automations.py   scheduled jobs;  phone.py the Telegram link
+    automations.py   scheduled jobs
     reminders.py     reminders, alarms, timers;  jobs.py idle-time housekeeping
     research.py      web search and page reading;  public_apis.py the public-APIs list
     live.py          Gemini Live voice;  briefing.py, initiative.py, monitor.py, tasks.py, skills.py
@@ -375,7 +359,7 @@ cd ..;       npx tsc --noEmit
 ```
 
 About 200 tests cover the backend (memory, providers, permissions, switching, research, reminders, automations,
-phone pairing, key safety…) and the agent (commands, files, sandbox, documents, voice, browser).
+key safety…) and the agent (commands, files, sandbox, documents, voice, browser).
 
 ---
 
@@ -390,7 +374,7 @@ phone pairing, key safety…) and the agent (commands, files, sandbox, documents
 - Voice: live speech-to-speech, offline voice, wake word, answering only you, synced captions
 - Permissions with prompt-injection guards and key protection
 - Customize: instructions, your skills, learned workflows, connectors, API keys
-- Automations and phone control (Telegram)
+- Automations
 
 ### Next
 | Item | What it means |
@@ -401,10 +385,8 @@ phone pairing, key safety…) and the agent (commands, files, sandbox, documents
 | **Rich outputs** | Charts, tables and documents shown in a side panel, not just text |
 | **Parallel tasks** | Several jobs at once, each in its own lane you can watch |
 | **Skill sharing** | Import and export skills as files (the open SKILL.md format), and share them with others |
-| **Voice notes from the phone** | Send a voice message on Telegram and get a spoken reply |
 
 ### Ideas we're considering
-- More channels: WhatsApp (official API), Discord, Slack, email
 - Calendar: read, plan and add events (Google/Outlook)
 - Smart home through Home Assistant
 - A heartbeat: JARVIS checks a short list of things you care about every so often, and speaks up only when needed
@@ -413,7 +395,6 @@ phone pairing, key safety…) and the agent (commands, files, sandbox, documents
 - More languages for the interface and the voice (Hindi first)
 - macOS and Linux versions
 - Encrypted backup and sync of memory and settings between your PCs
-- A mobile companion app
 
 **Have an opinion on what comes first, or an idea that isn't here?** That's exactly what we want to hear: see below.
 
@@ -430,7 +411,6 @@ JARVIS gets better with real people using it on real PCs. Any of these helps a l
   private first).
 - **🧪 Test a provider.** Only Gemini and the local gateway are verified live. If you use OpenAI, Claude,
   OpenRouter, Ollama, Groq, DeepSeek or another, [tell us how it went](https://github.com/Spidey007-Arch/jarvis/issues/new?template=provider_report.yml).
-- **📱 Try the phone link** and tell us how pairing, replies and the Approve buttons work for you.
 - **🗣️ Voice in your language:** wake words, speech models and voices for languages other than English.
 - **🎨 Design:** ideas or mock-ups for the interface.
 - **🔧 Code:** pick an issue labelled `good first issue` or `help wanted`, or anything on the roadmap. Read
@@ -439,7 +419,7 @@ JARVIS gets better with real people using it on real PCs. Any of these helps a l
 
 **Specific questions we'd love answers to:**
 1. Which should come first: the installer, undo/checkpoints, or parallel tasks?
-2. Which messaging app do you want besides Telegram?
+2. What would you want automations to do that they can't yet?
 3. Which apps would you most like JARVIS to work with (calendar, Notion, Discord, your IDE…)?
 4. How much should JARVIS do on its own without asking? Is the current permission model too cautious, or not
    cautious enough?

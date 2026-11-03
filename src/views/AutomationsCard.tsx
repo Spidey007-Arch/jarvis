@@ -6,7 +6,7 @@ type Note = { tone: "ok" | "bad"; text: string } | null;
 const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 const EMPTY: AutomationDraft = { name: "", prompt: "", kind: "daily", at: "09:00", days: [], every_min: 60, deliver: [], enabled: true };
 const EXAMPLES: AutomationDraft[] = [
-  { ...EMPTY, name: "Morning mail", prompt: "Go through my unread Gmail and tell me what needs a reply today.", days: [0, 1, 2, 3, 4], deliver: ["phone"] },
+  { ...EMPTY, name: "Morning mail", prompt: "Go through my unread Gmail and tell me what needs a reply today.", days: [0, 1, 2, 3, 4], deliver: ["speak"] },
   { ...EMPTY, name: "Disk watch", prompt: "Check how full each drive is and warn me if any is over 90%.", kind: "interval", every_min: 360 },
   { ...EMPTY, name: "Evening wrap-up", prompt: "Tell me tomorrow's reminders and anything I left unfinished today.", at: "21:00", deliver: ["speak"] },
 ];
@@ -15,7 +15,7 @@ const when = (t: number | null) =>
   t ? new Date(t * 1000).toLocaleString(undefined, { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) : "—";
 
 /** Jobs JARVIS does by itself on a schedule. Each run is saved in its own conversation. */
-export default function AutomationsCard({ conn, phoneLinked }: { conn: Connection | null; phoneLinked: boolean }) {
+export default function AutomationsCard({ conn }: { conn: Connection | null }) {
   const [items, setItems] = useState<Automation[] | null>(null);
   const [draft, setDraft] = useState<AutomationDraft | null>(null);
   const [note, setNote] = useState<Note>(null);
@@ -60,7 +60,7 @@ export default function AutomationsCard({ conn, phoneLinked }: { conn: Connectio
         {!draft && <button onClick={() => { setNote(null); setDraft({ ...EMPTY }); }}>+ NEW</button>}
       </div>
       <p className="dim small">
-        Jobs JARVIS does by itself on a schedule, while the app is running. Steps that need your OK still ask, in the app or on your phone,
+        Jobs JARVIS does by itself on a schedule, while the app is running. Steps that need your OK still ask in the app,
         and are declined after 2 minutes. You can also just ask: “every weekday at 9, check my mail”.
       </p>
 
@@ -122,10 +122,6 @@ export default function AutomationsCard({ conn, phoneLinked }: { conn: Connectio
             <input type="checkbox" checked={draft.deliver.includes("speak")} onChange={() => setDraft({ ...draft, deliver: toggle(draft.deliver, "speak") })} />
             <span>Say the result out loud</span>
           </label>
-          <label className="switch">
-            <input type="checkbox" checked={draft.deliver.includes("phone")} onChange={() => setDraft({ ...draft, deliver: toggle(draft.deliver, "phone") })} />
-            <span>Send the result to my phone{phoneLinked ? "" : " (link a phone in the Phone tab first)"}</span>
-          </label>
           <div className="field-row">
             <button disabled={busy || !draft.name.trim() || !draft.prompt.trim()} onClick={() => save(draft)}>SAVE</button>
             <button className="ghost" disabled={busy} onClick={() => setDraft(null)}>CANCEL</button>
@@ -140,7 +136,7 @@ export default function AutomationsCard({ conn, phoneLinked }: { conn: Connectio
             <li key={a.id} className={a.enabled ? "" : "off"}>
               <div className="skill-main">
                 <strong>{a.name}</strong>
-                <span className="dim small">{a.schedule}{a.deliver.length ? ` · ${a.deliver.map((d) => (d === "speak" ? "spoken" : "to phone")).join(", ")}` : ""}</span>
+                <span className="dim small">{a.schedule}{a.deliver.includes("speak") ? " · spoken" : ""}</span>
                 <span className="dim small">
                   {a.running ? "Running now…" : a.enabled ? `Next: ${when(a.next_run)}` : "Off"}
                   {a.last_status && ` · Last: ${a.last_status}${a.last_run ? ` (${when(a.last_run)})` : ""}`}

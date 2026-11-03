@@ -1,4 +1,4 @@
-"""Automations and the phone link: when schedules fire, what a run records, and that only the paired chat is obeyed."""
+"""Automations: when schedules fire, what a run records, and what happens to runs missed while JARVIS was off."""
 import asyncio
 import sys
 import tempfile
@@ -11,8 +11,6 @@ sys.path[:0] = [str(Path(__file__).resolve().parents[1]), str(Path(__file__).res
 
 from jarvis_backend.automations import AutomationError, Automations, describe, next_run  # noqa: E402
 from jarvis_backend.db import DB  # noqa: E402
-from jarvis_backend.phone import Phone, PhoneError  # noqa: E402
-from jarvis_backend.settings import SettingsStore  # noqa: E402
 
 
 class Schedules(unittest.TestCase):
@@ -54,8 +52,8 @@ class Store(unittest.TestCase):
             self.a.save("x", "do it", "once", at="2020-01-01T10:00")
         with self.assertRaises(AutomationError):
             self.a.save("", "do it", "daily", at="09:00")
-        s = self.a.save("Mail", "summarise unread mail", "daily", at="09:00", deliver=["phone", "fax"])
-        self.assertEqual(s["deliver"], ["phone"])
+        s = self.a.save("Mail", "summarise unread mail", "daily", at="09:00", deliver=["speak", "phone"])
+        self.assertEqual(s["deliver"], ["speak"])  # the phone link is gone
         self.assertEqual(s["schedule"], "every day at 09:00")
 
     def test_a_run_records_its_result_and_moves_the_schedule_on(self) -> None:
@@ -93,73 +91,6 @@ class Store(unittest.TestCase):
         self.a.runner = runner
         asyncio.run(self.a.run_one(self.a.get(s["id"]), scheduled=False))
         self.assertEqual(self.a.get(s["id"])["last_status"], "failed")
-
-
-class PhoneLink(unittest.TestCase):
-    TOKEN = "123456789:AAexampleexampleexampleexample12345"
-
-    def setUp(self) -> None:
-        self.dir = tempfile.TemporaryDirectory()
-        self.settings = SettingsStore(Path(self.dir.name) / "settings.dat")
-        self.settings.set_service_key("phone:telegram_token", self.TOKEN)
-        self.phone = Phone(self.settings)
-        self.sent: list[dict] = []
-
-        async def api(method, token=None, timeout=20, **params):
-            self.sent.append({"method": method, **params})
-            return {"message_id": 1} if method == "sendMessage" else True
-
-        self.phone._api = api  # type: ignore[method-assign]
-        self.code = self.phone.new_code()
-
-    def tearDown(self) -> None:
-        self.dir.cleanup()
-
-    def msg(self, chat_id: int, text: str, kind: str = "private") -> dict:
-        return {"message": {"chat": {"id": chat_id, "type": kind, "first_name": "Parth"}, "text": text}}
-
-    def test_only_the_right_code_pairs_and_then_only_that_chat_is_obeyed(self) -> None:
-        heard = []
-
-        async def on_message(text):
-            heard.append(text)
-
-        self.phone.on_message = on_message
-
-        async def go():
-            await self.phone.handle(self.msg(5, "/start 000000" if self.code != "000000" else "/start 111111"))
-            self.assertFalse(self.phone.linked)
-            await self.phone.handle(self.msg(7, f"/start {self.code}", kind="group"))  # never from a group
-            self.assertFalse(self.phone.linked)
-            await self.phone.handle(self.msg(5, f"/start {self.code}"))
-            self.assertTrue(self.phone.linked)
-            await self.phone.handle(self.msg(9, "delete my files"))  # someone else found the bot
-            await self.phone.handle(self.msg(5, "what's my CPU at?"))
-            await asyncio.sleep(0)
-
-        asyncio.run(go())
-        self.assertEqual(heard, ["what's my CPU at?"])
-        self.assertEqual(self.settings.get("phone")["chat_id"], 5)
-        self.assertNotIn("phone:telegram_token", self.settings.service_keys())  # not listed as a public API key
-        self.assertIn(self.TOKEN, self.settings.secret_values())  # but scrubbed from tool output like every key
-
-    def test_approve_buttons_answer_only_for_the_owner(self) -> None:
-        self.settings.set_phone({"chat_id": 5, "who": "Parth"})
-        answers = []
-        self.phone.on_confirm = lambda cid, ok: answers.append((cid, ok)) or True
-
-        def tap(chat_id, data):
-            return {"callback_query": {"id": "q", "data": data, "message": {"message_id": 3, "text": "Needs your OK", "chat": {"id": chat_id}}}}
-
-        asyncio.run(self.phone.handle(tap(9, "y:abc")))  # not the owner
-        asyncio.run(self.phone.handle(tap(5, "n:abc")))
-        self.assertEqual(answers, [("abc", False)])
-
-    def test_the_token_never_shows_in_an_error(self) -> None:
-        phone = Phone(self.settings)
-        self.assertEqual(phone._clean(f"Bad request for /bot{self.TOKEN}/getMe"), "Bad request for /bot***/getMe")
-        with self.assertRaises(PhoneError):
-            asyncio.run(phone.set_token("not a token"))
 
 
 if __name__ == "__main__":

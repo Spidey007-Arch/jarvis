@@ -242,7 +242,7 @@ export const forgetLearnedSkill = (c: Connection, id: string) => call<{ forgotte
 
 export type Automation = {
   id: string; name: string; prompt: string; kind: "once" | "daily" | "interval"; at: string; days: number[]; every_min: number;
-  deliver: ("speak" | "phone")[]; enabled: boolean; schedule: string; next_run: number | null; last_run: number | null;
+  deliver: "speak"[]; enabled: boolean; schedule: string; next_run: number | null; last_run: number | null;
   last_status: string; last_result: string; runs: number; running: boolean; conv_id: string | null;
 };
 export type AutomationDraft = Pick<Automation, "name" | "prompt" | "kind" | "at" | "days" | "every_min" | "deliver" | "enabled"> & { id?: string };
@@ -252,12 +252,6 @@ export const setAutomationEnabled = (c: Connection, id: string, enabled: boolean
   call<Automation>(c, `/api/automations/${encodeURIComponent(id)}/enabled`, { method: "POST", body: JSON.stringify({ enabled }) });
 export const runAutomation = (c: Connection, id: string) => call<{ started: string }>(c, `/api/automations/${encodeURIComponent(id)}/run`, { method: "POST" });
 export const deleteAutomation = (c: Connection, id: string) => call<{ deleted: string }>(c, `/api/automations/${encodeURIComponent(id)}`, { method: "DELETE" });
-
-export type PhoneStatus = { has_token: boolean; bot: string; linked: boolean; who: string; pairing_code: string; error: string };
-export const getPhone = (c: Connection) => call<PhoneStatus>(c, "/api/phone");
-export const linkPhone = (c: Connection, token: string) => call<PhoneStatus>(c, "/api/phone", { method: "PUT", body: JSON.stringify({ token }) });
-export const testPhone = (c: Connection) => call<{ sent: boolean }>(c, "/api/phone/test", { method: "POST" });
-export const unlinkPhone = (c: Connection) => call<PhoneStatus>(c, "/api/phone", { method: "DELETE" });
 
 export const getApiKeys = (c: Connection) => call<ApiKeys>(c, "/api/apikeys");
 export const saveApiKey = (c: Connection, service: string, key: string) =>
