@@ -1,0 +1,38 @@
+name: 🐛 Bug report
+description: Something didn't work the way it should
+labels: [bug]
+body:
+  - type: textarea
+    id: asked
+    attributes:
+      label: What you asked or did
+      placeholder: Typed "play Alfaaz on Spotify"
+    validations:
+      required: true
+  - type: textarea
+    id: happened
+    attributes:
+      label: What happened, and what you expected
+    validations:
+      required: true
+  - type: input
+    id: provider
+    attributes:
+      label: AI provider and model
+      placeholder: Gemini, gemini-3.6-flash
+  - type: dropdown
+    id: voice
+    attributes:
+      label: How you asked
+      options: [Typed in the app, Live voice, Offline voice, Phone (Telegram), An automation]
+  - type: textarea
+    id: logs
+    attributes:
+      label: Log lines
+      description: From %LOCALAPPDATA%\JARVIS\logs (error.log, backend.log or agent.log). Read them first and remove anything private.
+      render: text
+  - type: input
+    id: version
+    attributes:
+      label: Windows version and JARVIS commit
+      placeholder: Windows 11 24H2, commit 52eb047

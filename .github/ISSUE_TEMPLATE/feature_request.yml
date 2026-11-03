@@ -1,0 +1,55 @@
+name: 💡 Feature request
+description: Something you'd like JARVIS to do, or do differently
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: Thanks! The roadmap is decided by requests like this one. The situation you're in matters more than the exact solution.
+  - type: textarea
+    id: situation
+    attributes:
+      label: The situation
+      description: When would you use this? What do you do today instead?
+      placeholder: Every morning I open the same five apps and check three websites…
+    validations:
+      required: true
+  - type: textarea
+    id: wish
+    attributes:
+      label: What you'd like JARVIS to do
+      placeholder: When I say "start my day", open them, check the sites and tell me what changed.
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Voice
+        - Chat and memory
+        - Acting on the PC (apps, files, commands, screen)
+        - Web, shopping, Gmail/WhatsApp, Maps
+        - Documents
+        - Automations
+        - Phone / messaging apps
+        - Customize, skills, connectors
+        - Interface and design
+        - Installation and updates
+        - Safety and permissions
+        - Something else
+    validations:
+      required: true
+  - type: dropdown
+    id: importance
+    attributes:
+      label: How much would it matter to you?
+      options:
+        - Nice to have
+        - I'd use it every week
+        - I'd use it every day
+        - I can't use JARVIS without it
+  - type: textarea
+    id: more
+    attributes:
+      label: Anything else
+      description: Other apps that do this well, screenshots, concerns (privacy, safety)…
