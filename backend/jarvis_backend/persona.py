@@ -196,6 +196,8 @@ def build_system_prompt(
     if ctx.get("voice"):
         situation.append("The user spoke this aloud and will hear your reply through the speakers: answer in one to three "
                          "short spoken sentences, no lists, markdown, links or anything that only makes sense on screen. "
+                         "Never read out a file path, slashes or a web address: say only the file name, the folder it is "
+                         "in and the drive, e.g. \"fibonacci.py, in your user folder on the C drive\". "
                          "The start-up briefing already covered the system: do not mention its load or health again unless "
                          "asked or something new is critical. A greeting gets a short greeting back. If what you hear is "
                          "clearly not meant for you (background talk, a fragment), stay silent.")

@@ -108,6 +108,7 @@ export interface VoiceEvent {
     | "listening" | "transcribing" | "transcript" | "speaking" | "idle" | "error"
     | "live_connecting" | "live_start" | "user_text" | "jarvis_text" | "live_tool" | "live_turn" | "live_end" | "briefing" | "levels" | "emergency_stop" | "saying";
   conversation_id?: string | null;
+  duration_s?: number; // "saying": how long this sentence's audio plays
   tool?: string;
   model?: string;
   text?: string;
@@ -265,9 +266,38 @@ export const stopSpeaking = (c: Connection) => call<{ stopped: boolean }>(c, "/a
 
 /** A reply as it should sound: the whole of it, without markdown symbols, link targets or list bullets.
  *  A code block is not read out symbol by symbol; it is announced instead. */
+const HOME_FOLDERS = ["Desktop", "Documents", "Downloads", "Pictures", "Music", "Videos"];
+
+/** A Windows path the way a person would say it: "fibonacci.py in your user folder on the C drive",
+ *  never "C colon backslash Users backslash…". Only the file, the folder it's in and the drive are said. */
+export function sayPath(path: string): string {
+  const m = /^([A-Za-z]):[\\/]*(.*)$/.exec(path.replace(/[\\/]+$/, ""));
+  if (!m) return path;
+  const drive = `the ${m[1].toUpperCase()} drive`;
+  const parts = m[2].split(/[\\/]+/).filter(Boolean);
+  if (!parts.length) return drive;
+  const last = parts[parts.length - 1];
+  const file = /\.[A-Za-z0-9]{1,8}$/.test(last) ? last : "";
+  const dirs = file ? parts.slice(0, -1) : parts;
+  const folder = dirs[dirs.length - 1];
+  const where = !folder
+    ? ""
+    : dirs.length === 2 && dirs[0].toLowerCase() === "users"
+      ? "your user folder"
+      : HOME_FOLDERS.find((h) => h.toLowerCase() === folder.toLowerCase()) && dirs[0].toLowerCase() === "users"
+        ? `your ${folder} folder`
+        : `the ${folder} folder`;
+  if (file) return where ? `${file} in ${where} on ${drive}` : `${file} on ${drive}`;
+  return `${where} on ${drive}`;
+}
+
 export function forSpeech(text: string): string {
   return text
     .replace(/```[\s\S]*?```/g, " The code is on screen. ")
+    .replace(/`([A-Za-z]:[\\/][^`\n]*)`/g, (_m, p: string) => sayPath(p))  // a quoted path, spaces and all
+    .replace(/\b([A-Za-z]:[\\/][^\s`"'<>|*?,;]*[^\s`"'<>|*?,;.:)\\/])/g, (_m, p: string) => sayPath(p))
+    .replace(/\b([A-Za-z]):[\\/](?=[\s.,;)]|$)/g, "$1")  // "Drive C:\ is full" -> "Drive C is full"
+    .replace(/\\/g, " ")  // a backslash is never read out
     .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
     .replace(/https?:\/\/\S+/g, "")
     .replace(/^#+\s*/gm, "")

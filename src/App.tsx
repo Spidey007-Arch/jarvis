@@ -137,6 +137,74 @@ function QuotaStrip({ conn, activity }: { conn: Connection | null; activity: Act
 
 export type VoiceState = "off" | "listening" | "transcribing" | "speaking" | "connecting" | "live";
 
+const SPEAKING_CPS = 15; // live voice speaks about this many characters a second
+
+/** Subtitles that follow the voice: only the words already spoken are shown, never a sentence ahead of the audio.
+ *  Offline speech says how long each sentence plays, so it is revealed over exactly that time. Live voice sends its
+ *  reply so far each time new audio starts playing: everything before the new words has been heard by then, so the
+ *  reveal catches up to there and carries on at speaking pace. */
+class Subtitles {
+  private target = "";
+  private shown = 0;
+  private rate = SPEAKING_CPS;
+  private last = 0;
+  private timer: number | undefined;
+
+  constructor(private onText: (text: string) => void) {}
+
+  /** A sentence that starts playing now and lasts `seconds`. */
+  say(text: string, seconds?: number) {
+    this.target = text;
+    this.shown = 0;
+    this.rate = seconds && seconds > 0.2 ? text.length / seconds : SPEAKING_CPS;
+    this.run();
+  }
+
+  /** Live voice: the whole reply so far, sent as its newest audio starts playing. */
+  follow(text: string) {
+    const same = !!this.target && text.startsWith(this.target.slice(0, Math.min(this.target.length, 24)));
+    this.shown = same ? Math.max(this.shown, this.target.length) : 0; // the earlier words have been heard by now
+    this.target = text;
+    this.rate = SPEAKING_CPS;
+    this.run();
+  }
+
+  /** Text shown whole at once (what the user said, "Working on it…"), or "" to clear. */
+  show(text: string) {
+    window.clearInterval(this.timer);
+    this.timer = undefined;
+    this.target = text;
+    this.shown = text.length;
+    this.onText(text);
+  }
+
+  private run() {
+    this.last = performance.now();
+    this.emit();
+    if (this.timer === undefined) this.timer = window.setInterval(() => this.tick(), 50);
+  }
+
+  private tick() {
+    const now = performance.now();
+    this.shown = Math.min(this.target.length, this.shown + ((now - this.last) / 1000) * this.rate);
+    this.last = now;
+    this.emit();
+    if (this.shown >= this.target.length) {
+      window.clearInterval(this.timer);
+      this.timer = undefined;
+    }
+  }
+
+  private emit() {
+    let end = Math.floor(this.shown);
+    if (end < this.target.length) {
+      const space = this.target.lastIndexOf(" ", end);
+      end = space > 0 ? space : 0; // whole words only: never half a word ahead of the voice
+    }
+    this.onText(this.target.slice(0, end));
+  }
+}
+
 let briefingAsked = false; // once per window: the backend also refuses a second briefing per launch
 
 /** Follows the agent's voice events: shows when JARVIS is listening, hands what was heard to the
@@ -144,6 +212,8 @@ let briefingAsked = false; // once per window: the backend also refuses a second
 function VoiceLink({ conn, onState, onTurn }: { conn: Connection | null; onState: (s: VoiceState) => void; onTurn: (conversationId: string) => void }) {
   const [state, setState] = useState<VoiceState>("off");
   const [caption, setCaption] = useState<string>("");
+  const [subText, setSubText] = useState<string>(""); // the words of the caption already spoken
+  const [subs] = useState(() => new Subtitles(setSubText));
   const [heard, setHeard] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
 
@@ -191,7 +261,8 @@ function VoiceLink({ conn, onState, onTurn }: { conn: Connection | null; onState
           else if (e.event === "speaking") put("speaking");
           else if (e.event === "briefing" && e.text) put("speaking"); // its sentences arrive one by one as they are spoken
           else if (e.event === "saying" && e.text) {
-            setCaption(e.text);
+            // offline voice: this sentence starts playing now; reveal it over exactly as long as its audio lasts
+            subs.say(e.text, e.duration_s);
             put("speaking");
           }
           else if (e.event === "transcript" && e.text) {
@@ -200,29 +271,40 @@ function VoiceLink({ conn, onState, onTurn }: { conn: Connection | null; onState
             window.dispatchEvent(new CustomEvent("jarvis:voice-text", { detail: e.text }));
           } else if (e.event === "emergency_stop") {
             setCaption("");
+            subs.show("");
             setNote("Stopped everything");
             put("off");
           } else if (e.event === "idle") {
             setCaption("");
+            subs.show("");
             if (e.reason && e.reason !== "spoken" && e.reason !== "interrupted") setNote(e.reason);
             put("off");
           } else if (e.event === "live_connecting") {
             setCaption("");
+            subs.show("");
             setNote(null);
             put("connecting");
           } else if (e.event === "live_start") put("live");
           else if (e.event === "user_text" && e.text) {
             setCaption(`You: ${e.text}`);
+            subs.show(`You: ${e.text}`);
             put("live");
           } else if (e.event === "jarvis_text" && e.text) {
+            // live voice: the reply so far, sent as its audio starts playing; new words are revealed at speaking pace
+            subs.follow(e.text);
             setCaption(e.text);
             put("speaking");
-          } else if (e.event === "live_tool") setCaption(`Working on it… (${(e.tool ?? "").replace(/_/g, " ")})`);
+          } else if (e.event === "live_tool") {
+            const working = `Working on it… (${(e.tool ?? "").replace(/_/g, " ")})`;
+            setCaption(working);
+            subs.show(working);
+          }
           else if (e.event === "live_turn" && e.conversation_id) {
             onTurn(e.conversation_id);
             put("live");
           } else if (e.event === "live_end") {
             setCaption("");
+            subs.show("");
             if (e.conversation_id) onTurn(e.conversation_id);
             put("off");
           } else if (e.event === "error") {
@@ -233,7 +315,7 @@ function VoiceLink({ conn, onState, onTurn }: { conn: Connection | null; onState
       }
     })();
     return () => ctrl.abort();
-  }, [conn, onState, onTurn]);
+  }, [conn, onState, onTurn, subs]);
 
   useEffect(() => {
     if (!heard && !note) return;
@@ -246,20 +328,21 @@ function VoiceLink({ conn, onState, onTurn }: { conn: Connection | null; onState
 
   if (state === "off" && !heard && !note) return null;
   const live = state === "connecting" || state === "live" || (state === "speaking" && !!caption);
-  const spoken = live && caption ? nowSaying(caption) : "";
+  const plain = live || state === "speaking"; // subtitles: just the words, no box
+  const spoken = plain && subText ? nowSaying(subText) : "";
   const label =
     state === "connecting" ? "Connecting"
     : spoken ? spoken
     : state === "live" ? "Live · listening"
-    : state === "listening" ? "Listening" : state === "transcribing" ? "Understanding" : state === "speaking" ? "Speaking" : "";
+    : state === "listening" ? "Listening" : state === "transcribing" ? "Understanding" : "";  // speaking: only the words as they're said
   return (
-    <div className={spoken ? `voice-caption ${state}` : `voice-pill glass ${state} ${live ? "is-live" : ""}`} role="status"
+    <div className={plain ? `voice-caption ${state}` : `voice-pill glass ${state}`} role="status"
          onClick={() => conn && state !== "off" && stopSpeaking(conn).catch(() => {})}
          title={live ? "Click to end the conversation (or say “that's all”)" : state === "speaking" ? "Click to stop" : undefined}>
       {state !== "off" && (
         <span className="voice-bars" aria-hidden="true"><i /><i /><i /><i /><i /></span>
       )}
-      <span key={spoken || "pill"}>{label || (heard ? `“${heard}”` : note)}</span>
+      <span>{label || (heard ? `“${heard}”` : note)}</span>
     </div>
   );
 }

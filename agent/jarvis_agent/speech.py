@@ -237,7 +237,8 @@ class Speaker:
                 if not self._busy:
                     self._busy = True
                     self.emit({"event": "speaking"})
-                self.emit({"event": "saying", "text": said})  # the caption shows each sentence as it is heard
+                # the caption reveals this sentence word by word over exactly the time its audio takes to play
+                self.emit({"event": "saying", "text": said, "duration_s": round(len(pcm) / 2 / rate, 2)})
                 if out is None or rate != out_rate:
                     _close(out)
                     out, out_rate = open_output(rate), rate
