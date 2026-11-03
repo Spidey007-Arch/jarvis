@@ -29,6 +29,7 @@ CAPABILITIES: dict[str, tuple[str, bool]] = {
     "location": ("Know where this PC is (for maps, directions and places near you)", False),
     "send_data_out": ("Send to a website after reading private data (files, mail, messages, the screen)", True),
     "connectors": ("Act through connectors (Slack, Notion, GitHub...): reading is always allowed", False),
+    "automations": ("Create or delete automations (jobs JARVIS runs by itself on a schedule)", True),
 }
 POLICIES = ("allow", "ask", "block")
 ALLOWED_BY_DEFAULT = frozenset({"see_screen", "read_messages", "downloads"})
@@ -99,6 +100,8 @@ def capability(spec: ToolSpec, args: dict[str, Any]) -> str | None:
         return "end_processes"
     if name == "window_control":
         return "close_windows" if str(args.get("action", "")).lower() == "close" else None
+    if name in ("create_automation", "delete_automation"):  # a job that runs later, unattended, always asks first
+        return "automations"
     if name in ("power", "sleep_pc"):
         return "power"
     if name == "autostart":

@@ -33,6 +33,8 @@ from .jobs import Jobs
 from .skills import Skills
 from .tasks import Tasks
 from .reminders import Reminders
+from .automations import Automations
+from .phone import Phone
 from .settings import SettingsStore
 
 log = logging.getLogger("jarvis.backend")
@@ -84,7 +86,8 @@ def create_app(port: int, token: str | None = None) -> FastAPI:
     llm.usage.prune()
     services = Services(settings=settings, llm=llm, db=db, memory=MemoryStore(db, llm), bridge=bridge, reminders=Reminders(db, bridge),
                         monitor=Monitor(bridge, settings), tasks=Tasks(db), skills=Skills(db),
-                        connectors=Connectors(settings), token=token)
+                        connectors=Connectors(settings), token=token,
+                        automations=Automations(db), phone=Phone(settings))
 
     # Housekeeping waits until the user isn't using the PC (jobs.py).
     jobs = Jobs(db, stats=lambda: bridge.stats if bridge.connected else {},
@@ -113,6 +116,8 @@ def create_app(port: int, token: str | None = None) -> FastAPI:
         maintenance = asyncio.create_task(jobs.run())
         reminders = asyncio.create_task(services.reminders.run())
         monitor = asyncio.create_task(services.monitor.run())
+        automations = asyncio.create_task(services.automations.run())
+        phone = asyncio.create_task(services.phone.run())
         initiative = asyncio.create_task(services.initiative.run()) if services.initiative else None
         if services.settings.provider == "gateway" and gateway.installed():  # the chosen AI needs it: warm it up now
             gateway.start_soon((services.settings.provider_cfg("gateway").get("base_url") or PRESETS["gateway"]["base_url"]).strip())
@@ -123,6 +128,8 @@ def create_app(port: int, token: str | None = None) -> FastAPI:
             maintenance.cancel()
             reminders.cancel()
             monitor.cancel()
+            automations.cancel()
+            phone.cancel()
             if initiative:
                 initiative.cancel()
             await services.connectors.close()

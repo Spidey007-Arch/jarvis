@@ -250,6 +250,17 @@ TOOLS: list[ToolSpec] = [
              "(e.g. 'tea', 'pasta').", obj({"minutes": I, "seconds": I, "label": S}), label="Starting a timer"),
     ToolSpec("list_reminders", "List pending reminders, alarms and timers (timers show the time left).", obj(), label="Checking reminders"),
     ToolSpec("cancel_reminder", "Cancel a pending reminder, alarm or timer by its id.", obj({"id": S}, ["id"]), label="Cancelling a reminder"),
+    # Automations: jobs JARVIS does by itself on a schedule (not a reminder, which only speaks a line)
+    ToolSpec("create_automation", "Schedule a job JARVIS does by itself, repeatedly or once, e.g. every weekday at 09:00 summarise unread "
+             "mail. prompt: the request to run, written as the user would ask it. kind: daily (at HH:MM, days 0=Mon..6=Sun, empty "
+             "for every day), interval (every_min, at least 15) or once (at YYYY-MM-DDTHH:MM local). deliver: any of speak, phone. "
+             "For a line said at a time, use set_reminder instead.",
+             obj({"name": S, "prompt": S, "kind": S, "at": S, "days": {"type": "array", "items": I}, "every_min": I,
+                  "deliver": {"type": "array", "items": S}}, ["name", "prompt", "kind"]), risk="confirm",
+             label="Schedule “{name}”"),
+    ToolSpec("list_automations", "List the automations (scheduled jobs) with their schedules, next run and last result.", obj(),
+             label="Checking automations"),
+    ToolSpec("delete_automation", "Delete an automation by its id.", obj({"id": S}, ["id"]), risk="confirm", label="Delete an automation"),
     # System extras
     ToolSpec("hardware_info", "Graphics card (name, load, memory, temperature) and temperatures of this PC, best effort.",
              obj(), agent_action="hardware_info", timeout=40, label="Checking the hardware"),

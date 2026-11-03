@@ -84,6 +84,32 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(self.client.delete(f"/api/memories/{m['id']}", headers=AUTH).status_code, 200)
         self.assertEqual(self.client.get("/api/memories", headers=AUTH).json(), [])
 
+    def test_automations_endpoints_and_a_headless_run(self):
+        r = self.client.put("/api/automations", headers=AUTH, json={"name": "Disk check", "prompt": "how full is my disk?",
+                                                                     "kind": "daily", "at": "09:00", "days": [0, 1, 2, 3, 4]})
+        self.assertEqual(r.status_code, 200, r.text)
+        a = r.json()
+        self.assertEqual(a["schedule"], "weekdays at 09:00")
+        self.assertEqual(self.client.put("/api/automations", headers=AUTH, json={"name": "x", "prompt": "y", "kind": "interval",
+                                                                                 "every_min": 1}).status_code, 400)
+        self.assertFalse(self.client.post(f"/api/automations/{a['id']}/enabled", headers=AUTH, json={"enabled": False}).json()["enabled"])
+        self.assertEqual(self.client.post(f"/api/automations/{a['id']}/run", headers=AUTH).status_code, 200)
+        import time as _t
+        for _ in range(50):  # no AI is connected here, so the run goes through the chat path and fails, saying why
+            got = next(x for x in self.client.get("/api/automations", headers=AUTH).json() if x["id"] == a["id"])
+            if got["last_status"]:
+                break
+            _t.sleep(0.1)
+        self.assertEqual(got["last_status"], "failed")
+        self.assertIn("API key", got["last_result"])
+        self.assertEqual(self.client.delete(f"/api/automations/{a['id']}", headers=AUTH).status_code, 200)
+
+    def test_phone_status_and_bad_token(self):
+        s = self.client.get("/api/phone", headers=AUTH).json()
+        self.assertFalse(s["linked"])
+        self.assertEqual(self.client.put("/api/phone", headers=AUTH, json={"token": "definitely-not-a-token"}).status_code, 400)
+        self.assertEqual(self.client.post("/api/phone/test", headers=AUTH).status_code, 400)
+
     def test_conversations_empty_and_404(self):
         self.assertEqual(self.client.get("/api/conversations", headers=AUTH).json(), [])
         self.assertEqual(self.client.get("/api/conversations/nope/messages", headers=AUTH).status_code, 404)
