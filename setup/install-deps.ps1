@@ -1,19 +1,25 @@
-# JARVIS dependency installer. Safe to re-run: installed packages are skipped,
-# failed ones are retried, and a summary of what failed is printed at the end.
+# JARVIS dependency installer: makes the app's Python environment (.venv) and installs everything in
+# requirements.txt and the window's packages. Safe to re-run: what is installed is skipped, and a package that
+# fails (slow network) is retried. A summary of anything that still failed is printed at the end.
 $ErrorActionPreference = 'Continue'
 $root = Split-Path -Parent $PSScriptRoot
 $venv = Join-Path $root '.venv'
 $py   = Join-Path $venv 'Scripts\python.exe'
+$failed = @()
 
 function Step($t) { Write-Host "`n=== $t ===" -ForegroundColor Cyan }
 
-Step 'Checking Python'
+Step 'Checking Python, Node and Rust'
 $sysPy = (Get-Command python -ErrorAction SilentlyContinue).Source
-if (-not $sysPy) { Write-Host 'Python 3.12 not found on PATH. Install it from https://www.python.org/downloads/ and re-run.' -ForegroundColor Red; exit 1 }
+if (-not $sysPy) { Write-Host 'Python 3.12 was not found. Install it (see README, step 1) and run this again.' -ForegroundColor Red; exit 1 }
 & $sysPy --version
+if (-not (Get-Command node -ErrorAction SilentlyContinue)) { Write-Host 'Node.js was not found. Install it (see README, step 1) and run this again.' -ForegroundColor Red; exit 1 }
+Write-Host "Node $(node --version)"
+if (-not (Get-Command cargo -ErrorAction SilentlyContinue)) { Write-Host 'Rust was not found. Install it (see README, step 1) and run this again.' -ForegroundColor Red; exit 1 }
+cargo --version
 
-Step 'Creating virtual environment (reuses already-installed packages, no re-download)'
-if (-not (Test-Path $py)) { & $sysPy -m venv $venv --system-site-packages }
+Step 'Creating the Python environment (.venv)'
+if (-not (Test-Path $py)) { & $sysPy -m venv $venv }
 if (-not (Test-Path $py)) { Write-Host 'Could not create the virtual environment.' -ForegroundColor Red; exit 1 }
 
 # Slow-network settings: long timeout, many retries.
@@ -22,39 +28,30 @@ $net = @('--default-timeout', '120', '--retries', '15', '--disable-pip-version-c
 Step 'Updating pip'
 & $py -m pip install --upgrade pip @net
 
-$groups = [ordered]@{
-    'core (window, tray, Windows APIs)'     = @('pywebview', 'pystray', 'pywin32', 'keyring')
-    'automation (apps, volume, screen, UI)' = @('comtypes', 'pycaw', 'uiautomation', 'pyautogui', 'mss', 'screen-brightness-control')
-    'reminders and notifications'           = @('apscheduler', 'winotify')
-    'memory and math'                       = @('numpy')
-    'voice (free, local)'                   = @('sounddevice', 'webrtcvad-wheels', 'onnxruntime', 'openwakeword', 'faster-whisper')
-    'packaging'                             = @('pyinstaller')
+Step 'Installing Python packages (requirements.txt)'
+$ok = $false
+for ($i = 1; $i -le 3 -and -not $ok; $i++) {
+    Write-Host "Attempt $i of 3"
+    & $py -m pip install -r (Join-Path $root 'requirements.txt') @net
+    if ($LASTEXITCODE -eq 0) { $ok = $true }
 }
+if (-not $ok) { $failed += 'Python packages (requirements.txt)' }
 
-$failed = @()
-foreach ($g in $groups.Keys) {
-    Step $g
-    foreach ($pkg in $groups[$g]) {
-        $ok = $false
-        for ($i = 1; $i -le 5 -and -not $ok; $i++) {
-            Write-Host "Installing $pkg (attempt $i of 5)"
-            & $py -m pip install $pkg @net
-            if ($LASTEXITCODE -eq 0) { $ok = $true }
-        }
-        if (-not $ok) { $failed += $pkg }
-    }
+Step 'Installing the window''s packages (npm install)'
+Push-Location $root
+$ok = $false
+for ($i = 1; $i -le 3 -and -not $ok; $i++) {
+    Write-Host "Attempt $i of 3"
+    npm install
+    if ($LASTEXITCODE -eq 0) { $ok = $true }
 }
-
-Step 'Downloading free voice models (Whisper base, wake-word models)'
-& $py -c "from huggingface_hub import snapshot_download; p=snapshot_download('Systran/faster-whisper-base'); print('Whisper base ->', p)"
-if ($LASTEXITCODE -ne 0) { $failed += 'model: faster-whisper-base' }
-& $py -c "import openwakeword; from openwakeword.utils import download_models; download_models(); print('wake-word models ready')"
-if ($LASTEXITCODE -ne 0) { $failed += 'model: openwakeword' }
+Pop-Location
+if (-not $ok) { $failed += 'npm packages' }
 
 Step 'Summary'
 if ($failed.Count -eq 0) {
-    Write-Host 'All dependencies installed.' -ForegroundColor Green
+    Write-Host 'All dependencies installed. Start JARVIS with:  npx tauri dev' -ForegroundColor Green
 } else {
-    Write-Host 'These failed. Re-run this script to retry them:' -ForegroundColor Yellow
+    Write-Host 'These failed. Check your internet connection and run this script again:' -ForegroundColor Yellow
     $failed | ForEach-Object { Write-Host " - $_" }
 }

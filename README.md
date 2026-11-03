@@ -7,10 +7,10 @@ runs commands, edits files, reads your screen and clicks for you, researches the
 your music, finds places on Google Maps, and runs jobs on a schedule.
 You decide how much it may do, action by action.
 
-**Bring your own AI.** JARVIS ships with no keys and no account. Use Google Gemini, OpenAI, Anthropic Claude,
-OpenRouter, a local Ollama, or any OpenAI-compatible service. Your keys stay encrypted on your PC.
+**Bring your own AI.** JARVIS ships with no keys and no account; it works with the
+[AI providers listed below](#supported-ai-providers).
 
-> **Status:** early and moving fast. Windows 10/11 only, run from source (no installer yet). Everything listed below
+> **Status:** early and moving fast. Windows 10/11 only, run from source (no installer yet: see [Install and run](#install-and-run)). Everything listed below
 > works today; see [Roadmap](#roadmap) for what's next and [How you can help](#how-you-can-help) for what we'd love
 > from you.
 
@@ -23,8 +23,8 @@ OpenRouter, a local Ollama, or any OpenAI-compatible service. Your keys stay enc
 - [What JARVIS can do](#what-jarvis-can-do)
 - [How it works](#how-it-works)
 - [Safety, permissions and privacy](#safety-permissions-and-privacy)
-- [AI providers and keys](#ai-providers-and-keys)
-- [Getting started](#getting-started)
+- [Supported AI providers](#supported-ai-providers)
+- [Install and run](#install-and-run)
 - [Using JARVIS](#using-jarvis)
 - [Project layout](#project-layout)
 - [Tests](#tests)
@@ -232,68 +232,138 @@ Found a security problem? Please report it privately; see [SECURITY.md](SECURITY
 
 ---
 
-## AI providers and keys
+## Supported AI providers
 
-| Provider | Key needed | Memory search | Tested |
-|---|---|---|---|
-| Google Gemini | Yes ([AI Studio](https://aistudio.google.com), free tier available) | Semantic (embeddings) | Live |
-| OpenAI | Yes ([platform.openai.com](https://platform.openai.com/api-keys)) | Semantic | Protocol tests |
-| Anthropic Claude | Yes ([console.anthropic.com](https://console.anthropic.com)) | Keyword (no embeddings API) | Protocol tests |
-| OpenRouter (hundreds of models) | Yes ([openrouter.ai/keys](https://openrouter.ai/keys)) | Semantic or keyword | Protocol tests |
-| Ollama (local, free) | No ([ollama.com](https://ollama.com)) | Semantic, e.g. `nomic-embed-text` | Protocol tests |
-| Local AI gateway (OmniRoute, default `127.0.0.1:20128`) | Optional | Semantic or keyword | Live |
-| Any OpenAI-compatible API (Groq, DeepSeek, Together, Mistral, LM Studio…) | Depends | Semantic or keyword | Protocol tests |
-
-"Live" means verified end to end against the real service. "Protocol tests" means the request and response handling
-is tested against a local server that speaks that provider's API. **Reports from real use are very welcome.**
-
-| Feature | What it needs |
-|---|---|
-| Chat, memory, PC actions, screen reading, documents | A key for any provider above, or a local Ollama/gateway |
-| Live speech-to-speech voice | A Google Gemini key. Without it, the offline voice is used |
-| Web research, Google Maps, the public-APIs list | Nothing extra (some public APIs want their own key: Customize → API keys) |
-| Offline voice, wake word, answering only you | Nothing: local models (see [Voice setup](#voice-setup)) |
+- Google Gemini
+- OpenAI
+- Anthropic Claude
+- OpenRouter
+- Ollama (runs on your PC)
+- A local AI gateway (OmniRoute)
+- Any OpenAI-compatible service (Groq, DeepSeek, Together, Mistral, LM Studio…)
 
 ---
 
-## Getting started
+## Install and run
 
-### Requirements
-- Windows 10 or 11
-- Python 3.12, Node 22, Rust (stable, MSVC) and the Visual Studio C++ Build Tools
-- Brave, Chrome or Edge (for the browser window JARVIS drives: shopping, Gmail, WhatsApp, Maps)
+There's no installer (.exe) yet, so for now JARVIS runs from its source code. It takes about 20–30 minutes the first
+time, most of it downloads. You only do steps 1–3 once.
 
-### Install and run
+### 1. Install the tools JARVIS needs
+
+Open **PowerShell** (press Start, type `powershell`, press Enter) and run these one at a time. Each one installs a
+free tool; accept any prompts.
 
 ```powershell
+winget install --id Git.Git -e
+```
+```powershell
+winget install --id Python.Python.3.12 -e
+```
+```powershell
+winget install --id OpenJS.NodeJS.LTS -e
+```
+```powershell
+winget install --id Rustlang.Rustup -e
+```
+```powershell
+winget install --id Microsoft.VisualStudio.2022.BuildTools -e --override "--quiet --wait --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended"
+```
+
+The last one (the C++ build tools Rust needs) is large and can take 10–15 minutes.
+
+Then **close PowerShell and open a new one**, so it finds the tools you just installed. Check they're all there:
+
+```powershell
+git --version; python --version; node --version; cargo --version
+```
+
+Each should print a version number. If `python` opens the Microsoft Store instead, turn off the `python.exe`
+entries in **Settings → Apps → Advanced app settings → App execution aliases** and open a new PowerShell.
+
+You also need a browser for the window JARVIS drives (shopping, Gmail, WhatsApp, Maps): Microsoft Edge comes with
+Windows; Brave or Chrome work too.
+
+### 2. Download JARVIS
+
+```powershell
+cd $HOME
 git clone https://github.com/Spidey007-Arch/jarvis.git
 cd jarvis
+```
+
+### 3. Install JARVIS's packages
+
+Still in the `jarvis` folder:
+
+```powershell
 powershell -ExecutionPolicy Bypass -File setup\install-deps.ps1
-npm install
+```
+
+This creates JARVIS's own Python environment (a `.venv` folder inside `jarvis`), installs its Python packages and its
+window's packages, and ends with **"All dependencies installed."** If anything failed (usually a slow connection), run
+the same command again: it picks up where it stopped.
+
+### 4. Start JARVIS
+
+```powershell
 npx tauri dev
 ```
 
-On first launch, JARVIS walks you through choosing an AI provider and pasting your key. You can change it any time
-in **Settings → AI & models**.
+The first start builds the app, which takes 5–10 minutes; after that it starts in under a minute. The JARVIS window
+opens by itself, and it starts its backend and agent in the background on its own.
 
-### Voice setup
+**Keep this PowerShell window open while you use JARVIS.** Closing JARVIS's window stops everything; so does pressing
+`Ctrl+C` in PowerShell.
 
-Voice runs entirely on your PC. Download these free files into `%LOCALAPPDATA%\JARVIS\voice\downloads`, then turn
-on **Settings → Voice**:
+### 5. First-time setup in the window
 
-| File | Source |
+JARVIS walks you through it: pick one of the [supported AI providers](#supported-ai-providers), connect it, and
+choose a model. You can change it any time in **Settings → AI & models**. Then type or say what you need.
+
+### Every time after that
+
+```powershell
+cd $HOME\jarvis
+npx tauri dev
+```
+
+### Updating to the latest version
+
+```powershell
+cd $HOME\jarvis
+git pull
+powershell -ExecutionPolicy Bypass -File setup\install-deps.ps1
+npx tauri dev
+```
+
+Your settings, memory and conversations are kept: they live in `%LOCALAPPDATA%\JARVIS`, not in the `jarvis` folder.
+
+### If something goes wrong
+
+| What you see | What to do |
 |---|---|
-| `whisper-bin-x64.zip` | [whisper.cpp release b5130](https://github.com/ggml-org/whisper.cpp/releases/tag/b5130) |
-| `ggml-base.en-q5_1.bin` | [whisper.cpp models](https://huggingface.co/ggerganov/whisper.cpp) |
-| `piper_windows_amd64.zip` | [Piper 2023.11.14-2](https://github.com/rhasspy/piper/releases/tag/2023.11.14-2) |
-| `en_GB-alan-medium.onnx` and `.onnx.json` | [Piper voices](https://huggingface.co/rhasspy/piper-voices/tree/main/en/en_GB/alan/medium) |
-| `melspectrogram.onnx`, `embedding_model.onnx`, `hey_jarvis_v0.1.onnx` | [openWakeWord v0.5.1](https://github.com/dscripka/openWakeWord/releases/tag/v0.5.1) |
-| `sherpa-onnx-nemo-parakeet_tdt_ctc_110m-en-36000-int8.tar.bz2` (optional, recommended) | [sherpa-onnx ASR models](https://github.com/k2-fsa/sherpa-onnx/releases/tag/asr-models): far more accurate than Whisper base. The larger `sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8.tar.bz2` is used if present. |
-| `wespeaker_en_voxceleb_resnet34_LM.onnx` (optional) | [sherpa-onnx speaker models](https://github.com/k2-fsa/sherpa-onnx/releases/tag/speaker-recongition-models): lets **Teach JARVIS my voice** make it answer only you |
+| `Port 1420 is already in use` | An earlier JARVIS is still running. Close it (or restart the PC) and run `npx tauri dev` again. |
+| `link.exe not found` or `linker` errors | The C++ build tools are missing: run the last command of step 1 again, then open a new PowerShell. |
+| `running scripts is disabled on this system` | Use the exact command from step 3, which includes `-ExecutionPolicy Bypass`. |
+| The window opens but says the backend or agent failed | Look at the logs in `%LOCALAPPDATA%\JARVIS\logs` (`error.log` first), and [open a bug report](https://github.com/Spidey007-Arch/jarvis/issues/new?template=bug_report.yml) with the lines that explain it. |
 
-Also install `pip install numpy onnxruntime sherpa-onnx` into the app's environment (`.venv`).
+### Voice setup (optional)
 
-Say **"Jarvis"** with your request ("Jarvis, open Spotify"). Say "Hey JARVIS" while it talks to stop it.
+1. Create the folder `%LOCALAPPDATA%\JARVIS\voice\downloads` (paste it into File Explorer's address bar; create the
+   missing folders).
+2. Download these files into that folder:
+   - `whisper-bin-x64.zip` from [whisper.cpp b5130](https://github.com/ggml-org/whisper.cpp/releases/tag/b5130)
+   - `ggml-base.en-q5_1.bin` from [whisper.cpp models](https://huggingface.co/ggerganov/whisper.cpp)
+   - `piper_windows_amd64.zip` from [Piper 2023.11.14-2](https://github.com/rhasspy/piper/releases/tag/2023.11.14-2)
+   - `en_GB-alan-medium.onnx` and `en_GB-alan-medium.onnx.json` from [Piper voices](https://huggingface.co/rhasspy/piper-voices/tree/main/en/en_GB/alan/medium)
+   - `melspectrogram.onnx`, `embedding_model.onnx` and `hey_jarvis_v0.1.onnx` from [openWakeWord v0.5.1](https://github.com/dscripka/openWakeWord/releases/tag/v0.5.1)
+   - Recommended: `sherpa-onnx-nemo-parakeet_tdt_ctc_110m-en-36000-int8.tar.bz2` from [sherpa-onnx ASR models](https://github.com/k2-fsa/sherpa-onnx/releases/tag/asr-models)
+   - Optional, to make JARVIS answer only you: `wespeaker_en_voxceleb_resnet34_LM.onnx` from [sherpa-onnx speaker models](https://github.com/k2-fsa/sherpa-onnx/releases/tag/speaker-recongition-models)
+3. Restart JARVIS.
+4. Turn on **Settings → Voice**.
+5. Optional: **Settings → Voice → Teach JARVIS my voice**, and read aloud for 15 seconds.
+6. Say **"Jarvis"** with your request, e.g. "Jarvis, open Spotify". Say "Hey JARVIS" while it talks to stop it.
 
 ---
 

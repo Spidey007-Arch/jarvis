@@ -19,13 +19,8 @@ be, so read what you paste and remove anything private.
 
 ## Setting up for development
 
-```powershell
-git clone https://github.com/Spidey007-Arch/jarvis.git
-cd jarvis
-powershell -ExecutionPolicy Bypass -File setup\install-deps.ps1
-npm install
-npx tauri dev
-```
+Follow [Install and run](README.md#install-and-run) in the README (tools, clone, `setup\install-deps.ps1`, then
+`npx tauri dev`).
 
 `npx tauri dev` starts the window with hot reload for the UI; the shell starts the backend and agent from `backend/`
 and `agent/`. After changing Python code, close JARVIS and run `npx tauri dev` again.
