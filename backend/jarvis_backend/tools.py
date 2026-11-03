@@ -34,7 +34,9 @@ I = {"type": "integer"}
 B = {"type": "boolean"}
 
 TOOLS: list[ToolSpec] = [
-    ToolSpec("system_status", "Live diagnostics of this PC: CPU, memory, disks, battery, network, uptime, top processes, and any abnormal flags.",
+    ToolSpec("system_status", "Measures this PC right now, the way Task Manager does, averaged over the last 1.5 seconds: CPU %, "
+             "memory, disk activity % (Task Manager's Disk column), how full each drive is, battery, network, uptime, top "
+             "processes and abnormal flags. Call it every time the user asks about these: earlier results are out of date.",
              obj(), agent_action="system_status", timeout=15, label="Checking system status"),
     ToolSpec("open_app", "Open an installed application by name (fuzzy matched against the Start menu), e.g. 'chrome', 'spotify', 'vs code'.",
              obj({"name": S}, ["name"]), agent_action="open_app", timeout=40, label="Opening {name}"),

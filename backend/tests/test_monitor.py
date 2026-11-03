@@ -60,8 +60,10 @@ class PersonaContextTests(unittest.TestCase):
                      "reminders": [{"text": "Call Pepper", "due": "Fri 18:00"}],
                      "recent": [{"title": "Demo prep", "when": "yesterday 21:10", "last": "Good luck tomorrow, sir."}]},
         )
-        for expected in ("CPU 91%", "battery 12% on battery", "Call Pepper (Fri 18:00)", '"Demo prep"', "their name is Tony", "Acting on the PC"):
+        for expected in ("Battery 12%, on battery", "call system_status once for a fresh reading", "Call Pepper (Fri 18:00)", '"Demo prep"',
+                         "their name is Tony", "Acting on the PC"):
             self.assertIn(expected, p)
+        self.assertNotIn("91", p)  # a snapshot of the CPU would be stale by the time it's asked about
 
     def test_offline_agent_is_stated(self):
         p = build_system_prompt({}, [], [], context={"pc": None})

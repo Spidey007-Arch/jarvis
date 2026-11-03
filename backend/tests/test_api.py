@@ -127,6 +127,14 @@ class RepeatGuardTests(unittest.TestCase):
         self.assertTrue(again and again["repeated"] and again["ok"])
         self.assertIsNone(self.repeat_of(self.Call("3", "open_url", {"url": "https://example.com"}), done, 3))
 
+    def test_one_status_reading_per_request(self) -> None:
+        """A fresh reading answers the question; measuring again and again in one request was a loop with no reply."""
+        done: dict = {}
+        c = self.Call("1", "system_status", {})
+        self.record(done, c, 1, {"ok": True, "result": {"cpu_percent": 12.0}})
+        again = self.repeat_of(self.Call("2", "system_status", {}), done, 4)
+        self.assertTrue(again and again["repeated"] and "Answer from it" in again["note"])
+
     def test_failed_action_gets_one_retry(self) -> None:
         done: dict = {}
         c = self.Call("1", "open_app", {"name": "outlook"})

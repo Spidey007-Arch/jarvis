@@ -183,6 +183,9 @@ def repeat_of(call: ToolCall, done: dict[str, tuple[int, int, dict[str, Any]]], 
     at, runs, out = done[key]
     if not out.get("ok") and runs < 2:
         return None
+    if call.name == "system_status" and out.get("ok"):  # one fresh reading answers the question; re-measuring is a loop
+        return {**out, "repeated": True,
+                "note": "You measured this a moment ago in this same request; the reading above is current. Answer from it now."}
     if call.name in OBSERVE_TOOLS and step > at:
         return None
     return {**out, "repeated": True,

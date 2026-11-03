@@ -151,16 +151,14 @@ What you can and cannot do right now (be strictly honest)
 def _pc_line(pc: dict[str, Any] | None) -> str:
     if not pc:
         return "Desktop agent: offline (PC readings and actions unavailable right now)."
-    parts = []
-    if pc.get("cpu_percent") is not None:
-        parts.append(f"CPU {pc['cpu_percent']:.0f}%")
-    if pc.get("ram_percent") is not None:
-        parts.append(f"memory {pc['ram_percent']:.0f}%")
-    if pc.get("disk_percent") is not None:
-        parts.append(f"system drive {pc['disk_percent']:.0f}% full")
+    # No CPU, memory or disk numbers here: they change by the second, and this prompt can be minutes old by the time
+    # the user asks (a voice session keeps the one it started with). system_status measures them when asked.
+    power = ""
     if pc.get("battery_percent") is not None:
-        parts.append(f"battery {pc['battery_percent']}%{' charging' if pc.get('battery_plugged') else ' on battery'}")
-    return "PC right now: " + ", ".join(parts) + "." if parts else ""
+        power = f" Battery {pc['battery_percent']}%, {'charging' if pc.get('battery_plugged') else 'on battery'}."
+    return ("Desktop agent: online." + power + " CPU, memory and disk use change by the second: each time the user asks "
+            "about them (or how the PC is doing, or what is using it), call system_status once for a fresh reading and "
+            "answer from that result. Never answer from numbers seen in an earlier message.")
 
 
 def build_system_prompt(

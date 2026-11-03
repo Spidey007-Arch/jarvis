@@ -27,6 +27,7 @@ from typing import Any, Callable
 import psutil
 
 from . import __version__, live_audio, mailchat, voice, webdrive, win
+from .perf import Meter
 
 
 class ActionError(Exception):
@@ -74,22 +75,37 @@ def ping(_: dict[str, Any]) -> dict[str, Any]:
 
 # ======================= system =======================
 
+_meter_for_status: Meter | None = None
+
+
+def _status_meter() -> Meter:
+    global _meter_for_status
+    if _meter_for_status is None:
+        _meter_for_status = Meter(processes=True)
+    return _meter_for_status
+
+
 @action
 def system_status(_: dict[str, Any]) -> dict[str, Any]:
     net0 = psutil.net_io_counters()
-    for p in psutil.process_iter():
+    meter = _status_meter()
+    running = [] if meter.has_processes else [p for p in psutil.process_iter() if p.pid]  # psutil only as a fallback: it's slow
+    for p in running:  # pid 0 ("System Idle Process") is idle time, not a program
         try:
             p.cpu_percent(None)
         except psutil.Error:
             pass
-    cpu = psutil.cpu_percent(interval=1.0)
+    psutil.cpu_percent(None)
+    now = meter.fresh(1.5)  # waits 1.5 s: per-program CPU below is measured over the same span
+    cpu = now["cpu_percent"] if now["cpu_percent"] is not None else psutil.cpu_percent(None)
+    top = meter.processes()
     net1 = psutil.net_io_counters()
     vm = psutil.virtual_memory()
     procs = []
-    for p in psutil.process_iter(["name", "memory_info"]):
+    for p in running:
         try:
-            procs.append((p.cpu_percent(None) / psutil.cpu_count(), p.info["memory_info"].rss, p.info["name"]))
-        except (psutil.Error, AttributeError):
+            procs.append((p.cpu_percent(None) / psutil.cpu_count(), p.memory_info().rss, p.name()))
+        except psutil.Error:
             pass
     disks = []
     for part in psutil.disk_partitions(all=False):
@@ -114,17 +130,22 @@ def system_status(_: dict[str, Any]) -> dict[str, Any]:
     if battery and battery["percent"] < 20 and not battery["charging"]:
         flags.append(f"Battery is low at {battery['percent']}% and not charging.")
     return {
+        "measured_at": dt.datetime.now().strftime("%H:%M:%S"),
+        "averaged_over_s": 1.5,
         "cpu_percent": cpu,
+        "disk_active_percent": now["disk_active_percent"],  # how busy the disks are (Task Manager's Disk column)
         "cpu_cores": psutil.cpu_count(),
-        "process_count": len(procs),
+        "process_count": len(psutil.pids()),
         "open_apps": _open_apps(),
         "memory": {"used_percent": vm.percent, "used_gb": round(vm.used / 1024**3, 1), "total_gb": round(vm.total / 1024**3, 1)},
         "disks": disks,
         "battery": battery,
         "network_kb_per_s": {"down": round((net1.bytes_recv - net0.bytes_recv) / 1024, 1), "up": round((net1.bytes_sent - net0.bytes_sent) / 1024, 1)},
         "uptime_hours": round((time.time() - psutil.boot_time()) / 3600, 1),
-        "top_cpu": [{"name": n, "cpu_percent": round(c, 1)} for c, _, n in sorted(procs, reverse=True)[:5]],
-        "top_memory": [{"name": n, "memory_mb": round(m / 1024**2)} for _, m, n in sorted(procs, key=lambda x: x[1], reverse=True)[:5]],
+        **(top or {  # Task Manager's per-program figures; psutil's when the counters aren't available
+            "top_cpu": [{"name": n, "cpu_percent": round(c, 1)} for c, _, n in sorted(procs, reverse=True)[:5]],
+            "top_memory": [{"name": n, "memory_mb": round(m / 1024**2)} for _, m, n in sorted(procs, key=lambda x: x[1], reverse=True)[:5]],
+        }),
         "flags": flags,
     }
 

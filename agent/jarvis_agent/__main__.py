@@ -18,6 +18,7 @@ from . import __version__
 from . import extras, voice, win
 from .actions import attach_live
 from .live_audio import LiveAudio
+from .perf import Meter
 from .actions import SCREENSHOT_TTL_S, ActionError, purge_old_screenshots, run, warm_app_index
 
 HEARTBEAT_INTERVAL_S = 5.0
@@ -25,14 +26,17 @@ MAX_BACKOFF_S = 10.0
 
 
 _last_net: tuple[float, int, int] | None = None
+_heartbeat_meter = Meter()
 
 
 def _stats() -> dict:
     """Live readings sent with every heartbeat; the UI shows these as-is."""
     global _last_net
     vm = psutil.virtual_memory()
+    perf = _heartbeat_meter.read()  # averaged over the time since the last heartbeat, not one instant
     out: dict = {
-        "cpu_percent": psutil.cpu_percent(interval=None),
+        "cpu_percent": perf["cpu_percent"] if perf["cpu_percent"] is not None else psutil.cpu_percent(interval=None),
+        "disk_active_percent": perf["disk_active_percent"],
         "ram_percent": vm.percent,
         "ram_used_gb": round(vm.used / 1024**3, 1),
         "ram_total_gb": round(vm.total / 1024**3, 1),

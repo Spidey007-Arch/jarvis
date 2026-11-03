@@ -88,6 +88,29 @@ class JarvisSecrets(unittest.TestCase):
                 actions.run_command({"command": cmd})
 
 
+class Readings(unittest.TestCase):
+    """CPU, disk and per-program numbers come from Task Manager's own counters, measured fresh each time."""
+
+    def test_a_fresh_reading_covers_the_last_moment_not_one_instant(self) -> None:
+        import time
+
+        from jarvis_agent.perf import Meter
+
+        m = Meter(processes=True)
+        time.sleep(2)  # an old span that a fresh reading must not include
+        r = m.fresh(0.5)
+        self.assertLess(r["span_s"], 1.0)
+        self.assertTrue(0 <= r["cpu_percent"] <= 100 and 0 <= r["disk_active_percent"] <= 100, r)
+        top = m.processes()
+        self.assertTrue(top["top_memory"] and all(p["name"] not in ("_Total", "Idle") for p in top["top_cpu"]), top)
+
+    def test_system_status_says_when_it_measured(self) -> None:
+        s = actions.system_status({})
+        self.assertIn("measured_at", s)
+        self.assertIsNotNone(s["disk_active_percent"])
+        self.assertNotIn("System Idle Process", [p["name"] for p in s["top_cpu"]])
+
+
 class GoogleMaps(unittest.TestCase):
     def test_a_result_card_becomes_name_rating_reviews_and_details(self) -> None:
         from jarvis_agent import maps
