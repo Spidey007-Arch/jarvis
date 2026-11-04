@@ -532,13 +532,10 @@ JARVIS gets better with real people using it on real PCs. Any of these helps a l
   [CONTRIBUTING.md](CONTRIBUTING.md) first.
 - **💬 Questions, rough ideas and showing what you built** with JARVIS: start a [Discussion](https://github.com/Spidey007-Arch/jarvis/discussions).
 
-**Specific questions we'd love answers to:**
-1. Which should come first: the installer, undo/checkpoints, or parallel tasks?
-2. What would you want automations to do that they can't yet?
-3. Which apps would you most like JARVIS to work with (calendar, Notion, Discord, your IDE…)?
-4. How much should JARVIS do on its own without asking? Is the current permission model too cautious, or not
-   cautious enough?
-5. What would make you trust an assistant with this much access to your PC?
+**Get in touch.** Have a question, an idea, or want to help but don't know where to start? Email
+[parabparth223@gmail.com](mailto:parabparth223@gmail.com), or ask in
+[Discussions](https://github.com/Spidey007-Arch/jarvis/discussions) so others can see the answer too.
+For a security problem, please use the private report described in [SECURITY.md](SECURITY.md) instead.
 
 ---
 
