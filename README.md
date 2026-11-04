@@ -479,18 +479,36 @@ key safety, calendar, heartbeat, plugins, backup and sync…) and the agent (com
 ### Next
 | Item | What it means |
 |---|---|
-| **Installer** | A normal Windows installer and a portable build, no Python/Node/Rust needed |
-| **Auto-update** | Signed updates from GitHub releases |
-| **Undo and checkpoints** | Roll back what a task changed (files, settings) in one click |
-| **Rich outputs** | Charts, tables and documents shown in a side panel, not just text |
-| **Parallel tasks** | Several jobs at once, each in its own lane you can watch |
-| **More of the interface in Hindi** | The main screens are translated; the rest still shows English |
+| **Installer** | A normal Windows installer (.exe) and a portable build: no Python, Node or Rust to install first |
+| **Auto-update** | Signed updates from GitHub releases, installed when you say so |
+| **Works with no API key at all** | A free local AI set up for you (Ollama), plus direct commands like "open Spotify", "volume 50" or "set a timer" that need no AI |
+| **Undo and checkpoints** | Roll back everything a task changed (files, settings, calendar) in one click |
+| **Rich outputs** | Charts, tables, documents and calendars shown in a side panel, not just text |
+| **Parallel tasks** | Several jobs at once, each in its own lane you can watch, pause or stop |
+| **All of the interface in Hindi** | The main screens are translated; the rest still shows English |
+| **A heartbeat that plans** | Morning and evening summaries built from your calendar, mail and reminders, and a nudge before you're late for a meeting |
 
 ### Ideas we're considering
-- Smart home through Home Assistant
-- Hooks: run your own scripts before or after JARVIS does something
-- More languages after Hindi (Marathi, Tamil, Bengali…)
-- Two-way Google and Outlook calendar editing (needs each user to register a free app with Google or Microsoft)
+**Around your day**
+- Two-way Google and Outlook calendar editing in place, not just opening the new-event page (needs a free app
+  registration with Google or Microsoft)
+- Meeting helper: join a Google Meet or Teams call, take notes, and list who promised what
+- Daily journal: a few spoken lines each evening, searchable later ("when did I last see the dentist?")
+- Habit and goal tracking that JARVIS checks in on, gently
+
+**Around your PC and home**
+- Smart home through Home Assistant: lights, fans, AC, plugs, scenes ("movie time")
+- Focus guard: notice when you drift to distracting sites during a focus block and say so once
+- Screen memory, opt-in and local only: "what was that error I saw an hour ago?"
+- Hooks: your own scripts that run before or after JARVIS does something
+- Phone as a remote: a small companion app on your home Wi-Fi, no cloud in between
+
+**Around JARVIS itself**
+- More languages: Marathi, Tamil, Bengali, Gujarati, Telugu, and Hinglish voice
+- Your own wake word and a choice of voices, including a voice you train
+- Vision: point the webcam at a document, a plant or a product and ask about it (only when you say so)
+- A plugin store with ratings, versions and automatic updates for plugins
+- Team mode: share skills, plugins and automations with family or a small office
 - macOS and Linux versions
 
 **Have an opinion on what comes first, or an idea that isn't here?** That's exactly what we want to hear: see below.
