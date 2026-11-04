@@ -1,0 +1,20 @@
+{
+  "format": "jarvis-plugin",
+  "id": "focus-mode",
+  "name": "Focus mode",
+  "version": "1.0",
+  "author": "JARVIS",
+  "description": "Pomodoro-style focus: closes distractions, plays focus music quietly and times 25-minute blocks with short breaks.",
+  "skills": [
+    {
+      "name": "Focus mode",
+      "when_to": "I say focus mode, help me focus, or start a pomodoro",
+      "body": "1. Ask what I'm working on, unless I already said.\n2. List the open windows and offer to close or minimize chat, social media and video apps; only close what I agree to.\n3. Play lo-fi or focus music on Spotify and set the volume to 25.\n4. Start a 25-minute timer labelled with what I'm working on.\n5. Tell me it's started in one short sentence."
+    },
+    {
+      "name": "Break time",
+      "when_to": "I say break, take a break, or the focus timer ended",
+      "body": "1. Pause the music.\n2. Start a 5-minute timer labelled break (15 minutes after every fourth focus block).\n3. Suggest standing up or getting water, in one sentence."
+    }
+  ]
+}

@@ -35,12 +35,18 @@ DEFAULTS: dict[str, Any] = {
     "full_control": False,  # the owner's own PC: changes run without asking; only destructive steps ask. Off for everyone else.
     "voice_mode": "live",
     "instructions": "",  # Customize > Instructions: how the user wants JARVIS to behave, in their own words  # live: Gemini Live speech-to-speech; local: wake word + Whisper + Piper, offline
+    "language": "en",  # en | hi: the interface, JARVIS's replies and the offline voice
+    "calendars": [],  # calendars linked by their private address: {name}; the address itself is a secret (calendars.py)
+    "calendar_outlook": False,  # also read and add events in classic Outlook on this PC
+    "heartbeat": {},  # {enabled, every_min, checks: [...], quiet_from, quiet_to} (heartbeat.py)
+    "sync": {},  # {enabled, folder, include_secrets}: encrypted backup and sync between PCs (backup.py)
     "provider": "gemini",
     "provider_config": {},
     "secrets": {},
 }
 PROFILE_FIELDS = ("user_name", "address", "proactive_alerts", "voice_enabled", "voice_mode", "startup_briefing",
-                  "full_control", "permissions", "presence_greetings", "followups", "onboarded", "instructions")
+                  "full_control", "permissions", "presence_greetings", "followups", "onboarded", "instructions",
+                  "language", "calendars", "calendar_outlook", "heartbeat", "sync")
 PROVIDER_FIELDS = ("chat_model", "embed_model", "base_url")
 
 
@@ -179,6 +185,20 @@ class SettingsStore:
                 else:
                     found.add(str(value))
         return sorted((s for s in found if len(s) >= 8), key=len, reverse=True)
+
+    def all_secrets(self) -> dict[str, str]:
+        """Every saved key and token by name, for an encrypted backup only."""
+        with self._lock:
+            return dict(self._data["secrets"])
+
+    def merge_secrets(self, items: dict[str, str]) -> int:
+        """Bring in keys and tokens from an encrypted backup; returns how many were new or changed."""
+        with self._lock:
+            changed = {k: str(v) for k, v in items.items() if isinstance(k, str) and ":" in k and v and self._data["secrets"].get(k) != v}
+            self._data["secrets"].update(changed)
+            if changed:
+                self._save()
+            return len(changed)
 
     def set_connectors(self, items: list[dict[str, Any]]) -> None:
         with self._lock:

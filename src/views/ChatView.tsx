@@ -1,6 +1,7 @@
 import { KeyboardEvent, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { ActionEvent, Message, answerConfirmation, forSpeech, getMessages, listenNow, speak, streamChat } from "../api";
 import { Activity, emitPulse, emitSend } from "../fx/activity";
+import { t } from "../i18n";
 import type { Connection } from "../shell";
 
 type Line = Message & { pending?: boolean };
@@ -384,7 +385,7 @@ export default function ChatView({
           <textarea
             ref={box}
             rows={1}
-            placeholder={configured ? "Ask JARVIS…" : "No AI provider connected"}
+            placeholder={configured ? t("Ask JARVIS…") : t("No AI provider connected")}
             value={input}
             disabled={!configured || !conn}
             onChange={(e) => setInput(e.target.value)}

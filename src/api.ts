@@ -32,6 +32,8 @@ export interface Settings {
   onboarded: boolean;
   followups: boolean;
   instructions: string;
+  language?: "en" | "hi";
+  calendar_outlook?: boolean;
   permissions: Record<string, Policy>;
   provider: string;
   base_url: string;
@@ -62,7 +64,7 @@ export interface ModelInfo {
   kind: "chat" | "embed";
 }
 
-export type SettingsUpdate = Partial<Pick<Settings, "user_name" | "address" | "proactive_alerts" | "startup_briefing" | "full_control" | "permissions" | "presence_greetings" | "followups" | "onboarded" | "instructions" | "provider" | "base_url" | "chat_model" | "embed_model">> & {
+export type SettingsUpdate = Partial<Pick<Settings, "user_name" | "address" | "proactive_alerts" | "startup_briefing" | "full_control" | "permissions" | "presence_greetings" | "followups" | "onboarded" | "instructions" | "language" | "calendar_outlook" | "provider" | "base_url" | "chat_model" | "embed_model">> & {
   api_key?: string;
 };
 
@@ -201,6 +203,8 @@ export interface Connector {
   enabled: boolean;
   has_token: boolean;
   env_names: string[];
+  needs_env?: string[]; // a plugin's connector: values it still needs
+  plugin?: string | null;
   state: string; // connected | error | not started | off
   tools?: number;
   server?: string;
@@ -438,3 +442,68 @@ export const exportMemoriesToFile = (c: Connection) =>
   call<{ path: string; count: number }>(c, "/api/memories/export-file", { method: "POST" });
 export const importMemories = (c: Connection, memories: unknown[]) =>
   call<{ added: number; skipped: number }>(c, "/api/memories/import", { method: "POST", body: JSON.stringify({ memories }) });
+
+// ---------- calendar ----------
+
+export type CalendarEvent = { id?: string; title: string; start: string; end: string; all_day: boolean; location: string; calendar: string };
+export type CalendarView = { events: CalendarEvent[]; problems: string[]; linked: { name: string; has_link: boolean }[]; outlook: boolean };
+export type NewEvent = {
+  title: string; start: string; end?: string; all_day: boolean; location: string; notes: string;
+  calendar: "jarvis" | "outlook" | "google" | "outlook_web"; remind_minutes: number | null;
+};
+export const getCalendar = (c: Connection) => call<CalendarView>(c, "/api/calendar");
+export const addEvent = (c: Connection, e: NewEvent) => call<Record<string, unknown>>(c, "/api/calendar/events", { method: "POST", body: JSON.stringify(e) });
+export const deleteEvent = (c: Connection, id: string) => call<{ deleted: string }>(c, `/api/calendar/events/${encodeURIComponent(id)}`, { method: "DELETE" });
+export const linkCalendar = (c: Connection, name: string, url: string) =>
+  call<{ name: string }[]>(c, "/api/calendar/linked", { method: "PUT", body: JSON.stringify({ name, url }) });
+export const unlinkCalendar = (c: Connection, name: string) =>
+  call<{ name: string }[]>(c, `/api/calendar/linked/${encodeURIComponent(name)}`, { method: "DELETE" });
+
+// ---------- heartbeat ----------
+
+export type HeartbeatConfig = { enabled: boolean; every_min: number; checks: string[]; quiet_from: string; quiet_to: string };
+export type HeartbeatView = HeartbeatConfig & {
+  running: boolean; last_beat: number | null; next_beat: number | null; waiting: string | null; examples: string[];
+  last: { at?: number; status?: "clear" | "alert" | "failed"; text?: string }; told: { at: number; text: string }[];
+};
+export const getHeartbeat = (c: Connection) => call<HeartbeatView>(c, "/api/heartbeat");
+export const saveHeartbeat = (c: Connection, h: HeartbeatConfig) => call<HeartbeatView>(c, "/api/heartbeat", { method: "PUT", body: JSON.stringify(h) });
+export const runHeartbeat = (c: Connection) => call<{ started: boolean }>(c, "/api/heartbeat/run", { method: "POST" });
+
+// ---------- plugins ----------
+
+export type PluginSource = { catalog_id?: string; text?: string };
+export type CatalogPlugin = { id: string; name: string; description: string; author: string; has: string[]; installed: boolean };
+export type InstalledPlugin = {
+  id: string; name: string; version: string; description: string; author: string; source: string; installed_at: number;
+  skills: string[]; connectors: string[]; homepage: string;
+};
+export type PluginPreview = {
+  id: string; name: string; version: string; description: string; author: string; homepage: string; installed: boolean;
+  skills: { name: string; when_to: string; body: string }[];
+  commands: { connector: string; runs: string; env_names: string[]; needs_token: boolean }[];
+  clashes: string[];
+};
+export const getPlugins = (c: Connection) => call<InstalledPlugin[]>(c, "/api/plugins");
+export const getCatalog = (c: Connection) => call<CatalogPlugin[]>(c, "/api/plugins/catalog");
+export const previewPlugin = (c: Connection, s: PluginSource) => call<PluginPreview>(c, "/api/plugins/preview", { method: "POST", body: JSON.stringify(s) });
+export const installPlugin = (c: Connection, s: PluginSource) => call<InstalledPlugin>(c, "/api/plugins/install", { method: "POST", body: JSON.stringify(s) });
+export const removePlugin = (c: Connection, id: string) => call<{ removed: string }>(c, `/api/plugins/${encodeURIComponent(id)}`, { method: "DELETE" });
+export const exportSkills = (c: Connection, name: string) =>
+  call<{ path: string; skills: number }>(c, "/api/plugins/export", { method: "POST", body: JSON.stringify({ name }) });
+
+// ---------- encrypted backup and sync ----------
+
+export type BackupView = {
+  enabled: boolean; folder: string; include_secrets: boolean; has_passphrase: boolean; device: { id: string; name: string };
+  last: { at?: number; error?: string; brought?: Record<string, number>; wrote?: boolean; other_pcs?: string[] }; suggested: string[];
+};
+export const getBackup = (c: Connection) => call<BackupView>(c, "/api/backup");
+export const exportBackup = (c: Connection, passphrase: string, include_secrets: boolean) =>
+  call<{ path: string; memories: number; skills: number; automations: number; events: number; plugins: number }>(
+    c, "/api/backup/export", { method: "POST", body: JSON.stringify({ passphrase, include_secrets }) });
+export const restoreBackup = (c: Connection, data_b64: string, passphrase: string) =>
+  call<{ restored: Record<string, number>; from: string | null }>(c, "/api/backup/restore", { method: "POST", body: JSON.stringify({ data_b64, passphrase }) });
+export const saveSync = (c: Connection, body: { enabled: boolean; folder: string; include_secrets: boolean; passphrase?: string }) =>
+  call<BackupView>(c, "/api/sync", { method: "PUT", body: JSON.stringify(body) });
+export const syncNow = (c: Connection) => call<BackupView["last"]>(c, "/api/sync/now", { method: "POST" });

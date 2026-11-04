@@ -13,6 +13,7 @@ import MemoryView from "./views/MemoryView";
 import CustomizeView from "./views/CustomizeView";
 import SettingsView from "./views/SettingsView";
 import SystemPanel from "./views/SystemPanel";
+import { setLang, t, useLang } from "./i18n";
 
 type Drawer = "history" | "memory" | "customize" | "settings" | "system" | null;
 
@@ -354,6 +355,7 @@ function nowSaying(text: string): string {
 }
 
 export default function App() {
+  useLang(); // re-render everything in the chosen language
   const shell = insideShell();
   const [status, setStatus] = useState<ShellStatus | null>(null);
   const [conn, setConn] = useState<Connection | null>(null);
@@ -395,6 +397,7 @@ export default function App() {
       .then((s) => {
         setConfigured(s.ready);
         setAddress(s.address || "sir");
+        setLang(s.language);
       })
       .catch(() => setConfigured(false));
   }, [conn]);
@@ -459,14 +462,14 @@ export default function App() {
 
       <nav className="rail" aria-label="Panels">
         {(Object.keys(ICONS) as Exclude<Drawer, null>[]).map((d) => (
-          <button key={d} className={drawer === d ? "on" : ""} onClick={() => setDrawer(drawer === d ? null : d)} title={TITLES[d]} aria-label={TITLES[d]}>
+          <button key={d} className={drawer === d ? "on" : ""} onClick={() => setDrawer(drawer === d ? null : d)} title={t(TITLES[d])} aria-label={t(TITLES[d])}>
             <svg viewBox="0 0 24 24">{ICONS[d]}</svg>
           </button>
         ))}
         <button
           className="rail-new"
-          title="New conversation"
-          aria-label="New conversation"
+          title={t("New conversation")}
+          aria-label={t("New conversation")}
           onClick={() => {
             setConversation(null);
             setDrawer(null);
@@ -500,7 +503,7 @@ export default function App() {
         {drawer && (
           <>
             <header className="drawer-head">
-              <h2>{TITLES[drawer]}</h2>
+              <h2>{t(TITLES[drawer])}</h2>
               <button className="close" onClick={() => setDrawer(null)} aria-label="Close panel">✕</button>
             </header>
             <div className="drawer-body">

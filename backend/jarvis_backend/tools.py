@@ -263,6 +263,23 @@ TOOLS: list[ToolSpec] = [
     ToolSpec("list_automations", "List the automations (scheduled jobs) with their schedules, next run and last result.", obj(),
              label="Checking automations"),
     ToolSpec("delete_automation", "Delete an automation by its id.", obj({"id": S}, ["id"]), risk="confirm", label="Delete an automation"),
+    # Calendar: JARVIS's own, calendars linked by their private address, and classic Outlook (calendars.py)
+    ToolSpec("calendar_events", "The user's calendar between from and to (local YYYY-MM-DD or YYYY-MM-DDTHH:MM; to is exclusive): "
+             "meetings, appointments, birthdays, from every calendar they connected. query filters by title or place. Use for "
+             "'what's on today', 'am I free Friday', 'when is the dentist'.",
+             obj({"from": S, "to": S, "query": S}, ["from", "to"]), timeout=90, label="Checking the calendar"),
+    ToolSpec("calendar_free_time", "Free gaps on a day (YYYY-MM-DD) between start_hour and end_hour (default 9-18), at least "
+             "min_minutes long (default 30), around the user's events. Use to plan or suggest a time.",
+             obj({"day": S, "start_hour": I, "end_hour": I, "min_minutes": I}, ["day"]), timeout=90, label="Finding free time on {day}"),
+    ToolSpec("calendar_add", "Add an event. start (and end, or duration_minutes, default 60) as local YYYY-MM-DDTHH:MM, or "
+             "YYYY-MM-DD with all_day=true. calendar: jarvis (JARVIS's own, the default), outlook (classic Outlook on this PC; "
+             "syncs to its account), google or outlook_web (opens that calendar's new-event page filled in; the user presses Save). "
+             "remind_minutes: also say a reminder this many minutes before (jarvis calendar) or set Outlook's reminder.",
+             obj({"title": S, "start": S, "end": S, "duration_minutes": I, "all_day": B, "location": S, "notes": S, "calendar": S,
+                  "remind_minutes": I}, ["title", "start"]), risk="confirm", timeout=90, label="Add “{title}” to the calendar"),
+    ToolSpec("calendar_delete", "Delete an event from JARVIS's own calendar by its id (from calendar_events). Events in Google, "
+             "Outlook and other linked calendars are changed there, not by JARVIS.", obj({"id": S}, ["id"]), risk="confirm",
+             label="Delete a calendar event"),
     # System extras
     ToolSpec("hardware_info", "Graphics card (name, load, memory, temperature) and temperatures of this PC, best effort.",
              obj(), agent_action="hardware_info", timeout=40, label="Checking the hardware"),
@@ -285,7 +302,7 @@ STEPWISE_TOOLS = frozenset({"set_plan", "press_keys", "type_text", "volume", "me
 OBSERVE_TOOLS = frozenset({"look_at_screen", "system_status", "clipboard_get", "list_folder", "find_files", "list_reminders", "web_read",
                            "gmail_list", "gmail_open", "whatsapp_chats", "whatsapp_read", "find_apis", "call_api",
                            "read_file", "list_processes", "run_command", "find_controls", "read_window", "list_windows",
-                           "hardware_info", "recent_files", "recent_downloads",
+                           "hardware_info", "recent_files", "recent_downloads", "calendar_events", "calendar_free_time",
                            "read_document", "stored_files", "read_webpage"})
 
 BY_NAME = {t.name: t for t in TOOLS}

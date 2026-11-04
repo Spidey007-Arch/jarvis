@@ -3,13 +3,14 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import logging
 import re
 import time
 import urllib.parse
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Literal
 
@@ -29,6 +30,9 @@ from .research import ResearchError, read_webpage, web_research
 from .live import LiveError, LiveVoice
 from .connectors import ConnectorError
 from .automations import AutomationError
+from . import backup as backups, heartbeat as heartbeats
+from .calendars import CalendarError, compose_link, parse_time
+from .plugins import PluginError, export_skills, parse as parse_plugin
 from .initiative import Initiative
 from .skills import guidance as skill_guidance, my_guidance
 from .tasks import TaskStopped
@@ -87,6 +91,10 @@ class Services:
     recent_downloads: list[dict[str, Any]] = field(default_factory=list)  # browser downloads noticed this session, newest last
     token: str = ""  # the backend's own login token, set in main; scrubbed from tool output like the saved keys
     automations: Any = None  # Automations: scheduled jobs (automations.py)
+    calendar: Any = None  # Calendar: JARVIS's own, linked by address, and Outlook (calendars.py)
+    heartbeat: Any = None  # Heartbeat: periodic checks that speak up only when needed (heartbeat.py)
+    plugins: Any = None  # Plugins: shared bundles of skills and connectors (plugins.py)
+    backup: Any = None  # Backup: encrypted backup and sync between PCs (backup.py)
 
     def secrets(self) -> list[str]:
         return sorted({*self.settings.secret_values(), *([self.token] if self.token else [])}, key=len, reverse=True)
@@ -203,6 +211,8 @@ class SettingsIn(BaseModel):
     followups: bool | None = None
     onboarded: bool | None = None
     instructions: str | None = Field(default=None, max_length=4000)
+    language: Literal["en", "hi"] | None = None
+    calendar_outlook: bool | None = None
     permissions: dict[str, str] | None = None
     provider: str | None = None
     api_key: str | None = Field(default=None, max_length=300)
@@ -269,6 +279,56 @@ class AutomationIn(BaseModel):
     enabled: bool = True
 
 
+class CalendarEventIn(BaseModel):
+    title: str = Field(min_length=1, max_length=200)
+    start: str = Field(min_length=10, max_length=30)
+    end: str = Field(default="", max_length=30)
+    all_day: bool = False
+    location: str = Field(default="", max_length=200)
+    notes: str = Field(default="", max_length=2000)
+    calendar: Literal["jarvis", "outlook", "google", "outlook_web"] = "jarvis"
+    remind_minutes: int | None = Field(default=None, ge=0, le=7 * 24 * 60)
+
+
+class CalendarLinkIn(BaseModel):
+    name: str = Field(min_length=1, max_length=40)
+    url: str = Field(min_length=10, max_length=2000)
+
+
+class HeartbeatIn(BaseModel):
+    enabled: bool = True
+    every_min: int = Field(default=heartbeats.DEFAULT_EVERY, ge=heartbeats.MIN_EVERY, le=24 * 60)
+    checks: list[str] = Field(default_factory=list, max_length=heartbeats.MAX_CHECKS)
+    quiet_from: str = Field(default="23:00", pattern=r"^([01]\d|2[0-3]):[0-5]\d$")
+    quiet_to: str = Field(default="07:00", pattern=r"^([01]\d|2[0-3]):[0-5]\d$")
+
+
+class PluginIn(BaseModel):
+    catalog_id: str | None = Field(default=None, max_length=40)  # one from the community catalog
+    text: str | None = Field(default=None, max_length=200_000)  # or a plugin file's contents
+
+
+class PluginExportIn(BaseModel):
+    name: str = Field(default="My skills", min_length=1, max_length=60)
+
+
+class BackupIn(BaseModel):
+    passphrase: str = Field(default="", max_length=200)  # empty: the saved sync passphrase
+    include_secrets: bool = False
+
+
+class RestoreIn(BaseModel):
+    data_b64: str = Field(min_length=10, max_length=60_000_000)
+    passphrase: str = Field(min_length=1, max_length=200)
+
+
+class SyncIn(BaseModel):
+    enabled: bool
+    folder: str = Field(default="", max_length=400)
+    include_secrets: bool = False
+    passphrase: str | None = Field(default=None, max_length=200)  # None keeps the saved one
+
+
 class VoiceModeIn(BaseModel):
     mode: str = Field(pattern="^(live|local)$")
 
@@ -321,7 +381,8 @@ def build_router(svc: Services, require_auth: Callable[..., None]) -> APIRouter:
     async def put_settings(body: SettingsIn) -> dict[str, Any]:
         changes = body.model_dump(exclude_unset=True)
         profile = {k: changes.pop(k) for k in ("user_name", "address", "proactive_alerts", "startup_briefing",
-                                                   "full_control", "permissions", "presence_greetings", "followups", "onboarded", "instructions") if k in changes}
+                                                   "full_control", "permissions", "presence_greetings", "followups", "onboarded", "instructions",
+                                                   "language", "calendar_outlook") if k in changes}
         if "permissions" in profile:
             bad = {k: v for k, v in (profile["permissions"] or {}).items() if k not in permissions.CAPABILITIES or v not in permissions.POLICIES}
             if bad:
@@ -329,6 +390,11 @@ def build_router(svc: Services, require_auth: Callable[..., None]) -> APIRouter:
             profile["permissions"] = {**(svc.settings.get("permissions") or {}), **profile["permissions"]}
         if profile:
             svc.settings.update_profile(profile)
+        if "language" in profile and svc.settings.get("voice_enabled") and svc.bridge.connected:
+            try:  # the offline voice listens and speaks in the new language from now on
+                await svc.bridge.call("voice_set", {"language": profile["language"], "enabled": True, "mode": svc.voice_mode()}, timeout=30)
+            except (AgentUnavailable, AgentError) as e:
+                log.warning("voice language not changed: %s", e)
 
         pid = changes.pop("provider", None) or svc.settings.provider
         if pid not in PRESETS:
@@ -647,7 +713,68 @@ def build_router(svc: Services, require_auth: Callable[..., None]) -> APIRouter:
             if not svc.automations.delete(str(args.get("id", ""))):
                 raise ToolFailure("No automation has that id; list_automations shows them.")
             return {"deleted": True}
+        if spec.name.startswith("calendar_"):
+            try:
+                return await _calendar_tool(spec.name, args)
+            except CalendarError as e:
+                raise ToolFailure(str(e)) from e
+            except (AgentUnavailable, AgentError) as e:
+                raise ToolFailure(f"The desktop agent couldn't do it: {e}") from e
         raise ToolFailure(f"Tool '{spec.name}' has no implementation.")
+
+    async def _calendar_tool(name: str, args: dict[str, Any]) -> dict[str, Any]:
+        cal = svc.calendar
+        if name == "calendar_events":
+            a, b = parse_time(str(args.get("from") or ""), "start"), parse_time(str(args.get("to") or ""), "end")
+            if b <= a and len(str(args.get("to") or "").strip()) == 10:  # "to" the same day: the whole of it
+                b += timedelta(days=1)
+            return await cal.events(a, b, str(args.get("query") or ""))
+        if name == "calendar_free_time":
+            day = parse_time(str(args.get("day") or ""), "day").date()
+            return await cal.free_time(day, int(args.get("start_hour") or 9), int(args.get("end_hour") or 18), int(args.get("min_minutes") or 30))
+        if name == "calendar_delete":
+            if not cal.delete_local(str(args.get("id") or "")):
+                raise CalendarError("No event in JARVIS's calendar has that id; events in other calendars are changed there.")
+            return {"deleted": True}
+        title = str(args.get("title") or "").strip()[:200]
+        if not title:
+            raise CalendarError("The event needs a title.")
+        raw_start = str(args.get("start") or "").strip()
+        all_day = bool(args.get("all_day")) or len(raw_start) == 10
+        start = parse_time(raw_start, "start")
+        if all_day:
+            start = start.replace(hour=0, minute=0, second=0)
+        if args.get("end"):
+            end = parse_time(str(args["end"]), "end")
+            if all_day:
+                end = max(end.replace(hour=0, minute=0, second=0) + timedelta(days=1 if len(str(args["end"]).strip()) == 10 else 0),
+                          start + timedelta(days=1))
+        else:
+            end = start + (timedelta(days=1) if all_day else timedelta(minutes=max(5, int(args.get("duration_minutes") or 60))))
+        if end <= start:
+            raise CalendarError("The event must end after it starts.")
+        target = str(args.get("calendar") or "jarvis").strip().lower().replace(" ", "_")
+        if target not in ("jarvis", "outlook", "google", "outlook_web"):
+            raise CalendarError("calendar must be jarvis, outlook, google or outlook_web.")
+        location, notes = str(args.get("location") or "")[:200], str(args.get("notes") or "")[:2000]
+        remind = args.get("remind_minutes")
+        if target in ("google", "outlook_web"):
+            await svc.bridge.call("open_url", {"url": compose_link(target, title, start, end, all_day, location, notes)}, timeout=30)
+            return {"opened": "Google Calendar" if target == "google" else "Outlook on the web",
+                    "next": "The new-event page is open with everything filled in. The user checks it and presses Save there."}
+        if target == "outlook":
+            out = await svc.bridge.call("outlook_add_event", {"title": title, "start": start.isoformat(timespec="seconds"),
+                                                              "end": end.isoformat(timespec="seconds"), "all_day": all_day,
+                                                              "location": location, "notes": notes,
+                                                              "remind_minutes": int(remind) if remind is not None else None}, timeout=90)
+            return {"added": title, "calendar": "Outlook", "start": out.get("start")}
+        ev = cal.add_local(title, start, end, all_day, location, notes)
+        if remind is not None and not all_day:
+            due = start - timedelta(minutes=int(remind))
+            if due.timestamp() > time.time() + 30:
+                svc.reminders.add(f"{title}, at {start:%H:%M}" + (f", {location}" if location else ""), due.isoformat(timespec="minutes"))
+                ev["reminder"] = f"{int(remind)} minutes before"
+        return ev
 
     def _spec(name: str) -> ToolSpec | None:
         """A built-in tool, or a connector's tool (its permission depends on whether it only reads)."""
@@ -819,7 +946,7 @@ def build_router(svc: Services, require_auth: Callable[..., None]) -> APIRouter:
     async def _go_offline(user: str, acted: bool, origin: str) -> None:
         """Live voice could not keep up: carry on with the offline voice (Parakeet hears, Piper speaks)."""
         try:
-            await svc.bridge.call("voice_set", {"enabled": True, "mode": "local"}, timeout=30)
+            await svc.bridge.call("voice_set", {"language": svc.settings.get("language"), "enabled": True, "mode": "local"}, timeout=30)
         except (AgentUnavailable, AgentError) as e:
             log.warning("could not switch the agent to the offline voice: %s", e)
         redo = bool(user) and not acted  # an action already taken is not repeated
@@ -843,7 +970,7 @@ def build_router(svc: Services, require_auth: Callable[..., None]) -> APIRouter:
         await asyncio.sleep(OFFLINE_FOR_S)
         if time.time() >= svc.offline_voice_until and svc.voice_mode() == "live" and svc.settings.get("voice_enabled"):
             try:  # time to give Live another chance
-                await svc.bridge.call("voice_set", {"enabled": True, "mode": "live"}, timeout=30)
+                await svc.bridge.call("voice_set", {"language": svc.settings.get("language"), "enabled": True, "mode": "live"}, timeout=30)
                 log.info("trying live voice again")
             except (AgentUnavailable, AgentError):
                 pass
@@ -985,7 +1112,7 @@ def build_router(svc: Services, require_auth: Callable[..., None]) -> APIRouter:
         svc.offline_voice_until = 0.0  # the user chose: try it now
         if svc.settings.get("voice_enabled"):
             try:
-                await svc.bridge.call("voice_set", {"enabled": True, "mode": body.mode}, timeout=30)
+                await svc.bridge.call("voice_set", {"language": svc.settings.get("language"), "enabled": True, "mode": body.mode}, timeout=30)
             except (AgentUnavailable, AgentError):
                 pass
         return {"mode": body.mode}
@@ -1000,7 +1127,7 @@ def build_router(svc: Services, require_auth: Callable[..., None]) -> APIRouter:
     @r.post("/voice")
     async def voice_toggle(body: VoiceIn) -> dict[str, Any]:
         try:
-            state = await svc.bridge.call("voice_set", {"enabled": body.enabled, "mode": svc.voice_mode()}, timeout=30)
+            state = await svc.bridge.call("voice_set", {"language": svc.settings.get("language"), "enabled": body.enabled, "mode": svc.voice_mode()}, timeout=30)
         except (AgentUnavailable, AgentError) as e:
             raise HTTPException(status_code=503, detail=str(e)) from e
         svc.settings.update_profile({"voice_enabled": bool(state.get("enabled"))})
@@ -1129,6 +1256,7 @@ def build_router(svc: Services, require_auth: Callable[..., None]) -> APIRouter:
             secrets = json.loads(svc.settings.service_key(f"connector:{c['name']}") or "{}")
             out.append({**{k: c.get(k) for k in ("name", "kind", "command", "args", "url", "enabled")},
                         "has_token": bool(secrets.get("token")), "env_names": sorted(secrets.get("env", {})),
+                        "needs_env": [n for n in c.get("env_names") or [] if n not in secrets.get("env", {})], "plugin": c.get("plugin"),
                         **svc.connectors.status.get(c["name"], {"state": "not started" if c.get("enabled", True) else "off"})})
         return out
 
@@ -1147,9 +1275,10 @@ def build_router(svc: Services, require_auth: Callable[..., None]) -> APIRouter:
             problem = key_route_problem(body.url, before, bool(body.token))
             if problem:
                 raise HTTPException(status_code=400, detail=problem.replace("key", "token"))
+        prev = next((c for c in svc.connectors.configs() if c["name"] == name), {})
         items = [c for c in svc.connectors.configs() if c["name"] != name]
         items.append({"name": name, "kind": body.kind, "command": body.command.strip(), "args": body.args, "url": body.url.strip(),
-                      "enabled": body.enabled})
+                      "enabled": body.enabled, **{k: prev[k] for k in ("plugin", "env_names") if k in prev}})  # still a plugin's
         svc.settings.set_connectors(items)
         secrets ={"token": body.token if body.token is not None else old.get("token", ""),
                    "env": {**old.get("env", {}), **(body.env or {})}}
@@ -1522,6 +1651,205 @@ def build_router(svc: Services, require_auth: Callable[..., None]) -> APIRouter:
         if not svc.automations.delete(aid):
             raise HTTPException(status_code=404, detail="No such automation.")
         return {"deleted": aid}
+
+    # ---------------- calendar ----------------
+
+    @r.get("/calendar")
+    async def calendar_view(start: str = "", end: str = "") -> dict[str, Any]:
+        try:
+            a = parse_time(start, "start") if start else datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+            b = parse_time(end, "end") if end else a + timedelta(days=14)
+            return {**await svc.calendar.events(a, b), "linked": svc.calendar.linked(), "outlook": bool(svc.settings.get("calendar_outlook"))}
+        except CalendarError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+
+    @r.post("/calendar/events")
+    async def calendar_add(body: CalendarEventIn) -> dict[str, Any]:
+        try:
+            return await _calendar_tool("calendar_add", body.model_dump())
+        except CalendarError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        except (AgentUnavailable, AgentError) as e:
+            raise HTTPException(status_code=503, detail=str(e)) from e
+
+    @r.delete("/calendar/events/{eid}")
+    async def calendar_delete(eid: str) -> dict[str, Any]:
+        if not svc.calendar.delete_local(eid):
+            raise HTTPException(status_code=404, detail="No such event in JARVIS's calendar.")
+        return {"deleted": eid}
+
+    @r.put("/calendar/linked")
+    async def calendar_link(body: CalendarLinkIn) -> list[dict[str, Any]]:
+        try:
+            linked = svc.calendar.link(body.name, body.url)
+            await svc.calendar.events(datetime.now(), datetime.now() + timedelta(days=1))  # read it once now, so a bad address shows
+            return linked
+        except CalendarError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+
+    @r.delete("/calendar/linked/{name}")
+    async def calendar_unlink(name: str) -> list[dict[str, Any]]:
+        if not svc.calendar.unlink(name):
+            raise HTTPException(status_code=404, detail="No calendar by that name.")
+        return svc.calendar.linked()
+
+    # ---------------- heartbeat ----------------
+
+    async def _heartbeat_say(text: str) -> None:
+        svc.bridge.voice_event({"type": "voice", "event": "briefing", "text": text})
+        await _say(text)
+
+    svc.heartbeat.runner = run_message
+    svc.heartbeat.say = _heartbeat_say
+
+    @r.get("/heartbeat")
+    async def heartbeat_view() -> dict[str, Any]:
+        return {**svc.heartbeat.status(), "waiting": svc.heartbeat.why_not()}
+
+    @r.put("/heartbeat")
+    async def heartbeat_save(body: HeartbeatIn) -> dict[str, Any]:
+        svc.settings.update_profile({"heartbeat": heartbeats.config(body.model_dump())})
+        return {**svc.heartbeat.status(), "waiting": svc.heartbeat.why_not()}
+
+    @r.post("/heartbeat/run")
+    async def heartbeat_now() -> dict[str, Any]:
+        if svc.heartbeat.running:
+            raise HTTPException(status_code=409, detail="A check is already running.")
+        if not svc.heartbeat.cfg()["checks"]:
+            raise HTTPException(status_code=400, detail="Add something to check first.")
+        spawn(svc.heartbeat.beat())
+        return {"started": True}
+
+    # ---------------- plugins ----------------
+
+    async def _plugin_from(body: PluginIn) -> tuple[dict[str, Any], str]:
+        try:
+            if body.catalog_id:
+                return await svc.plugins.from_catalog(body.catalog_id.strip().lower()), f"catalog:{body.catalog_id}"
+            if body.text:
+                return parse_plugin(body.text), "file"
+        except PluginError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        raise HTTPException(status_code=400, detail="Choose a plugin from the catalog, or give a plugin file.")
+
+    @r.get("/plugins")
+    async def plugins_installed() -> list[dict[str, Any]]:
+        return svc.plugins.installed()
+
+    @r.get("/plugins/catalog")
+    async def plugins_catalog() -> list[dict[str, Any]]:
+        try:
+            return await svc.plugins.catalog()
+        except PluginError as e:
+            raise HTTPException(status_code=502, detail=str(e)) from e
+
+    @r.post("/plugins/preview")
+    async def plugins_preview(body: PluginIn) -> dict[str, Any]:
+        m, _ = await _plugin_from(body)
+        return svc.plugins.preview(m)
+
+    @r.post("/plugins/install")
+    async def plugins_install(body: PluginIn) -> dict[str, Any]:
+        m, source = await _plugin_from(body)
+        try:
+            plugin, names = svc.plugins.install(m, source)
+        except (PluginError, ValueError) as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        for n in names:
+            await svc.connectors.drop(n)
+        return plugin
+
+    @r.delete("/plugins/{pid}")
+    async def plugins_remove(pid: str) -> dict[str, Any]:
+        names = svc.plugins.remove(pid)
+        if names is None:
+            raise HTTPException(status_code=404, detail="That plugin isn't installed.")
+        for n in names:
+            await svc.connectors.drop(n)
+        return {"removed": pid}
+
+    @r.post("/plugins/export")
+    async def plugins_export(body: PluginExportIn) -> dict[str, Any]:
+        """The user's skills as a plugin file in Documents, to share or to send to the catalog."""
+        skills = [s for s in svc.skills.mine()]
+        if not skills:
+            raise HTTPException(status_code=400, detail="There are no skills of yours to share yet.")
+        try:
+            m = export_skills(skills, body.name.strip(), (svc.settings.get("user_name") or "").strip())
+        except PluginError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        docs = Path.home() / "Documents"
+        path = (docs if docs.is_dir() else Path.home()) / f"{m['id']}.jarvis-plugin.json"
+        path.write_text(json.dumps(m, indent=2, ensure_ascii=False), encoding="utf-8")
+        return {"path": str(path), "skills": len(m["skills"])}
+
+    # ---------------- encrypted backup and sync ----------------
+
+    def _passphrase(given: str) -> str:
+        p = given or svc.settings.service_key(backups.PASS_KEY)
+        if not p:
+            raise HTTPException(status_code=400, detail="Enter a passphrase.")
+        return p
+
+    @r.get("/backup")
+    async def backup_view() -> dict[str, Any]:
+        return {**svc.backup.sync_cfg(), "device": svc.backup.device(), "last": svc.backup.last, "suggested": _sync_folders()}
+
+    @r.post("/backup/export")
+    async def backup_export(body: BackupIn) -> dict[str, Any]:
+        docs = Path.home() / "Documents"
+        path = (docs if docs.is_dir() else Path.home()) / f"JARVIS backup {time.strftime('%Y-%m-%d %H%M')}{backups.SUFFIX}"
+        try:
+            return await asyncio.to_thread(svc.backup.write, path, _passphrase(body.passphrase), body.include_secrets)
+        except backups.BackupError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+
+    @r.post("/backup/restore")
+    async def backup_restore(body: RestoreIn) -> dict[str, Any]:
+        import base64
+
+        try:
+            blob = base64.b64decode(body.data_b64)
+            snap = await asyncio.to_thread(backups.decrypt, blob, body.passphrase)
+            counts = await asyncio.to_thread(svc.backup.restore, snap, True)
+        except backups.BackupError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail="That file couldn't be read as a JARVIS backup.") from e
+        await svc.connectors.ensure()
+        return {"restored": counts, "from": (snap.get("device") or {}).get("name"), "made_at": snap.get("made_at")}
+
+    def _sync_folders() -> list[str]:
+        """Folders that a cloud drive already syncs, if this PC has them."""
+        home = Path.home()
+        found = [os.environ.get("OneDrive", ""), str(home / "Dropbox"), str(home / "Google Drive"), "G:\\My Drive"]
+        return [str(Path(f) / "JARVIS") for f in found if f and Path(f).is_dir()]
+
+    @r.put("/sync")
+    async def sync_save(body: SyncIn) -> dict[str, Any]:
+        if body.passphrase is not None:
+            if body.passphrase and len(body.passphrase) < backups.MIN_PASSPHRASE:
+                raise HTTPException(status_code=400, detail=f"Use a passphrase of at least {backups.MIN_PASSPHRASE} characters.")
+            svc.settings.set_service_key(backups.PASS_KEY, body.passphrase)
+        folder = body.folder.strip()
+        if body.enabled:
+            if not folder:
+                raise HTTPException(status_code=400, detail="Choose the folder to sync through.")
+            if not svc.settings.service_key(backups.PASS_KEY):
+                raise HTTPException(status_code=400, detail="Choose a passphrase; use the same one on every PC.")
+            try:
+                Path(folder).expanduser().mkdir(parents=True, exist_ok=True)
+            except OSError as e:
+                raise HTTPException(status_code=400, detail=f"That folder can't be used: {e.strerror or e}") from e
+        svc.settings.update_profile({"sync": {"enabled": body.enabled, "folder": folder, "include_secrets": body.include_secrets}})
+        return await backup_view()
+
+    @r.post("/sync/now")
+    async def sync_now() -> dict[str, Any]:
+        try:
+            return await asyncio.to_thread(svc.backup.sync_once)
+        except backups.BackupError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
 
     # ---------------- memory management ----------------
 

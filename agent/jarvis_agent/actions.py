@@ -469,7 +469,7 @@ def voice_forget(_: dict[str, Any]) -> dict[str, Any]:
 
 @action
 def voice_set(args: dict[str, Any]) -> dict[str, Any]:
-    return voice.instance().set_enabled(bool(args.get("enabled")), args.get("mode"))
+    return voice.instance().set_enabled(bool(args.get("enabled")), args.get("mode"), args.get("language"))
 
 
 _LIVE: live_audio.LiveAudio | None = None
@@ -1142,4 +1142,4 @@ def kill_process(args: dict[str, Any]) -> dict[str, Any]:
     return {"ended": name, "pid": p.pid}
 
 
-from . import docs, extras, maps, sandbox, uictl  # noqa: E402,F401 - register their actions (documents, system extras, places, window and control tools)
+from . import docs, extras, maps, outlook, sandbox, uictl  # noqa: E402,F401 - register their actions (documents, system extras, places, Outlook, window and control tools)

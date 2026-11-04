@@ -2,17 +2,24 @@ import { useCallback, useEffect, useState } from "react";
 import ApiKeysCard from "./ApiKeysCard";
 import ConnectorsCard from "./ConnectorsCard";
 import AutomationsCard from "./AutomationsCard";
+import CalendarCard from "./CalendarCard";
+import HeartbeatCard from "./HeartbeatCard";
+import PluginsCard from "./PluginsCard";
+import { t as tr } from "../i18n";
 import {
   LearnedSkill, MySkill, forgetLearnedSkill, getLearnedSkills, getMySkills, getSettings, putSettings, removeMySkill, saveMySkill,
 } from "../api";
 import type { Connection } from "../shell";
 
 type Note = { tone: "ok" | "bad"; text: string } | null;
-type Tab = "instructions" | "skills" | "automations" | "connectors" | "keys";
+type Tab = "instructions" | "skills" | "automations" | "heartbeat" | "calendar" | "plugins" | "connectors" | "keys";
 const TABS: { id: Tab; label: string }[] = [
   { id: "instructions", label: "Instructions" },
   { id: "skills", label: "Skills" },
   { id: "automations", label: "Automations" },
+  { id: "heartbeat", label: "Heartbeat" },
+  { id: "calendar", label: "Calendar" },
+  { id: "plugins", label: "Plugins" },
   { id: "connectors", label: "Connectors" },
   { id: "keys", label: "API keys" },
 ];
@@ -44,7 +51,7 @@ export default function CustomizeView({ conn }: { conn: Connection | null }) {
       <nav className="settings-nav" aria-label="Customize sections">
         {TABS.map((t) => (
           <button key={t.id} className={tab === t.id ? "on" : ""} aria-current={tab === t.id ? "page" : undefined} onClick={() => pick(t.id)}>
-            {t.label}
+            {tr(t.label)}
           </button>
         ))}
       </nav>
@@ -52,6 +59,9 @@ export default function CustomizeView({ conn }: { conn: Connection | null }) {
         {tab === "instructions" && <Instructions conn={conn} />}
         {tab === "skills" && <Skills conn={conn} />}
         {tab === "automations" && <AutomationsCard conn={conn} />}
+        {tab === "heartbeat" && <HeartbeatCard conn={conn} />}
+        {tab === "calendar" && <CalendarCard conn={conn} />}
+        {tab === "plugins" && <PluginsCard conn={conn} />}
         {tab === "connectors" && <ConnectorsCard conn={conn} />}
         {tab === "keys" && <ApiKeysCard conn={conn} />}
       </div>
@@ -92,7 +102,7 @@ function Instructions({ conn }: { conn: Connection | null }) {
 
   return (
     <section className="card">
-      <h2>Instructions</h2>
+      <h2>{tr("Instructions")}</h2>
       <p className="dim small">
         How you want JARVIS to behave, in your own words. It reads these before every chat and voice conversation. They can shape its style
         and habits, but never loosen the permission and safety rules.

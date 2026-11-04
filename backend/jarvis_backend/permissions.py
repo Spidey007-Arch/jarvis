@@ -30,11 +30,12 @@ CAPABILITIES: dict[str, tuple[str, bool]] = {
     "send_data_out": ("Send to a website after reading private data (files, mail, messages, the screen)", True),
     "connectors": ("Act through connectors (Slack, Notion, GitHub...): reading is always allowed", False),
     "automations": ("Create or delete automations (jobs JARVIS runs by itself on a schedule)", True),
+    "calendar": ("Add or delete calendar events", False),
 }
 POLICIES = ("allow", "ask", "block")
 ALLOWED_BY_DEFAULT = frozenset({"see_screen", "read_messages", "downloads"})
 # What "Full control" (the owner's own PC) allows without asking.
-FULL_CONTROL = frozenset({"change_files", "delete_files", "run_commands", "end_processes", "close_windows", "location"})
+FULL_CONTROL = frozenset({"change_files", "delete_files", "run_commands", "end_processes", "close_windows", "location", "calendar"})
 
 RISKY_CLICK = re.compile(
     r"\b(send|pay|payment|buy|purchase|order|checkout|check out|delete|remove|uninstall|erase|format|wipe|submit|post|publish|tweet|"
@@ -102,6 +103,10 @@ def capability(spec: ToolSpec, args: dict[str, Any]) -> str | None:
         return "close_windows" if str(args.get("action", "")).lower() == "close" else None
     if name in ("create_automation", "delete_automation"):  # a job that runs later, unattended, always asks first
         return "automations"
+    if name == "calendar_add":  # google / outlook_web only open a filled-in page; the user saves it there
+        return None if str(args.get("calendar") or "").lower() in ("google", "outlook_web") else "calendar"
+    if name == "calendar_delete":
+        return "calendar"
     if name in ("power", "sleep_pc"):
         return "power"
     if name == "autostart":
@@ -129,7 +134,8 @@ def decide(spec: ToolSpec, args: dict[str, Any], saved: dict[str, str] | None = 
            read_private: bool = False) -> tuple[str, str | None]:
     """(allow | ask | block, capability) for one tool call. read_private: private data was read earlier in this request."""
     cap = capability(spec, args)
-    if read_private and (spec.name in SENDS_OUT or spec.risk == "connector" or
+    web_calendar = spec.name == "calendar_add" and str(args.get("calendar") or "").lower() in ("google", "outlook_web")
+    if read_private and (spec.name in SENDS_OUT or spec.risk == "connector" or web_calendar or
                          spec.name == "run_command" and _UPLOADS.search(str(args.get("command", "")))):
         cap = "send_data_out"
     if cap is None:

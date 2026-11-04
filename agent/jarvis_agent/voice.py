@@ -56,6 +56,26 @@ FILES = {
 MIN_BYTES = {"whisper_zip": 8_000_000, "whisper_model": 59_000_000, "piper_zip": 22_000_000, "voice_model": 63_000_000, "voice_config": 4_000,
              "wake_mel": 1_000_000, "wake_embedding": 1_000_000, "wake_model": 1_000_000}
 
+# Hindi (Settings > Language): a multilingual Whisper model (the small one hears Hindi far better than base) and any
+# Piper hi_IN voice. Without them JARVIS keeps listening and speaking with the English models.
+HINDI_WHISPER = ("ggml-small-q5_1.bin", "ggml-base-q5_1.bin")
+HINDI_VOICE = "hi_IN-*-medium.onnx"
+LANGUAGES = ("en", "hi")
+LANGUAGE = "en"
+
+
+def set_language(language: str | None) -> None:
+    global LANGUAGE
+    if language in LANGUAGES:
+        LANGUAGE = language
+
+
+def hindi_files(dl: Path) -> dict[str, str | None]:
+    whisper = next((str(dl / f) for f in HINDI_WHISPER if (dl / f).is_file() and (dl / f).stat().st_size > 50_000_000), None)
+    voice = next((str(p) for p in sorted(dl.glob(HINDI_VOICE)) if p.with_name(p.name + ".json").is_file()), None)
+    return {"whisper_model": whisper, "voice_model": voice}
+
+
 def voice_dir() -> Path:
     base = Path(os.environ.get("JARVIS_DATA_DIR") or Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "JARVIS")
     return base / "voice"
@@ -100,14 +120,22 @@ def prepare() -> dict[str, Any]:
         missing.append("numpy + onnxruntime (pip install numpy onnxruntime)")
     whisper = _find(whisper_dir, "whisper-cli.exe", "main.exe")
     piper = _find(piper_dir, "piper.exe")
-    return {
+    setup = {
         "ready": not missing and bool(whisper and piper),
         "missing": missing,
         "whisper": str(whisper) if whisper else None,
         "piper": str(piper) if piper else None,
         "whisper_model": str(dl / FILES["whisper_model"]),
         "voice_model": str(dl / FILES["voice_model"]),
+        "language": LANGUAGE,
     }
+    if LANGUAGE == "hi":
+        hi = hindi_files(dl)
+        setup["hindi_missing"] = [n for n, k in (("a multilingual Whisper model (ggml-small-q5_1.bin)", "whisper_model"),
+                                                   ("a Hindi Piper voice (hi_IN-...-medium.onnx and its .json)", "voice_model")) if not hi[k]]
+        setup.update({k: v for k, v in hi.items() if v})
+        setup["hears_hindi"] = bool(hi["whisper_model"])
+    return setup
 
 
 def _rms(chunk: bytes) -> float:
@@ -198,7 +226,7 @@ class SpeechGate:
         return None
 
 
-_NAME = re.compile(r"\b(jarvis|jarvys|jervis|jarvas|jarves|javis)\b", re.I)
+_NAME = re.compile(r"\b(jarvis|jarvys|jervis|jarvas|jarves|javis)\b|जार्विस|जारविस|जार्वेस", re.I)
 def addressed(text: str) -> bool:
     """Was this speech meant for JARVIS? Only if it names JARVIS: anything else is someone else's conversation."""
     return bool(_NAME.search(text))
@@ -236,15 +264,16 @@ def clean_transcript(text: str, strip_name: bool = True) -> str:
     text = re.sub(r"\([^)]*\)|\[[^\]]*\]|\*[^*]*\*", " ", text)
     text = re.sub(r"\s+", " ", text).strip(" .,-")
     if strip_name:
-        text = re.sub(r"^(hey|ok|okay)?\s*jarvis\b[\s,.!?-]*", "", text, flags=re.I)  # the name is not part of the request
-    return text if re.search(r"[A-Za-z]{2,}", text) else ""
+        text = re.sub(r"^(hey|ok|okay|हे|ओके)?\s*(jarvis\b|जार्विस|जारविस)[\s,.!?।-]*", "", text, flags=re.I)  # the name is not part of the request
+    return text if re.search(r"[A-Za-z\u0900-\u097F]{2,}", text) else ""
 
 
 def transcribe(wav: bytes, setup: dict[str, Any], strip_name: bool = True) -> str:
     """NVIDIA Parakeet when its model is unpacked (asr.py), otherwise Whisper."""
     from . import asr
 
-    model = asr.recognizer()
+    hindi = setup.get("hears_hindi")
+    model = None if hindi else asr.recognizer()  # Parakeet only knows English
     if model is not None:
         return clean_transcript(model.transcribe(wav[44:]), strip_name)  # the WAV header is 44 bytes
     fd, path = tempfile.mkstemp(prefix="jarvis-voice-", suffix=".wav")
@@ -255,7 +284,7 @@ def transcribe(wav: bytes, setup: dict[str, Any], strip_name: bool = True) -> st
         # Whisper always encodes a 30 s window; a short clip only needs the part it fills (3x faster).
         secs = max(0.0, (len(wav) - 44) / 2 / RATE)
         ctx = str(min(1500, max(256, int(secs / 30 * 1500) + 128)))
-        r = subprocess.run([setup["whisper"], "-m", setup["whisper_model"], "-f", path, "-l", "en", "-nt", "-np", "-t", threads, "-ac", ctx],
+        r = subprocess.run([setup["whisper"], "-m", setup["whisper_model"], "-f", path, "-l", "hi" if hindi else "en", "-nt", "-np", "-t", threads, "-ac", ctx],
                            capture_output=True, text=True, timeout=90, creationflags=win.CREATE_NO_WINDOW | win.ABOVE_NORMAL_PRIORITY_CLASS)
         if r.returncode != 0:
             raise RuntimeError((r.stderr or r.stdout).strip().splitlines()[-1] if (r.stderr or r.stdout).strip() else f"whisper exited {r.returncode}")
@@ -286,7 +315,8 @@ class Voice:
 
     # ----- wake word -----
 
-    def set_enabled(self, enabled: bool, mode: str | None = None) -> dict[str, Any]:
+    def set_enabled(self, enabled: bool, mode: str | None = None, language: str | None = None) -> dict[str, Any]:
+        set_language(language)
         if mode in ("live", "local"):
             self.mode = mode
         setup = prepare()
@@ -372,7 +402,7 @@ class Voice:
             return
         try:
             setup = prepare()
-            if not setup.get("whisper") and not asr_ready():
+            if not setup.get("whisper") and not asr_ready() or setup.get("hears_hindi") and not setup.get("whisper"):
                 return  # without a speech recognizer only "Hey JARVIS" wakes it
             raw = transcribe(to_wav(pcm), setup, strip_name=False)
             if not raw or not addressed(raw):

@@ -53,6 +53,10 @@ SYNONYMS = {
     "near": "maps_search my_location", "nearby": "maps_search", "location": "my_location maps_search", "where": "my_location",
     "map": "maps_search maps_directions", "directions": "maps_directions", "route": "maps_directions", "distance": "maps_directions",
     "restaurant": "maps_search", "cafe": "maps_search", "hotel": "maps_search", "hospital": "maps_search",
+    "calendar": "calendar_events calendar_add calendar_free_time", "meeting": "calendar_events calendar_add calendar_free_time",
+    "schedule": "calendar_events calendar_add", "event": "calendar_events calendar_add", "appointment": "calendar_events calendar_add",
+    "free": "calendar_free_time", "busy": "calendar_events calendar_free_time", "agenda": "calendar_events", "today": "calendar_events",
+    "tomorrow": "calendar_events", "birthday": "calendar_events calendar_add", "plan": "calendar_free_time calendar_events",
     "link": "read_webpage", "url": "read_webpage", "page": "read_webpage", "website": "read_webpage", "article": "read_webpage", "store": "store_file stored_files",
 }
 

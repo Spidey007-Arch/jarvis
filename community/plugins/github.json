@@ -1,0 +1,12 @@
+{
+  "format": "jarvis-plugin",
+  "id": "github",
+  "name": "GitHub",
+  "version": "1.0",
+  "author": "JARVIS",
+  "homepage": "https://github.com/github/github-mcp-server",
+  "description": "Issues, pull requests and repositories through GitHub's official remote connector. Needs a GitHub personal access token (github.com/settings/tokens), added as the connector's token.",
+  "connectors": [
+    {"name": "github", "kind": "web", "url": "https://api.githubcopilot.com/mcp/", "needs_token": true}
+  ]
+}

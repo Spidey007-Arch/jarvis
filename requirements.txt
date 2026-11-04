@@ -3,6 +3,9 @@ google-genai
 httpx
 psutil
 pydantic
+# encrypted backup and sync; time zones of linked calendars
+cryptography
+tzdata
 uvicorn
 websockets
 # PC control

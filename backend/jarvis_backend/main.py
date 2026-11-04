@@ -34,6 +34,10 @@ from .skills import Skills
 from .tasks import Tasks
 from .reminders import Reminders
 from .automations import Automations
+from .backup import Backup
+from .calendars import Calendar
+from .heartbeat import Heartbeat
+from .plugins import Plugins
 from .settings import SettingsStore
 
 log = logging.getLogger("jarvis.backend")
@@ -86,7 +90,12 @@ def create_app(port: int, token: str | None = None) -> FastAPI:
     services = Services(settings=settings, llm=llm, db=db, memory=MemoryStore(db, llm), bridge=bridge, reminders=Reminders(db, bridge),
                         monitor=Monitor(bridge, settings), tasks=Tasks(db), skills=Skills(db),
                         connectors=Connectors(settings), token=token,
-                        automations=Automations(db))
+                        automations=Automations(db), calendar=Calendar(db, settings, bridge))
+    services.plugins = Plugins(db, services.skills, settings)
+    services.heartbeat = Heartbeat(settings, db, away=lambda: bool(services.initiative and services.initiative.state == "away"),
+                                   busy=lambda: bool(services.live and services.live.active) or services.tasks.current is not None)
+    services.backup = Backup(settings=settings, db=db, memory=services.memory, skills=services.skills, automations=services.automations,
+                             calendar=services.calendar, plugins=services.plugins)
 
     # Housekeeping waits until the user isn't using the PC (jobs.py).
     jobs = Jobs(db, stats=lambda: bridge.stats if bridge.connected else {},
@@ -116,6 +125,8 @@ def create_app(port: int, token: str | None = None) -> FastAPI:
         reminders = asyncio.create_task(services.reminders.run())
         monitor = asyncio.create_task(services.monitor.run())
         automations = asyncio.create_task(services.automations.run())
+        heartbeat = asyncio.create_task(services.heartbeat.run())
+        sync = asyncio.create_task(services.backup.run())
         initiative = asyncio.create_task(services.initiative.run()) if services.initiative else None
         if services.settings.provider == "gateway" and gateway.installed():  # the chosen AI needs it: warm it up now
             gateway.start_soon((services.settings.provider_cfg("gateway").get("base_url") or PRESETS["gateway"]["base_url"]).strip())
@@ -127,6 +138,8 @@ def create_app(port: int, token: str | None = None) -> FastAPI:
             reminders.cancel()
             monitor.cancel()
             automations.cancel()
+            heartbeat.cancel()
+            sync.cancel()
             if initiative:
                 initiative.cancel()
             await services.connectors.close()
@@ -244,7 +257,7 @@ def create_app(port: int, token: str | None = None) -> FastAPI:
         """A restarted agent forgets that the wake word was on; turn it back on."""
         await asyncio.sleep(1.0)
         try:
-            state = await bridge.call("voice_set", {"enabled": True, "mode": services.voice_mode()}, timeout=30)
+            state = await bridge.call("voice_set", {"language": settings.get("language"), "enabled": True, "mode": services.voice_mode()}, timeout=30)
             log.info("voice restored", extra={"fields": {"enabled": state.get("enabled"), "missing": state.get("missing")}})
         except Exception as e:  # noqa: BLE001
             log.warning("could not restore voice: %s", e)

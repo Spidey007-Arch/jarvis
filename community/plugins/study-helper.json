@@ -1,0 +1,25 @@
+{
+  "format": "jarvis-plugin",
+  "id": "study-helper",
+  "name": "Study helper",
+  "version": "1.0",
+  "author": "JARVIS",
+  "description": "Turn a PDF or notes into a summary document, flashcards in Excel, or a spoken quiz.",
+  "skills": [
+    {
+      "name": "Summarize for study",
+      "when_to": "I ask to summarize a PDF, chapter or notes for studying",
+      "body": "1. Find the file I mean (recent files or Downloads if I don't give a path) and read it with read_document.\n2. Write a Word document next to it named '<original name> - summary': key ideas as short headed sections, definitions in bold, and a 'Remember' list of 5-10 points at the end.\n3. Open the document and tell me where it is."
+    },
+    {
+      "name": "Make flashcards",
+      "when_to": "I ask for flashcards from a file or a topic",
+      "body": "1. Read the file I mean, or use what we discussed if I name a topic.\n2. Make 15-30 question and answer pairs, one fact each, answers under 20 words.\n3. Create an Excel file '<topic> flashcards' with columns Question and Answer, and open it."
+    },
+    {
+      "name": "Quiz me",
+      "when_to": "I say quiz me, test me, or ask me questions on something",
+      "body": "1. Use the file or topic I name.\n2. Ask one question at a time and wait for my answer.\n3. Say whether I'm right in a few words, and give the right answer if not.\n4. After 10 questions, or when I say stop, tell me my score and the topics I got wrong."
+    }
+  ]
+}

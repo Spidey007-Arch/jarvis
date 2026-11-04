@@ -1,0 +1,20 @@
+{
+  "format": "jarvis-plugin",
+  "id": "morning-routine",
+  "name": "Morning routine",
+  "version": "1.0",
+  "author": "JARVIS",
+  "description": "Start and wrap up your day: your calendar, reminders, unread mail and the weather in one go, and a short end-of-day review.",
+  "skills": [
+    {
+      "name": "Start my day",
+      "when_to": "I say good morning, start my day, or what's my day look like",
+      "body": "1. Greet me briefly.\n2. Check today's calendar (calendar_events for today) and say what's on, with times.\n3. List today's reminders and alarms.\n4. Check my unread Gmail and tell me only what looks urgent or needs a reply today.\n5. Tell me today's weather where I am in one sentence.\n6. If there is a gap of an hour or more before my first event, say so.\nKeep the whole thing under a minute when spoken."
+    },
+    {
+      "name": "Wrap up my day",
+      "when_to": "I say wrap up, end my day, or I'm done for today",
+      "body": "1. Tell me what's on tomorrow's calendar, first event first.\n2. List reminders set for tomorrow.\n3. Mention anything I said I'd do today in our conversations that I haven't done.\n4. Ask whether to set an alarm for tomorrow morning, and set it if I say a time."
+    }
+  ]
+}

@@ -71,7 +71,7 @@ class Levels:
 
 def sentences(text: str) -> list[str]:
     """Split into sentences, keeping very short ones with the next so the voice doesn't stutter."""
-    parts = [p.strip() for p in re.split(r"(?<=[.!?…])\s+|\n+", text) if p.strip()]
+    parts = [p.strip() for p in re.split(r"(?<=[.!?…।])\s+|\n+", text) if p.strip()]  # । ends a Hindi sentence
     out: list[str] = []
     for p in parts:
         if out and len(out[-1]) < 25:

@@ -123,5 +123,39 @@ class WakeOnSpeech(unittest.TestCase):
             self.assertFalse(voice.addressed(text), text)  # someone else's conversation, the TV, a greeting without the name
 
 
+class Hindi(unittest.TestCase):
+    def tearDown(self) -> None:
+        voice.set_language("en")
+
+    def test_hindi_speech_is_kept_and_the_name_heard(self) -> None:
+        self.assertEqual(voice.clean_transcript("जार्विस, गाना चलाओ।"), "गाना चलाओ।")
+        self.assertTrue(voice.addressed("जार्विस मेरा कैलेंडर बताओ"))
+        self.assertEqual(voice.clean_transcript("(संगीत)"), "")
+
+    def test_sentences_end_at_the_danda(self) -> None:
+        from jarvis_agent import speech
+
+        self.assertEqual(len(speech.sentences("आज आपके कैलेंडर में तीन मीटिंग हैं। पहली दस बजे है, दूसरी दोपहर में।")), 2)
+
+    def test_hindi_files_are_found_or_named(self) -> None:
+        with tempfile.TemporaryDirectory() as d, mock.patch.dict(os.environ, {"JARVIS_DATA_DIR": d}):
+            dl = Path(d) / "voice" / "downloads"
+            dl.mkdir(parents=True)
+            voice.set_language("hi")
+            setup = voice.prepare()
+            self.assertEqual(len(setup["hindi_missing"]), 2)
+            self.assertFalse(setup["hears_hindi"])
+            (dl / "hi_IN-pratham-medium.onnx").write_bytes(b"x")
+            (dl / "hi_IN-pratham-medium.onnx.json").write_text("{}")
+            with open(dl / "ggml-small-q5_1.bin", "wb") as f:
+                f.truncate(60_000_000)
+            setup = voice.prepare()
+            self.assertEqual(setup["hindi_missing"], [])
+            self.assertTrue(setup["hears_hindi"])
+            self.assertTrue(setup["voice_model"].endswith("hi_IN-pratham-medium.onnx"))
+            voice.set_language("en")
+            self.assertTrue(voice.prepare()["voice_model"].endswith("en_GB-alan-medium.onnx"))
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

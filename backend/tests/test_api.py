@@ -104,6 +104,64 @@ class ApiTests(unittest.TestCase):
         self.assertIn("API key", got["last_result"])
         self.assertEqual(self.client.delete(f"/api/automations/{a['id']}", headers=AUTH).status_code, 200)
 
+    def test_calendar_endpoints(self):
+        r = self.client.post("/api/calendar/events", headers=AUTH, json={"title": "Dentist", "start": "2030-01-05T16:00", "remind_minutes": 30})
+        self.assertEqual(r.status_code, 200, r.text)
+        ev = r.json()
+        self.assertEqual((ev["start"], ev["end"], ev["reminder"]), ("2030-01-05T16:00", "2030-01-05T17:00", "30 minutes before"))
+        view = self.client.get("/api/calendar?start=2030-01-01&end=2030-01-31", headers=AUTH).json()
+        self.assertEqual([e["title"] for e in view["events"]], ["Dentist"])
+        bad = self.client.post("/api/calendar/events", headers=AUTH, json={"title": "x", "start": "2030-01-05T16:00", "end": "2030-01-05T15:00"})
+        self.assertEqual(bad.status_code, 400)
+        self.assertIn("after it starts", bad.json()["detail"])
+        self.assertEqual(self.client.put("/api/calendar/linked", headers=AUTH, json={"name": "Work", "url": "http://not-https.example/x.ics"}).status_code, 400)
+        self.assertEqual(self.client.delete(f"/api/calendar/events/{ev['id']}", headers=AUTH).status_code, 200)
+        self.assertEqual(self.client.get("/api/calendar?start=2030-01-01&end=2030-01-31", headers=AUTH).json()["events"], [])
+
+    def test_heartbeat_endpoints(self):
+        self.assertEqual(self.client.post("/api/heartbeat/run", headers=AUTH).status_code, 400)  # nothing to check yet
+        r = self.client.put("/api/heartbeat", headers=AUTH, json={"enabled": True, "every_min": 30, "checks": ["battery", " "],
+                                                                   "quiet_from": "22:30", "quiet_to": "06:00"})
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertEqual((r.json()["checks"], r.json()["quiet_from"]), (["battery"], "22:30"))
+        self.assertEqual(self.client.put("/api/heartbeat", headers=AUTH, json={"every_min": 5}).status_code, 422)
+        self.client.put("/api/heartbeat", headers=AUTH, json={"enabled": False, "checks": []})
+
+    def test_plugin_from_a_file(self):
+        plugin = {"format": "jarvis-plugin", "id": "api-demo", "name": "API demo",
+                  "skills": [{"name": "API demo skill", "when_to": "demo", "body": "1. Say demo"}],
+                  "connectors": [{"name": "demo-notes", "kind": "local", "command": "npx", "args": ["-y", "demo-mcp"], "env_names": ["DEMO_TOKEN"]}]}
+        import json as _json
+        p = self.client.post("/api/plugins/preview", headers=AUTH, json={"text": _json.dumps(plugin)}).json()
+        self.assertEqual(p["commands"][0]["runs"], "npx -y demo-mcp")
+        self.assertEqual(self.client.post("/api/plugins/install", headers=AUTH, json={"text": _json.dumps(plugin)}).status_code, 200)
+        conns = {c["name"]: c for c in self.client.get("/api/connectors", headers=AUTH).json()}
+        self.assertEqual((conns["demo-notes"]["enabled"], conns["demo-notes"]["needs_env"]), (False, ["DEMO_TOKEN"]))
+        self.assertEqual(self.client.delete("/api/plugins/api-demo", headers=AUTH).status_code, 200)
+        self.assertNotIn("demo-notes", [c["name"] for c in self.client.get("/api/connectors", headers=AUTH).json()])
+        bad = {**plugin, "connectors": [{"name": "x", "kind": "local", "command": "cmd", "args": ["/c", "del"]}]}
+        self.assertEqual(self.client.post("/api/plugins/preview", headers=AUTH, json={"text": _json.dumps(bad)}).status_code, 400)
+
+    def test_backup_restore_and_sync_settings(self):
+        import base64 as _b64
+        from jarvis_backend import backup as _backup
+
+        blob = _backup.encrypt({"device": {"name": "Laptop"}, "made_at": 1, "profile": {"instructions": "From the laptop."},
+                                "memories": [{"type": "preference", "subject": "tea", "content": "Likes masala chai"}]}, "laptop passphrase")
+        data = _b64.b64encode(blob).decode()
+        self.assertEqual(self.client.post("/api/backup/restore", headers=AUTH, json={"data_b64": data, "passphrase": "wrong one!"}).status_code, 400)
+        r = self.client.post("/api/backup/restore", headers=AUTH, json={"data_b64": data, "passphrase": "laptop passphrase"})
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertEqual((r.json()["restored"]["memories"], r.json()["from"]), (1, "Laptop"))
+        self.assertEqual(self.client.get("/api/settings", headers=AUTH).json()["instructions"], "From the laptop.")
+        self.client.put("/api/settings", headers=AUTH, json={"instructions": ""})
+        for m in self.client.get("/api/memories", headers=AUTH).json():
+            self.client.delete(f"/api/memories/{m['id']}", headers=AUTH)
+        r = self.client.put("/api/sync", headers=AUTH, json={"enabled": True, "folder": str(Path(_tmp.name) / "sync")})
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("passphrase", r.json()["detail"])
+        self.assertEqual(self.client.put("/api/sync", headers=AUTH, json={"enabled": False, "passphrase": "short"}).status_code, 400)
+
     def test_conversations_empty_and_404(self):
         self.assertEqual(self.client.get("/api/conversations", headers=AUTH).json(), [])
         self.assertEqual(self.client.get("/api/conversations/nope/messages", headers=AUTH).status_code, 404)

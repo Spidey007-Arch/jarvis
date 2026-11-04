@@ -1,16 +1,19 @@
 import { useCallback, useEffect, useState } from "react";
 import PermissionsCard from "./PermissionsCard";
 import SystemCard from "./SystemCard";
+import BackupCard from "./BackupCard";
+import { LANGS, setLang, t as tr } from "../i18n";
 import { ApiError, ModelInfo, ProviderPreset, Settings, SettingsUpdate, VoiceStatus, enrollVoice, forgetVoice, getModels, getProviders, getSettings, getVoice, putSettings, setVoice, setVoiceMode, startGateway } from "../api";
 import type { Connection } from "../shell";
 
 type Note = { tone: "ok" | "bad"; text: string } | null;
-type Tab = "general" | "ai" | "voice" | "permissions" | "system";
+type Tab = "general" | "ai" | "voice" | "permissions" | "backup" | "system";
 const TABS: { id: Tab; label: string }[] = [
   { id: "general", label: "General" },
   { id: "ai", label: "AI & models" },
   { id: "voice", label: "Voice" },
   { id: "permissions", label: "PC control & safety" },
+  { id: "backup", label: "Backup & sync" },
   { id: "system", label: "System" },
 ];
 const TAB_KEY = "jarvis.settingsTab";
@@ -185,7 +188,7 @@ export default function SettingsView({ conn, onChanged }: { conn: Connection | n
       <nav className="settings-nav" aria-label="Settings sections">
         {TABS.map((t) => (
           <button key={t.id} className={tab === t.id ? "on" : ""} aria-current={tab === t.id ? "page" : undefined} onClick={() => pick(t.id)}>
-            {t.label}
+            {tr(t.label)}
           </button>
         ))}
       </nav>
@@ -194,10 +197,23 @@ export default function SettingsView({ conn, onChanged }: { conn: Connection | n
         {tab === "general" && (
           <>
           <section className="card">
-            <h2>How JARVIS addresses you</h2>
+            <h2>{tr("Language")}</h2>
+            <p className="dim small">{tr("The interface, JARVIS's replies and the offline voice.")} Hindi speech needs two more voice files:
+              see Voice setup in the README.</p>
+            <div className="chips">
+              {LANGS.map((l) => (
+                <button key={l.id} className={(s.language ?? "en") === l.id ? "on" : ""} disabled={busy}
+                  onClick={() => { setLang(l.id); save("profile", { language: l.id }, l.id === "hi" ? "JARVIS अब हिन्दी में बात करेगा।" : "JARVIS speaks English now."); }}>
+                  {l.label}
+                </button>
+              ))}
+            </div>
+          </section>
+          <section className="card">
+            <h2>{tr("How JARVIS addresses you")}</h2>
             <div className="grid2">
               <label>
-                <span>Your name</span>
+                <span>{tr("Your name")}</span>
                 <input value={name} maxLength={80} onChange={(e) => setName(e.target.value)} />
               </label>
               <label>
@@ -265,6 +281,7 @@ export default function SettingsView({ conn, onChanged }: { conn: Connection | n
           </section>
           </>
         )}
+        {tab === "backup" && <BackupCard conn={conn} />}
         {tab === "ai" && (
           <>
           <section className="card provider-card">

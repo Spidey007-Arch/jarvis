@@ -1,0 +1,12 @@
+{
+  "format": "jarvis-plugin",
+  "id": "notion",
+  "name": "Notion",
+  "version": "1.0",
+  "author": "JARVIS",
+  "homepage": "https://github.com/makenotion/notion-mcp-server",
+  "description": "Search, read and add to your Notion pages through Notion's official connector. Needs a Notion integration token: create an internal integration at notion.so/profile/integrations, copy its token, and share the pages it may use with the integration.",
+  "connectors": [
+    {"name": "notion", "kind": "local", "command": "npx", "args": ["-y", "@notionhq/notion-mcp-server"], "env_names": ["NOTION_TOKEN"]}
+  ]
+}

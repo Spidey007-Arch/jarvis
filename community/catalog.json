@@ -1,0 +1,14 @@
+{
+  "plugins": [
+    {"id": "morning-routine", "name": "Morning routine", "author": "JARVIS", "has": ["2 skills"],
+     "description": "Start and wrap up your day: your calendar, reminders, unread mail and the weather in one go, and a short end-of-day review."},
+    {"id": "focus-mode", "name": "Focus mode", "author": "JARVIS", "has": ["2 skills"],
+     "description": "Pomodoro-style focus: closes distractions, plays focus music quietly and times 25-minute blocks with short breaks."},
+    {"id": "study-helper", "name": "Study helper", "author": "JARVIS", "has": ["3 skills"],
+     "description": "Turn a PDF or notes into a summary document, flashcards in Excel, or a spoken quiz."},
+    {"id": "notion", "name": "Notion", "author": "JARVIS", "has": ["connector"],
+     "description": "Search, read and add to your Notion pages through Notion's official connector. Needs a Notion integration token."},
+    {"id": "github", "name": "GitHub", "author": "JARVIS", "has": ["connector"],
+     "description": "Issues, pull requests and repositories through GitHub's official remote connector. Needs a GitHub personal access token."}
+  ]
+}

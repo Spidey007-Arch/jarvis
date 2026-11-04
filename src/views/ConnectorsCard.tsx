@@ -68,8 +68,23 @@ export default function ConnectorsCard({ conn }: { conn: Connection | null }) {
             <span className="conn-name">{c.name}</span>
             <span className="dim small conn-meta" title={c.error ?? ""}>
               {c.state === "connected" ? `${c.tools} tools${c.server ? ` · ${c.server}` : ""}` : c.state === "error" ? `error: ${c.error}` : c.state}
+              {c.plugin ? ` · from a plugin` : ""}{c.needs_env?.length ? ` · needs ${c.needs_env.join(", ")}` : ""}
             </span>
-            <button className="ghost" disabled={busy || !conn} onClick={() => conn && act(() => retryConnector(conn, c.name))}>RECONNECT</button>
+            {c.enabled === false ? (
+              <button className="ghost" disabled={busy || !conn} title="Check its details below, add what it needs, then ADD CONNECTOR"
+                onClick={() => {
+                  setKind(c.kind);
+                  setName(c.name);
+                  setCommand(c.command ?? "");
+                  setArgs((c.args ?? []).join(" "));
+                  setUrl(c.url ?? "");
+                  setEnvName(c.needs_env?.[0] ?? "");
+                }}>
+                SET UP
+              </button>
+            ) : (
+              <button className="ghost" disabled={busy || !conn} onClick={() => conn && act(() => retryConnector(conn, c.name))}>RECONNECT</button>
+            )}
             <button className="ghost" disabled={busy || !conn} onClick={() => conn && act(() => deleteConnector(conn, c.name))}>REMOVE</button>
           </li>
         ))}

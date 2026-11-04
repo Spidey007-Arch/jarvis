@@ -49,6 +49,11 @@ You decide how much it may do, action by action.
 - **Start-up briefing**: when it opens, JARVIS tells you how the PC is doing, what's running, and what's due today.
 - **Initiative**: welcomes you back after you've been away, and follows up on a conversation left hanging (at
   most 3 times an hour, and only with a reason). Both can be turned off.
+- **Heartbeat**: every so often (30 minutes by default) JARVIS goes through a short list you write ("anything
+  urgent in my mail?", "a meeting in the next 30 minutes?", "a drive over 90% full?") and speaks up only when one
+  needs you. It only looks, never changes anything, stays quiet during quiet hours and while you're away, and
+  doesn't repeat itself.
+- **English or Hindi**: the interface, JARVIS's replies and the offline voice (Settings → General → Language).
 
 ### Act on your PC
 - **Apps and windows:** open, close, switch, arrange, wait for windows; find and press buttons by their real text
@@ -60,6 +65,10 @@ You decide how much it may do, action by action.
 - **System:** health (CPU, memory, disk, battery, graphics card, temperatures), volume, media keys, brightness,
   lock, sleep, restart, Windows settings pages, start with Windows.
 - **Reminders, alarms and timers**, spoken at the right time; ones missed while the PC was off are mentioned once.
+- **Calendar**, with no API key or sign-in of JARVIS's own: "what's on tomorrow?", "find me a free hour on
+  Friday", "add the dentist on the 12th at 4 and remind me 30 minutes before". It reads JARVIS's own calendar,
+  Google and Outlook.com calendars linked by their private address, and classic Outlook on your PC. It adds to
+  JARVIS's calendar or Outlook directly, or opens Google's or Outlook's new-event page filled in for you to save.
 - **Music:** "play Alfaaz on Spotify" searches Spotify, picks the right song and checks it's actually playing.
 
 ### Work with the web
@@ -92,6 +101,10 @@ You decide how much it may do, action by action.
 - **The Memory panel** shows everything it knows: edit, delete (the whole history of a fact goes with it), export
   and import.
 - **Long conversations** are summarised as they go, so the beginning isn't forgotten.
+- **Encrypted backup and sync**: back up settings, instructions, memories, skills, automations, the calendar and
+  plugins to one file locked with your passphrase (AES-256), and restore it on another PC. Or sync your PCs
+  through a folder your OneDrive, Google Drive or Dropbox already syncs: no server, no account. Keys and tokens
+  are included only if you choose.
 
 ### Learns and follows your way of doing things
 - **Customize** is one place to shape JARVIS:
@@ -103,6 +116,10 @@ You decide how much it may do, action by action.
     keep failing are dropped.
   - **Automations**: jobs it does by itself on a schedule ("every weekday at 9, go through my unread mail and tell
     me what needs a reply"), with the result spoken aloud if you like. You can also just ask for one in chat.
+  - **Heartbeat**: the list JARVIS checks every so often, how often, and quiet hours.
+  - **Calendar**: what's coming up, new events, and linking Google or Outlook.com calendars.
+  - **Plugins**: bundles of skills and connectors other people shared. Install one from the community catalog or
+    a file, after seeing exactly what it adds (connectors arrive turned off). Share your own skills as a plugin.
   - **Connectors**: any MCP server (Slack, Notion, GitHub, calendars, databases…) becomes JARVIS tools.
   - **API keys** for public APIs that need one.
 
@@ -360,6 +377,9 @@ Your settings, memory and conversations are kept: they live in `%LOCALAPPDATA%\J
    - `melspectrogram.onnx`, `embedding_model.onnx` and `hey_jarvis_v0.1.onnx` from [openWakeWord v0.5.1](https://github.com/dscripka/openWakeWord/releases/tag/v0.5.1)
    - Recommended: `sherpa-onnx-nemo-parakeet_tdt_ctc_110m-en-36000-int8.tar.bz2` from [sherpa-onnx ASR models](https://github.com/k2-fsa/sherpa-onnx/releases/tag/asr-models)
    - Optional, to make JARVIS answer only you: `wespeaker_en_voxceleb_resnet34_LM.onnx` from [sherpa-onnx speaker models](https://github.com/k2-fsa/sherpa-onnx/releases/tag/speaker-recongition-models)
+   - For Hindi: `ggml-small-q5_1.bin` from [whisper.cpp models](https://huggingface.co/ggerganov/whisper.cpp), and a
+     Hindi voice, e.g. `hi_IN-pratham-medium.onnx` and `hi_IN-pratham-medium.onnx.json` from
+     [Piper voices](https://huggingface.co/rhasspy/piper-voices/tree/main/hi/hi_IN)
 3. Restart JARVIS.
 4. Turn on **Settings → Voice**.
 5. Optional: **Settings → Voice → Teach JARVIS my voice**, and read aloud for 15 seconds.
@@ -382,6 +402,8 @@ Some things to try:
 | "Clean up my Downloads folder" | Shows a plan first, then moves files into folders |
 | "Every weekday at 9, check my mail and tell me what matters" | Creates an automation (asks you first) and speaks the result each morning |
 | "Remind me to call Papa at 7" | Speaks the reminder at 7 |
+| "Am I free Friday afternoon? If so, add gym at 4" | Checks every calendar, finds the gap, adds the event (asks first) |
+| "जार्विस, कल मेरा क्या प्लान है?" | Answers in Hindi from your calendar and reminders (with Language set to Hindi) |
 | "Run the tests in D:\Projects\app and fix what fails" | Runs commands, reads and edits files (with backups), reports the real output |
 
 The **panels** on the left rail: Conversations, Memory, Customize, Settings, System. The model picker and today's
@@ -402,19 +424,22 @@ backend/     FastAPI brain
     persona.py       JARVIS's character and the system prompt
     permissions.py   Allow / Ask / Block per capability, prompt-injection guards
     tools.py         every tool JARVIS can call; toolsearch.py picks the relevant ones
-    automations.py   scheduled jobs
+    automations.py   scheduled jobs;  heartbeat.py periodic checks that speak only when needed
+    calendars.py     calendar: JARVIS's own, linked .ics calendars, Outlook;  plugins.py plugins and the catalog
+    backup.py        encrypted backup and sync between PCs
     reminders.py     reminders, alarms, timers;  jobs.py idle-time housekeeping
     research.py      web search and page reading;  public_apis.py the public-APIs list
     live.py          Gemini Live voice;  briefing.py, initiative.py, monitor.py, tasks.py, skills.py
     connectors.py    MCP client;  gateway.py the local AI gateway;  settings.py encrypted settings
 agent/       The hands on Windows
   jarvis_agent/
-    actions.py       apps, files, commands, processes, system
+    actions.py       apps, files, commands, processes, system;  outlook.py classic Outlook's calendar
     uictl.py         UI Automation, OCR, windows, Spotify
     webdrive.py      JARVIS's own browser;  mailchat.py Gmail/WhatsApp (read-only);  maps.py Google Maps
     docs.py          reading and creating documents;  sandbox.py isolated Python
     voice.py, wakeword.py, asr.py, speech.py, speaker.py, live_audio.py   voice
 common/      Shared Python: paths, logging, Windows DPAPI encryption
+community/   The plugin catalog: catalog.json and plugins/ (add yours with a pull request)
 setup/       Dependency installer
 ```
 
@@ -429,7 +454,7 @@ cd ..;       npx tsc --noEmit
 ```
 
 About 200 tests cover the backend (memory, providers, permissions, switching, research, reminders, automations,
-key safety…) and the agent (commands, files, sandbox, documents, voice, browser).
+key safety, calendar, heartbeat, plugins, backup and sync…) and the agent (commands, files, sandbox, documents, voice, browser).
 
 ---
 
@@ -445,6 +470,11 @@ key safety…) and the agent (commands, files, sandbox, documents, voice, browse
 - Permissions with prompt-injection guards and key protection
 - Customize: instructions, your skills, learned workflows, connectors, API keys
 - Automations
+- Calendar (JARVIS's own, Google and Outlook.com by private address, classic Outlook), with no API key
+- Heartbeat: periodic checks that speak up only when needed
+- Plugins and the community catalog
+- Hindi for the interface, replies and offline voice
+- Encrypted backup, and sync between PCs through a folder
 
 ### Next
 | Item | What it means |
@@ -454,17 +484,14 @@ key safety…) and the agent (commands, files, sandbox, documents, voice, browse
 | **Undo and checkpoints** | Roll back what a task changed (files, settings) in one click |
 | **Rich outputs** | Charts, tables and documents shown in a side panel, not just text |
 | **Parallel tasks** | Several jobs at once, each in its own lane you can watch |
-| **Skill sharing** | Import and export skills as files (the open SKILL.md format), and share them with others |
+| **More of the interface in Hindi** | The main screens are translated; the rest still shows English |
 
 ### Ideas we're considering
-- Calendar: read, plan and add events (Google/Outlook)
 - Smart home through Home Assistant
-- A heartbeat: JARVIS checks a short list of things you care about every so often, and speaks up only when needed
 - Hooks: run your own scripts before or after JARVIS does something
-- A plugin system and a place to find community skills and connectors
-- More languages for the interface and the voice (Hindi first)
+- More languages after Hindi (Marathi, Tamil, Bengali…)
+- Two-way Google and Outlook calendar editing (needs each user to register a free app with Google or Microsoft)
 - macOS and Linux versions
-- Encrypted backup and sync of memory and settings between your PCs
 
 **Have an opinion on what comes first, or an idea that isn't here?** That's exactly what we want to hear: see below.
 
