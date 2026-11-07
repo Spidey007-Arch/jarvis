@@ -1,0 +1,26 @@
+# docker compose --env-file .env -f deploy/docker/docker-compose.yml up -d
+# Local AI on a GPU: add -f deploy/docker/docker-compose.gpu.yml
+services:
+  jarvis:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile
+    environment:
+      JARVIS_TOKEN: ${JARVIS_TOKEN:?Set JARVIS_TOKEN in .env to a long random value}
+    ports:
+      - "127.0.0.1:8765:8765"  # this machine only; put a proxy with HTTPS in front to reach it from elsewhere
+    volumes:
+      - jarvis-data:/data
+    depends_on:
+      - ollama
+    restart: unless-stopped
+
+  ollama:
+    image: ollama/ollama
+    volumes:
+      - ollama-models:/root/.ollama
+    restart: unless-stopped
+
+volumes:
+  jarvis-data:
+  ollama-models:

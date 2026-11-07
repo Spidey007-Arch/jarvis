@@ -507,3 +507,52 @@ export const restoreBackup = (c: Connection, data_b64: string, passphrase: strin
 export const saveSync = (c: Connection, body: { enabled: boolean; folder: string; include_secrets: boolean; passphrase?: string }) =>
   call<BackupView>(c, "/api/sync", { method: "PUT", body: JSON.stringify(body) });
 export const syncNow = (c: Connection) => call<BackupView["last"]>(c, "/api/sync/now", { method: "POST" });
+
+// ---------- apps, search, agents, workflows, developers ----------
+
+export type AppField = { name: string; label: string; secret: boolean; value: string; saved: boolean };
+export type AppView = {
+  id: string; label: string; group: string; needs: "ready" | "key" | "signin"; help: string; fields: AppField[];
+  connected: boolean; off: boolean; status: string;
+};
+export type SearchItem = { app: string; id: string; title: string; snippet: string; when: string; url: string };
+export type SearchResult = { query: string; searched: string[]; results: SearchItem[]; problems: Record<string, string> };
+export const getApps = (c: Connection) => call<AppView[]>(c, "/api/apps");
+export const saveApp = (c: Connection, app: string, values: Record<string, string>) =>
+  call<AppView[]>(c, `/api/apps/${app}`, { method: "PUT", body: JSON.stringify({ values }) });
+export const disconnectApp = (c: Connection, app: string) => call<AppView[]>(c, `/api/apps/${app}`, { method: "DELETE" });
+export const signInApp = (c: Connection, app: string) => call<{ opened: boolean }>(c, `/api/apps/${app}/sign-in`, { method: "POST", body: "{}" });
+export const testApp = (c: Connection, app: string) => call<{ ok: boolean }>(c, `/api/apps/${app}/test`, { method: "POST", body: "{}" });
+export const searchEverything = (c: Connection, q: string) => call<SearchResult>(c, `/api/search?q=${encodeURIComponent(q)}`);
+
+export type AgentView = {
+  id: string; name: string; goal: string; every_min: number; enabled: boolean; notebook: string; last_run: number | null;
+  last_text: string; last_status: string; wakes: number; running: boolean;
+};
+export const getAgents = (c: Connection) => call<AgentView[]>(c, "/api/agents");
+export const saveAgent = (c: Connection, a: { name: string; goal: string; every_min: number }, id?: string) =>
+  call<AgentView>(c, id ? `/api/agents/${id}` : "/api/agents", { method: id ? "PUT" : "POST", body: JSON.stringify({ name: a.name, goal: a.goal, every_min: a.every_min }) });
+export const toggleAgent = (c: Connection, id: string, enabled: boolean) =>
+  call<{ ok: boolean }>(c, `/api/agents/${id}/enabled`, { method: "POST", body: JSON.stringify({ enabled }) });
+export const wakeAgent = (c: Connection, id: string) => call<{ status: string }>(c, `/api/agents/${id}/wake`, { method: "POST", body: "{}" });
+export const forgetAgent = (c: Connection, id: string) => call<{ ok: boolean }>(c, `/api/agents/${id}/forget`, { method: "POST", body: "{}" });
+export const deleteAgent = (c: Connection, id: string) => call<{ ok: boolean }>(c, `/api/agents/${id}`, { method: "DELETE" });
+
+export type WorkflowStep = { id: string; kind: "ask" | "check" | "say" | "wait" | "stop"; text: string; seconds?: number; next?: string; yes?: string; no?: string };
+export type WorkflowView = {
+  id: string; name: string; steps: WorkflowStep[]; last_status: string; last_trail: { id: string; kind: string; result: string }[]; running: boolean;
+};
+export const getWorkflows = (c: Connection) => call<WorkflowView[]>(c, "/api/workflows");
+export const saveWorkflow = (c: Connection, w: { name: string; steps: WorkflowStep[] }, id?: string) =>
+  call<WorkflowView>(c, id ? `/api/workflows/${id}` : "/api/workflows", { method: id ? "PUT" : "POST", body: JSON.stringify({ name: w.name, steps: w.steps }) });
+export const runWorkflow = (c: Connection, id: string, input = "") =>
+  call<{ status: string; result: string }>(c, `/api/workflows/${id}/run`, { method: "POST", body: JSON.stringify({ input }) });
+export const deleteWorkflow = (c: Connection, id: string) => call<{ ok: boolean }>(c, `/api/workflows/${id}`, { method: "DELETE" });
+
+export type DeveloperView = {
+  a2a_on: boolean; a2a_key: boolean; a2a_url: string; python: string; sdk: string;
+  mcp: { command: string; args: string[]; env: Record<string, string> };
+};
+export const getDeveloper = (c: Connection) => call<DeveloperView>(c, "/api/developer");
+export const setA2A = (c: Connection, enabled: boolean) =>
+  call<{ on: boolean; key?: string }>(c, "/api/developer/a2a", { method: "POST", body: JSON.stringify({ enabled }) });

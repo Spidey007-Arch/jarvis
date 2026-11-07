@@ -1,0 +1,9 @@
+fastapi
+google-genai
+httpx
+psutil
+pydantic
+cryptography
+tzdata
+uvicorn
+websockets

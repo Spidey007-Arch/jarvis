@@ -14,8 +14,9 @@ def main() -> int:
     except ValueError:
         log.error("JARVIS_PORT is not a number: %r", os.environ.get("JARVIS_PORT"))
         return 2
-    app = create_app(port)
-    config = uvicorn.Config(app, host="127.0.0.1", port=port, log_config=None, ws_ping_interval=None)
+    # Docker sets both: the window isn't there to share a token with, and the port must reach outside the container.
+    app = create_app(port, os.environ.get("JARVIS_TOKEN") or None)
+    config = uvicorn.Config(app, host=os.environ.get("JARVIS_HOST", "127.0.0.1"), port=port, log_config=None, ws_ping_interval=None)
     server = uvicorn.Server(config)
     app.state.server = server
     try:

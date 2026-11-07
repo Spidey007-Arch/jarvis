@@ -2,18 +2,20 @@ import { useCallback, useEffect, useState } from "react";
 import PermissionsCard from "./PermissionsCard";
 import SystemCard from "./SystemCard";
 import BackupCard from "./BackupCard";
+import DeveloperCard from "./DeveloperCard";
 import { LANGS, setLang, t as tr } from "../i18n";
 import { ApiError, ModelInfo, ProviderPreset, Settings, SettingsUpdate, VoiceStatus, enrollVoice, forgetVoice, getModels, getProviders, getSettings, getVoice, putSettings, setVoice, setVoiceMode, startGateway } from "../api";
 import type { Connection } from "../shell";
 
 type Note = { tone: "ok" | "bad"; text: string } | null;
-type Tab = "general" | "ai" | "voice" | "permissions" | "backup" | "system";
+type Tab = "general" | "ai" | "voice" | "permissions" | "backup" | "developers" | "system";
 const TABS: { id: Tab; label: string }[] = [
   { id: "general", label: "General" },
   { id: "ai", label: "AI & models" },
   { id: "voice", label: "Voice" },
   { id: "permissions", label: "PC control & safety" },
   { id: "backup", label: "Backup & sync" },
+  { id: "developers", label: "Developers" },
   { id: "system", label: "System" },
 ];
 const TAB_KEY = "jarvis.settingsTab";
@@ -282,6 +284,7 @@ export default function SettingsView({ conn, onChanged }: { conn: Connection | n
           </>
         )}
         {tab === "backup" && <BackupCard conn={conn} />}
+        {tab === "developers" && <DeveloperCard conn={conn} />}
         {tab === "ai" && (
           <>
           <section className="card provider-card">

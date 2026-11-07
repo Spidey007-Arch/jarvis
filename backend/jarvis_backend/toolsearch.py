@@ -23,7 +23,7 @@ MORE_TOOLS_SCHEMA: dict[str, Any] = {
 }
 
 CORE = (
-    "system_status", "open_app", "open_url", "web_search", "web_research", "look_at_screen", "click_text", "screen_click",
+    "system_status", "open_app", "open_url", "web_search", "web_research", "search_everything", "look_at_screen", "click_text", "screen_click",
     "type_text", "press_keys", "find_files", "open_path", "read_file", "run_command", "set_reminder", "set_plan",
     "list_windows", "window_control", "volume", "media", "play_music", "maps_search", "my_location",
 )
@@ -31,6 +31,16 @@ EXTRA = 12  # matched tools added on top of the core set
 
 # Words people use that don't appear in the tool descriptions.
 SYNONYMS = {
+    "notes": "search_everything app_items app_read", "obsidian": "app_items app_read", "granola": "app_items app_read",
+    "drive": "app_items app_read", "dropbox": "app_items app_read", "contacts": "app_items", "contact": "app_items", "tasks": "app_items",
+    "rss": "app_items", "feed": "app_items", "hacker": "app_items app_read", "github": "app_items", "notification": "app_items",
+    "sleep": "app_items sleep_pc", "oura": "app_items", "strava": "app_items", "run": "app_items run_workflow", "workout": "app_items",
+    "research": "deep_research web_research", "compare": "deep_research", "investigate": "deep_research", "everything": "search_everything",
+    "find": "search_everything", "search": "search_everything", "remember": "search_everything",
+    "watch": "create_agent list_agents", "track": "create_agent", "monitor": "create_agent", "agent": "create_agent list_agents delete_agent ask_agent",
+    "workflow": "run_workflow list_workflows create_workflow", "steps": "run_workflow create_workflow",
+    "claude": "hand_off_code coding_tools", "opencode": "hand_off_code coding_tools", "openhands": "hand_off_code coding_tools",
+    "coding": "hand_off_code coding_tools", "refactor": "hand_off_code", "bug": "hand_off_code",
     "mail": "gmail email inbox", "email": "gmail", "inbox": "gmail", "whatsapp": "whatsapp chats", "message": "whatsapp gmail",
     "chat": "whatsapp", "buy": "web_open web_click cart order", "order": "web_open cart", "cart": "web_open web_read",
     "amazon": "web_open", "flipkart": "web_open", "zomato": "web_open", "swiggy": "web_open", "food": "web_open",

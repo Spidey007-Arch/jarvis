@@ -14,7 +14,7 @@ You decide how much it may do, action by action.
 > works today; see [Roadmap](#roadmap) for what's next and [How you can help](#how-you-can-help) for what we'd love
 > from you.
 
-**Stack:** Tauri 2 (Rust) · React + TypeScript · Python 3.12 (FastAPI backend + desktop agent) · MIT licensed
+**[Documentation](docs/index.md)** · **Stack:** Tauri 2 (Rust) · React + TypeScript · Python 3.12 (FastAPI backend + desktop agent) · MIT licensed
 
 ---
 
@@ -71,7 +71,23 @@ You decide how much it may do, action by action.
   JARVIS's calendar or Outlook directly, or opens Google's or Outlook's new-event page filled in for you to save.
 - **Music:** "play Alfaaz on Spotify" searches Spotify, picks the right song and checks it's actually playing.
 
+### Reads your other apps
+- **Built in, and read-only:** news feeds, Hacker News and Obsidian work from the start. Add email (any IMAP
+  provider), GitHub notifications, Granola and Oura with a token, and Google Drive, Contacts and Tasks, Dropbox and
+  Strava by signing in with your own free app. Nothing here can send, change or delete anything.
+- **One search across everything:** memories, past conversations, the calendar, stored documents and every connected
+  app. If one app fails, the rest still answer.
+
+### Works by itself over time
+- **Always-running agents:** give JARVIS a goal ("tell me when this laptop drops under 60,000") and it keeps working on
+  it over days or weeks, carrying on from its own notebook and speaking only when it has something to say.
+- **Workflows:** lay a job out as steps with yes-or-no branches and loops, for when the order matters.
+- **Coding jobs:** hand a job in a project folder to Claude Code, OpenCode or OpenHands, if installed, and get the report.
+- **Other agents:** ask any agent that speaks the open A2A protocol.
+
 ### Work with the web
+- **Deep research:** several rounds across the web, your documents and connected apps, ending in an answer with
+  numbered sources. Private details never go into the web searches.
 - **Research with sources:** its own web search (no AI service involved), news headlines with dates, and the
   passages from each page that answer the question, quoted with their links.
 - **A browser JARVIS drives** (its own Brave, Chrome or Edge window, with its own profile): shop and fill carts, order food, compare
@@ -118,6 +134,8 @@ You decide how much it may do, action by action.
     me what needs a reply"), with the result spoken aloud if you like. You can also just ask for one in chat.
   - **Heartbeat**: the list JARVIS checks every so often, how often, and quiet hours.
   - **Calendar**: what's coming up, new events, and linking Google or Outlook.com calendars.
+  - **Agents** and **Workflows**: see above. Workflows have a step-by-step builder.
+  - **Apps**: connect apps, and search everything.
   - **Plugins**: bundles of skills and connectors other people shared. Install one from the community catalog or
     a file, after seeing exactly what it adds (connectors arrive turned off). Share your own skills as a plugin.
   - **Connectors**: any MCP server (Slack, Notion, GitHub, calendars, databases…) becomes JARVIS tools.
@@ -425,6 +443,8 @@ backend/     FastAPI brain
     permissions.py   Allow / Ask / Block per capability, prompt-injection guards
     tools.py         every tool JARVIS can call; toolsearch.py picks the relevant ones
     automations.py   scheduled jobs;  heartbeat.py periodic checks that speak only when needed
+    apps.py          built-in app connections and one search;  deep_research.py research over several rounds
+    agents.py        always-running agents;  workflows.py steps and branches;  a2a.py agents talking to agents
     calendars.py     calendar: JARVIS's own, linked .ics calendars, Outlook;  plugins.py plugins and the catalog
     backup.py        encrypted backup and sync between PCs
     reminders.py     reminders, alarms, timers;  jobs.py idle-time housekeeping
@@ -436,11 +456,15 @@ agent/       The hands on Windows
     actions.py       apps, files, commands, processes, system;  outlook.py classic Outlook's calendar
     uictl.py         UI Automation, OCR, windows, Spotify
     webdrive.py      JARVIS's own browser;  mailchat.py Gmail/WhatsApp (read-only);  maps.py Google Maps
+    coding.py        handing jobs to Claude Code, OpenCode, OpenHands
     docs.py          reading and creating documents;  sandbox.py isolated Python
     voice.py, wakeword.py, asr.py, speech.py, speaker.py, live_audio.py   voice
 common/      Shared Python: paths, logging, Windows DPAPI encryption
 community/   The plugin catalog: catalog.json and plugins/ (add yours with a pull request)
-setup/       Dependency installer
+sdk/         jarvis command, Python SDK and MCP server
+deploy/      Docker files for running the backend on a server
+docs/        The documentation site and the technical report
+setup/       Dependency installer, and jarvis.cmd
 ```
 
 ---
@@ -453,7 +477,7 @@ cd ..\agent; ..\.venv\Scripts\python.exe -m unittest discover -s tests -p "test_
 cd ..;       npx tsc --noEmit
 ```
 
-About 200 tests cover the backend (memory, providers, permissions, switching, research, reminders, automations,
+About 250 tests cover the backend (memory, providers, permissions, switching, research, reminders, automations,
 key safety, calendar, heartbeat, plugins, backup and sync…) and the agent (commands, files, sandbox, documents, voice, browser).
 
 ---
@@ -475,6 +499,10 @@ key safety, calendar, heartbeat, plugins, backup and sync…) and the agent (com
 - Plugins and the community catalog
 - Hindi for the interface, replies and offline voice
 - Encrypted backup, and sync between PCs through a folder
+- Built-in app connections, with one search across everything
+- Always-running agents, workflows, and handing jobs to coding agents
+- Deep research across the web, your documents and your apps
+- Command line, Python SDK, MCP server, A2A, Docker and a documentation site
 
 ### Next
 | Item | What it means |
@@ -509,6 +537,7 @@ key safety, calendar, heartbeat, plugins, backup and sync…) and the agent (com
 - Vision: point the webcam at a document, a plant or a product and ask about it (only when you say so)
 - A plugin store with ratings, versions and automatic updates for plugins
 - Team mode: share skills, plugins and automations with family or a small office
+- Writing back to connected apps: reply to mail, add tasks, always with your yes
 - macOS and Linux versions
 
 **Have an opinion on what comes first, or an idea that isn't here?** That's exactly what we want to hear: see below.

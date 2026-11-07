@@ -1,10 +1,13 @@
 import { useCallback, useEffect, useState } from "react";
+import AgentsCard from "./AgentsCard";
 import ApiKeysCard from "./ApiKeysCard";
+import AppsCard from "./AppsCard";
 import ConnectorsCard from "./ConnectorsCard";
 import AutomationsCard from "./AutomationsCard";
 import CalendarCard from "./CalendarCard";
 import HeartbeatCard from "./HeartbeatCard";
 import PluginsCard from "./PluginsCard";
+import WorkflowsCard from "./WorkflowsCard";
 import { t as tr } from "../i18n";
 import {
   LearnedSkill, MySkill, forgetLearnedSkill, getLearnedSkills, getMySkills, getSettings, putSettings, removeMySkill, saveMySkill,
@@ -12,13 +15,16 @@ import {
 import type { Connection } from "../shell";
 
 type Note = { tone: "ok" | "bad"; text: string } | null;
-type Tab = "instructions" | "skills" | "automations" | "heartbeat" | "calendar" | "plugins" | "connectors" | "keys";
+type Tab = "instructions" | "skills" | "automations" | "agents" | "workflows" | "heartbeat" | "calendar" | "apps" | "plugins" | "connectors" | "keys";
 const TABS: { id: Tab; label: string }[] = [
   { id: "instructions", label: "Instructions" },
   { id: "skills", label: "Skills" },
   { id: "automations", label: "Automations" },
+  { id: "agents", label: "Agents" },
+  { id: "workflows", label: "Workflows" },
   { id: "heartbeat", label: "Heartbeat" },
   { id: "calendar", label: "Calendar" },
+  { id: "apps", label: "Apps" },
   { id: "plugins", label: "Plugins" },
   { id: "connectors", label: "Connectors" },
   { id: "keys", label: "API keys" },
@@ -59,6 +65,9 @@ export default function CustomizeView({ conn }: { conn: Connection | null }) {
         {tab === "instructions" && <Instructions conn={conn} />}
         {tab === "skills" && <Skills conn={conn} />}
         {tab === "automations" && <AutomationsCard conn={conn} />}
+        {tab === "agents" && <AgentsCard conn={conn} />}
+        {tab === "workflows" && <WorkflowsCard conn={conn} />}
+        {tab === "apps" && <AppsCard conn={conn} />}
         {tab === "heartbeat" && <HeartbeatCard conn={conn} />}
         {tab === "calendar" && <CalendarCard conn={conn} />}
         {tab === "plugins" && <PluginsCard conn={conn} />}

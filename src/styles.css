@@ -652,3 +652,17 @@ textarea.instructions { width: 100%; box-sizing: border-box; margin-top: 8px; li
 .plugin-preview { border-color: var(--core); }
 .plugin-body { white-space: pre-wrap; margin: 6px 0 0; font-size: 12px; color: var(--dim); max-height: 220px; overflow: auto; }
 .skill-main code { overflow-wrap: anywhere; color: var(--text); }
+
+/* Apps, workflows, developers */
+.app-setup { flex-basis: 100%; display: flex; flex-direction: column; gap: 8px; padding-top: 8px; }
+.notebook { white-space: pre-wrap; opacity: 0.85; }
+.code-block { margin: 6px 0 0; padding: 10px; border-radius: 10px; background: rgba(0, 10, 18, 0.5); border: 1px solid color-mix(in srgb, var(--core) 14%, transparent); font-size: 11.5px; white-space: pre-wrap; word-break: break-all; }
+.flow { list-style: none; margin: 10px 0 0; padding: 0; display: flex; flex-direction: column; gap: 14px; }
+.flow-step { position: relative; display: flex; flex-direction: column; gap: 8px; padding: 10px; border-radius: 12px; border: 1px solid color-mix(in srgb, var(--core) 18%, transparent); }
+.flow-step:not(:last-child)::after { content: ""; position: absolute; left: 22px; bottom: -15px; width: 1px; height: 14px; background: color-mix(in srgb, var(--core) 40%, transparent); }
+.flow-step.check { border-style: dashed; }
+.flow-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.flow-head .row-actions { margin-left: auto; }
+.flow-no { width: 22px; height: 22px; flex: none; display: grid; place-items: center; border-radius: 50%; font-size: 11px; color: var(--core); border: 1px solid var(--core); }
+.flow-branches { display: flex; gap: 10px; flex-wrap: wrap; }
+.step-target { display: flex; flex-direction: column; gap: 3px; font-size: 11px; color: var(--dim); }

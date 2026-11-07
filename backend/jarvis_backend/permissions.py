@@ -31,6 +31,8 @@ CAPABILITIES: dict[str, tuple[str, bool]] = {
     "connectors": ("Act through connectors (Slack, Notion, GitHub...): reading is always allowed", False),
     "automations": ("Create or delete automations (jobs JARVIS runs by itself on a schedule)", True),
     "calendar": ("Add or delete calendar events", False),
+    "other_agents": ("Send requests to other AI agents", True),
+    "coding_agents": ("Hand coding jobs to Claude Code, OpenCode or OpenHands, which change files by themselves", True),
 }
 POLICIES = ("allow", "ask", "block")
 ALLOWED_BY_DEFAULT = frozenset({"see_screen", "read_messages", "downloads"})
@@ -60,8 +62,8 @@ _COMMANDS: list[tuple[str, re.Pattern[str]]] = [
 PRIVATE_READS = frozenset({"read_file", "read_document", "clipboard_get", "gmail_list", "gmail_open", "whatsapp_chats", "whatsapp_read",
                            "look_at_screen", "read_window", "screenshot", "find_controls", "recent_files", "recent_downloads",
                            "find_files", "list_folder", "stored_files", "my_location", "run_command", "list_processes",
-                           "hardware_info"})
-SENDS_OUT = frozenset({"call_api", "read_webpage", "download_file", "open_url", "web_open", "web_type"})  # + connector actions
+                           "hardware_info", "search_everything", "app_items", "app_read", "deep_research"})
+SENDS_OUT = frozenset({"call_api", "read_webpage", "download_file", "open_url", "web_open", "web_type", "ask_agent", "hand_off_code"})  # + connector actions
 _UPLOADS = re.compile(r"\b(invoke-webrequest|invoke-restmethod|iwr|irm|curl(\.exe)?|wget|net\.webclient|uploadstring|uploadfile|"
                       r"uploaddata|httpclient|bitsadmin|start-bitstransfer|ftp|scp|sftp|send-mailmessage)\b", re.I)
 
@@ -101,12 +103,16 @@ def capability(spec: ToolSpec, args: dict[str, Any]) -> str | None:
         return "end_processes"
     if name == "window_control":
         return "close_windows" if str(args.get("action", "")).lower() == "close" else None
-    if name in ("create_automation", "delete_automation"):  # a job that runs later, unattended, always asks first
+    if name in ("create_automation", "delete_automation", "create_agent", "delete_agent", "create_workflow"):  # runs later, unattended: always asks first
         return "automations"
     if name == "calendar_add":  # google / outlook_web only open a filled-in page; the user saves it there
         return None if str(args.get("calendar") or "").lower() in ("google", "outlook_web") else "calendar"
     if name == "calendar_delete":
         return "calendar"
+    if name == "ask_agent":
+        return "other_agents"
+    if name == "hand_off_code":
+        return "coding_agents"
     if name in ("power", "sleep_pc"):
         return "power"
     if name == "autostart":

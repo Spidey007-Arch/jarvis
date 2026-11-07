@@ -280,6 +280,46 @@ TOOLS: list[ToolSpec] = [
     ToolSpec("calendar_delete", "Delete an event from JARVIS's own calendar by its id (from calendar_events). Events in Google, "
              "Outlook and other linked calendars are changed there, not by JARVIS.", obj({"id": S}, ["id"]), risk="confirm",
              label="Delete a calendar event"),
+    # Built-in app connections and one search across everything (apps.py)
+    ToolSpec("search_everything", "One search across everything JARVIS can read: memories, past conversations, the calendar, stored "
+             "documents and every connected app (Google Drive, Contacts and Tasks, Dropbox, email, Obsidian, Granola, GitHub, news "
+             "feeds, Hacker News, Oura, Strava). Use for 'where did I see...', 'find everything about...'. sources limits it, e.g. "
+             "['obsidian', 'imap', 'memory', 'conversations', 'calendar', 'documents'].",
+             obj({"query": S, "sources": {"type": "array", "items": S}, "limit": I}, ["query"]), timeout=60, label="Searching everything for {query}"),
+    ToolSpec("app_items", "What's new in one connected app, or what matches query. app: rss, hackernews, obsidian, granola, github, "
+             "imap, oura, google, dropbox or strava. Use for 'today's news', 'my GitHub notifications', 'how did I sleep', 'my last run', "
+             "'my tasks'.", obj({"app": S, "query": S, "limit": I}, ["app"]), timeout=45, label="Checking {app}"),
+    ToolSpec("app_read", "Open one item from app_items or search_everything in full, by its app and id.",
+             obj({"app": S, "id": S}, ["app", "id"]), timeout=45, label="Reading from {app}"),
+    # Research over several rounds (deep_research.py)
+    ToolSpec("deep_research", "Research a big question over several rounds across the web, the user's stored documents and connected "
+             "apps, and get numbered sources to cite. Takes minutes: use it for reports and comparisons, and web_research for a quick "
+             "fact. rounds: 1-5, default 3. my_data: false to use only the public web.",
+             obj({"question": S, "rounds": I, "my_data": B}, ["question"]), timeout=480, label="Researching {question}"),
+    # Always-running agents (agents.py) and workflows (workflows.py)
+    ToolSpec("create_agent", "Start an always-running agent: a goal JARVIS keeps working on over days or weeks, waking every every_min "
+             "minutes (at least 15, default 60), with a notebook it keeps between wakes. It speaks only when it has something to say. Use "
+             "for 'keep an eye on', 'watch', 'track over time'. For a job at set times, use create_automation.",
+             obj({"name": S, "goal": S, "every_min": I}, ["name", "goal"]), risk="confirm", label="Start agent “{name}”"),
+    ToolSpec("list_agents", "List the always-running agents: goal, how often, last result and notebook.", obj(), label="Checking agents"),
+    ToolSpec("delete_agent", "Stop and delete an always-running agent by its id.", obj({"id": S}, ["id"]), risk="confirm", label="Delete an agent"),
+    ToolSpec("run_workflow", "Run a saved workflow (fixed steps and branches) by name; input is what it starts with.",
+             obj({"name": S, "input": S}, ["name"]), timeout=3700, label="Running workflow {name}"),
+    ToolSpec("list_workflows", "List the saved workflows and their steps.", obj(), label="Checking workflows"),
+    ToolSpec("create_workflow", "Save a workflow: fixed steps run in order, for jobs where the order matters. Each step: {id, kind, text, "
+             "next}. kind: ask (a request to JARVIS), check (a yes/no question about the last result, with yes and no naming the step "
+             "to go to), say (speak text), wait (seconds), stop. {last} is the last result and {input} the starting input.",
+             obj({"name": S, "steps": {"type": "array", "items": {"type": "object"}}}, ["name", "steps"]), risk="confirm", label="Save workflow “{name}”"),
+    # Other agents (a2a.py) and coding tools (agent: coding.py)
+    ToolSpec("ask_agent", "Send a request to another AI agent over the A2A protocol, at its address, and get its answer. If it needs a "
+             "key, the user saves it in Customize > API keys under the agent's host name. Don't include private data unless the user asked.",
+             obj({"url": S, "text": S}, ["url", "text"]), risk="confirm", timeout=320, label="Ask the agent at {url}"),
+    ToolSpec("coding_tools", "Which coding agents are installed on this PC (Claude Code, OpenCode, OpenHands).", obj(),
+             agent_action="coding_tools", timeout=20, label="Checking coding tools"),
+    ToolSpec("hand_off_code", "Hand a coding job in a project folder to a coding agent on this PC and get its report. tool: claude, "
+             "opencode or openhands. It works by itself and can change files in that folder. minutes: how long it may take (default 20, "
+             "at most 60).", obj({"tool": S, "folder": S, "task": S, "minutes": I}, ["tool", "folder", "task"]), risk="confirm",
+             agent_action="hand_off_code", timeout=3660, label="Hand this to {tool}: {task}"),
     # System extras
     ToolSpec("hardware_info", "Graphics card (name, load, memory, temperature) and temperatures of this PC, best effort.",
              obj(), agent_action="hardware_info", timeout=40, label="Checking the hardware"),

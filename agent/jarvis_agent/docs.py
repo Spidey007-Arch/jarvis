@@ -213,6 +213,24 @@ def forget_file(args: dict[str, Any]) -> dict[str, Any]:
 
 
 @action
+def search_stored(args: dict[str, Any]) -> dict[str, Any]:
+    """The best passage of each stored file that mentions the query; the files aren't opened again, only their saved text."""
+    query = _str(args, "query")
+    want = _words(query)
+    limit = max(1, min(int(args.get("limit") or 5), 20))
+    hits = []
+    for entry in _index().values():
+        try:
+            parts = [tuple(x) for x in json.loads((_store() / f"{entry['id']}.json").read_text(encoding="utf-8"))]
+        except (OSError, ValueError):
+            continue
+        for p in _passages(parts, query, limit=1):
+            if want & _words(p["text"]):
+                hits.append({"id": entry["id"], "name": entry["name"], "where": p["where"], "text": p["text"]})
+    return {"query": query, "hits": hits[:limit]}
+
+
+@action
 def read_document(args: dict[str, Any]) -> dict[str, Any]:
     """Read a document (path or store id): the passages answering `question`, or the given pages, with locations."""
     p, parts, entry = _stored(_str(args, "file"))

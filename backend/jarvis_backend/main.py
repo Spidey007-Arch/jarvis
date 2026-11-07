@@ -38,6 +38,10 @@ from .backup import Backup
 from .calendars import Calendar
 from .heartbeat import Heartbeat
 from .plugins import Plugins
+from .agents import Agents
+from .apps import Apps
+from .workflows import Workflows
+from . import a2a
 from .settings import SettingsStore
 
 log = logging.getLogger("jarvis.backend")
@@ -94,6 +98,9 @@ def create_app(port: int, token: str | None = None) -> FastAPI:
     services.plugins = Plugins(db, services.skills, settings)
     services.heartbeat = Heartbeat(settings, db, away=lambda: bool(services.initiative and services.initiative.state == "away"),
                                    busy=lambda: bool(services.live and services.live.active) or services.tasks.current is not None)
+    services.apps = Apps(settings)
+    services.agents = Agents(db, busy=lambda: bool(services.live and services.live.active) or services.tasks.current is not None)
+    services.workflows = Workflows(db, llm)
     services.backup = Backup(settings=settings, db=db, memory=services.memory, skills=services.skills, automations=services.automations,
                              calendar=services.calendar, plugins=services.plugins)
 
@@ -127,6 +134,7 @@ def create_app(port: int, token: str | None = None) -> FastAPI:
         automations = asyncio.create_task(services.automations.run())
         heartbeat = asyncio.create_task(services.heartbeat.run())
         sync = asyncio.create_task(services.backup.run())
+        agents = asyncio.create_task(services.agents.run())
         initiative = asyncio.create_task(services.initiative.run()) if services.initiative else None
         if services.settings.provider == "gateway" and gateway.installed():  # the chosen AI needs it: warm it up now
             gateway.start_soon((services.settings.provider_cfg("gateway").get("base_url") or PRESETS["gateway"]["base_url"]).strip())
@@ -140,6 +148,7 @@ def create_app(port: int, token: str | None = None) -> FastAPI:
             automations.cancel()
             heartbeat.cancel()
             sync.cancel()
+            agents.cancel()
             if initiative:
                 initiative.cancel()
             await services.connectors.close()
@@ -178,6 +187,32 @@ def create_app(port: int, token: str | None = None) -> FastAPI:
     @app.exception_handler(AgentError)
     async def _agent_error(_, exc: AgentError):
         return JSONResponse(status_code=422, content={"ok": False, "error": "action_failed", "message": str(exc)})
+
+    def _a2a_on() -> None:
+        if not settings.get("a2a_server"):
+            raise HTTPException(status_code=404, detail="Not found.")
+
+    @app.get("/.well-known/agent-card.json")
+    @app.get("/.well-known/agent.json")
+    async def agent_card() -> dict[str, Any]:
+        _a2a_on()
+        return a2a.card(f"http://127.0.0.1:{port}")
+
+    @app.post("/a2a")
+    async def a2a_call(body: dict[str, Any], authorization: str | None = Header(default=None)) -> dict[str, Any]:
+        """Another agent asking JARVIS for something: its own key, then the same permissions as chat."""
+        _a2a_on()
+        key, supplied = a2a.get_key(settings), (authorization or "").removeprefix("Bearer ").strip()
+        if not key or not supplied or not hmac.compare_digest(supplied, key):
+            raise HTTPException(status_code=401, detail="Missing or invalid key.")
+        rid = body.get("id")
+        if body.get("method") != "message/send":
+            return a2a.error(rid, -32601, "Only message/send is supported.")
+        text = a2a.text_of((body.get("params") or {}).get("message") or {})
+        if not text:
+            return a2a.error(rid, -32602, "The message has no text.")
+        out = await services.run_outside(a2a.OUTSIDE + text)
+        return a2a.reply(rid, str(out.get("result") or ""), out.get("status") != "failed")
 
     @app.get("/health")
     async def health() -> dict[str, Any]:

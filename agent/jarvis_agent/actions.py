@@ -1142,4 +1142,4 @@ def kill_process(args: dict[str, Any]) -> dict[str, Any]:
     return {"ended": name, "pid": p.pid}
 
 
-from . import docs, extras, maps, outlook, sandbox, uictl  # noqa: E402,F401 - register their actions (documents, system extras, places, Outlook, window and control tools)
+from . import coding, docs, extras, maps, outlook, sandbox, uictl  # noqa: E402,F401 - register their actions (coding agents, documents, system extras, places, Outlook, window and control tools)

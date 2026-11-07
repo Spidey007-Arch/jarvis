@@ -1,0 +1,19 @@
+site_name: JARVIS
+site_description: A personal AI assistant that lives on your Windows PC
+site_url: https://spidey007-arch.github.io/jarvis/
+repo_url: https://github.com/Spidey007-Arch/jarvis
+theme:
+  name: material
+  palette:
+    scheme: slate
+    primary: cyan
+nav:
+  - Home: index.md
+  - Get started: get-started.md
+  - Apps and search: apps.md
+  - Agents and workflows: agents-and-workflows.md
+  - Research: research.md
+  - Developers: developers.md
+  - Docker: docker.md
+  - Safety: safety.md
+  - Technical report: report.md

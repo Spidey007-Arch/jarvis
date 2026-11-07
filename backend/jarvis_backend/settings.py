@@ -40,13 +40,15 @@ DEFAULTS: dict[str, Any] = {
     "calendar_outlook": False,  # also read and add events in classic Outlook on this PC
     "heartbeat": {},  # {enabled, every_min, checks: [...], quiet_from, quiet_to} (heartbeat.py)
     "sync": {},  # {enabled, folder, include_secrets}: encrypted backup and sync between PCs (backup.py)
+    "apps": {},  # built-in app connections: app -> its plain settings (apps.py); tokens live in secrets
+    "a2a_server": False,  # other agents on this PC may ask JARVIS for things (a2a.py)
     "provider": "gemini",
     "provider_config": {},
     "secrets": {},
 }
 PROFILE_FIELDS = ("user_name", "address", "proactive_alerts", "voice_enabled", "voice_mode", "startup_briefing",
                   "full_control", "permissions", "presence_greetings", "followups", "onboarded", "instructions",
-                  "language", "calendars", "calendar_outlook", "heartbeat", "sync")
+                  "language", "calendars", "calendar_outlook", "heartbeat", "sync", "apps", "a2a_server")
 PROVIDER_FIELDS = ("chat_model", "embed_model", "base_url")
 
 
