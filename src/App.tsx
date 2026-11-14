@@ -2,6 +2,7 @@ import { ReactNode, useCallback, useEffect, useState } from "react";
 import Reactor from "./Reactor";
 import type { Activity } from "./fx/activity";
 import { useTelemetry } from "./telemetry";
+import { setTheme } from "./theme";
 import { Connection, Overall, ShellStatus, getConnection, getStatus, insideShell, onStatus } from "./shell";
 import { Quota, VoiceEvent, getQuota, getSettings, getVoiceEvents, getVoiceSeq, startBriefing, stopSpeaking } from "./api";
 import TaskPanel from "./views/TaskPanel";
@@ -398,6 +399,7 @@ export default function App() {
         setConfigured(s.ready);
         setAddress(s.address || "sir");
         setLang(s.language);
+        if (s.theme) setTheme(s.theme);
       })
       .catch(() => setConfigured(false));
   }, [conn]);
@@ -462,13 +464,12 @@ export default function App() {
 
       <nav className="rail" aria-label="Panels">
         {(Object.keys(ICONS) as Exclude<Drawer, null>[]).map((d) => (
-          <button key={d} className={drawer === d ? "on" : ""} onClick={() => setDrawer(drawer === d ? null : d)} title={t(TITLES[d])} aria-label={t(TITLES[d])}>
+          <button key={d} className={drawer === d ? "on" : ""} onClick={() => setDrawer(drawer === d ? null : d)} aria-label={t(TITLES[d])}>
             <svg viewBox="0 0 24 24">{ICONS[d]}</svg>
           </button>
         ))}
         <button
           className="rail-new"
-          title={t("New conversation")}
           aria-label={t("New conversation")}
           onClick={() => {
             setConversation(null);

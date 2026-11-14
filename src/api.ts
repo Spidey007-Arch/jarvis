@@ -33,6 +33,7 @@ export interface Settings {
   followups: boolean;
   instructions: string;
   language?: "en" | "hi";
+  theme?: "scifi" | "dark" | "light";
   calendar_outlook?: boolean;
   permissions: Record<string, Policy>;
   provider: string;
@@ -64,7 +65,7 @@ export interface ModelInfo {
   kind: "chat" | "embed";
 }
 
-export type SettingsUpdate = Partial<Pick<Settings, "user_name" | "address" | "proactive_alerts" | "startup_briefing" | "full_control" | "permissions" | "presence_greetings" | "followups" | "onboarded" | "instructions" | "language" | "calendar_outlook" | "provider" | "base_url" | "chat_model" | "embed_model">> & {
+export type SettingsUpdate = Partial<Pick<Settings, "user_name" | "address" | "proactive_alerts" | "startup_briefing" | "full_control" | "permissions" | "presence_greetings" | "followups" | "onboarded" | "instructions" | "language" | "theme" | "calendar_outlook" | "provider" | "base_url" | "chat_model" | "embed_model">> & {
   api_key?: string;
 };
 

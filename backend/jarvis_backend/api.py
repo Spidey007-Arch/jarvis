@@ -187,6 +187,9 @@ def scrub(value: Any, secrets: list[str]) -> Any:
     return value
 
 
+LOOK_LIMIT = 3  # the same look, with the same arguments, this many times in one request is a loop
+
+
 def call_key(call: ToolCall) -> str:
     return call.name + json.dumps({k: v for k, v in call.args.items() if not k.startswith("_")}, sort_keys=True, default=str)
 
@@ -197,6 +200,11 @@ def repeat_of(call: ToolCall, done: dict[str, tuple[int, int, dict[str, Any]]], 
     and a failed action may be retried once."""
     if call.name in STEPWISE_TOOLS:
         return None
+    if call.name == "system_status":  # one reading per request, whatever the arguments
+        first = next((v for k, v in done.items() if k.split("{", 1)[0] == "system_status" and v[2].get("ok")), None)
+        if first:
+            return {**first[2], "repeated": True,
+                    "note": "You measured this a moment ago in this same request; the reading above is current. Answer from it now."}
     key = call_key(call)
     if key not in done:
         return None
@@ -206,6 +214,10 @@ def repeat_of(call: ToolCall, done: dict[str, tuple[int, int, dict[str, Any]]], 
     if call.name == "system_status" and out.get("ok"):  # one fresh reading answers the question; re-measuring is a loop
         return {**out, "repeated": True,
                 "note": "You measured this a moment ago in this same request; the reading above is current. Answer from it now."}
+    if call.name in OBSERVE_TOOLS and runs >= LOOK_LIMIT:
+        return {**out, "repeated": True,
+                "note": f"You have looked at this {runs} times in this request and it hasn't changed. Don't look again: answer now "
+                        "from what you have (if what you wanted isn't there, say so plainly), or tell the user what is blocking you."}
     if call.name in OBSERVE_TOOLS and step > at:
         return None
     return {**out, "repeated": True,
@@ -224,6 +236,7 @@ class SettingsIn(BaseModel):
     onboarded: bool | None = None
     instructions: str | None = Field(default=None, max_length=4000)
     language: Literal["en", "hi"] | None = None
+    theme: Literal["scifi", "dark", "light"] | None = None
     calendar_outlook: bool | None = None
     permissions: dict[str, str] | None = None
     provider: str | None = None
@@ -419,7 +432,7 @@ def build_router(svc: Services, require_auth: Callable[..., None]) -> APIRouter:
         changes = body.model_dump(exclude_unset=True)
         profile = {k: changes.pop(k) for k in ("user_name", "address", "proactive_alerts", "startup_briefing",
                                                    "full_control", "permissions", "presence_greetings", "followups", "onboarded", "instructions",
-                                                   "language", "calendar_outlook") if k in changes}
+                                                   "language", "calendar_outlook", "theme") if k in changes}
         if "permissions" in profile:
             bad = {k: v for k, v in (profile["permissions"] or {}).items() if k not in permissions.CAPABILITIES or v not in permissions.POLICIES}
             if bad:
@@ -732,7 +745,11 @@ def build_router(svc: Services, require_auth: Callable[..., None]) -> APIRouter:
             secs = int(args.get("minutes") or 0) * 60 + int(args.get("seconds") or 0)
             return svc.reminders.add_timer(secs, str(args.get("label") or ""))
         if spec.name == "list_reminders":
-            return {"pending": svc.reminders.pending()}
+            pending = svc.reminders.pending()
+            if not pending:
+                return {"pending": [], "note": "Nothing is pending: any reminder, alarm or timer set earlier has already gone off or "
+                                               "been cancelled. Tell the user that."}
+            return {"pending": pending}
         if spec.name == "cancel_reminder":
             return svc.reminders.cancel(str(args.get("id", "")))
         if spec.name == "create_automation":
@@ -928,7 +945,12 @@ def build_router(svc: Services, require_auth: Callable[..., None]) -> APIRouter:
         if decision == "block":
             emit("declined", error="blocked in Settings")
             return {"ok": False, "error": permissions.blocked_message(cap)}
+        if decision == "ask" and cap and any(a.get("_cap") == cap and a["status"] == "declined" for a in actions if a is not entry):
+            emit("declined", error="already declined in this request")
+            return {"ok": False, "error": "The user already said no to this kind of step in this request. Don't propose it again in "
+                                          "any form (another command or tool included): tell the user it wasn't done."}
         if decision == "ask":
+            entry["_cap"] = cap
             fut: asyncio.Future = asyncio.get_running_loop().create_future()
             pending_confirmations[cid] = fut
             emit("awaiting_confirmation", detail=json.dumps(args, ensure_ascii=False))

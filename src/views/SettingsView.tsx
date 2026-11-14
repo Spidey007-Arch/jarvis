@@ -4,6 +4,7 @@ import SystemCard from "./SystemCard";
 import BackupCard from "./BackupCard";
 import DeveloperCard from "./DeveloperCard";
 import { LANGS, setLang, t as tr } from "../i18n";
+import { THEMES, setTheme, useTheme } from "../theme";
 import { ApiError, ModelInfo, ProviderPreset, Settings, SettingsUpdate, VoiceStatus, enrollVoice, forgetVoice, getModels, getProviders, getSettings, getVoice, putSettings, setVoice, setVoiceMode, startGateway } from "../api";
 import type { Connection } from "../shell";
 
@@ -23,6 +24,7 @@ type Section = "provider" | "model" | "profile" | "voice";
 
 export default function SettingsView({ conn, onChanged }: { conn: Connection | null; onChanged: () => void }) {
   const [s, setS] = useState<Settings | null>(null);
+  const theme = useTheme();
   const [presets, setPresets] = useState<ProviderPreset[]>([]);
   const [key, setKey] = useState("");
   const [baseUrl, setBaseUrl] = useState("");
@@ -198,6 +200,20 @@ export default function SettingsView({ conn, onChanged }: { conn: Connection | n
         {s.load_error && <div className="banner bad">{s.load_error}</div>}
         {tab === "general" && (
           <>
+          <section className="card">
+            <h2>{tr("Appearance")}</h2>
+            <p className="dim small">{tr("The look of everything around the core. It changes at once and is kept on this PC.")}</p>
+            <div className="themes" role="radiogroup" aria-label={tr("Theme")}>
+              {THEMES.map((x) => (
+                <button key={x.id} role="radio" aria-checked={theme === x.id} className={`theme-tile t-${x.id} ${theme === x.id ? "on" : ""}`}
+                  onClick={() => { setTheme(x.id); save("profile", { theme: x.id }, `${x.label} theme.`); }}>
+                  <span className="theme-preview" aria-hidden="true"><i /><i /><i /><b /></span>
+                  <span className="theme-name">{tr(x.label)}</span>
+                  <span className="theme-hint">{tr(x.hint)}</span>
+                </button>
+              ))}
+            </div>
+          </section>
           <section className="card">
             <h2>{tr("Language")}</h2>
             <p className="dim small">{tr("The interface, JARVIS's replies and the offline voice.")} Hindi speech needs two more voice files:

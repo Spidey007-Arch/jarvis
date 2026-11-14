@@ -240,16 +240,27 @@ def open_app(args: dict[str, Any]) -> dict[str, Any]:
     raise ActionError(f"No installed app matches '{name}'." + (f" Closest: {', '.join(close)}." if close else ""))
 
 
+APP_PROCESS = {"calculator": "calculatorapp", "calc": "calculatorapp", "settings": "systemsettings", "photos": "photos",
+               "camera": "windowscamera", "clock": "time", "alarms": "time", "snipping tool": "snippingtool", "paint": "mspaint",
+               "word": "winword", "powerpoint": "powerpnt", "edge": "msedge", "vs code": "code", "vscode": "code"}
+
+
 @action
 def close_app(args: dict[str, Any]) -> dict[str, Any]:
     """Politely terminate every process whose executable name matches."""
     name = _str(args, "name").lower().removesuffix(".exe")
-    protected = {"explorer", "winlogon", "csrss", "lsass", "services", "svchost", "system", "dwm", "jarvis", "python", "pythonw"}
+    name = APP_PROCESS.get(name, name)
+    protected = {"explorer", "winlogon", "csrss", "lsass", "services", "svchost", "system", "dwm", "jarvis", "python", "pythonw",
+                 # hosts shared by many windows: ending one closes every Store app, the Start menu or the taskbar
+                 "applicationframehost", "shellexperiencehost", "startmenuexperiencehost", "searchhost", "sihost", "runtimebroker",
+                 "textinputhost", "ctfmon", "fontdrvhost", "lockapp"}
     if name in protected:
-        raise ActionError(f"Closing '{name}' could destabilise Windows or JARVIS itself, so I won't.")
+        raise ActionError(f"Closing '{name}' could destabilise Windows or JARVIS itself, so I won't. To close one app's window, "
+                          "use window_control with action close.")
     targets = [p for p in psutil.process_iter(["name"]) if (p.info["name"] or "").lower().removesuffix(".exe") == name]
     if not targets:
-        raise ActionError(f"No running process is named '{name}'. Use the executable name, e.g. 'chrome' or 'notepad'.")
+        raise ActionError(f"No running process is named '{name}'. For a Store app (Calculator, Settings, Photos...) or when unsure, "
+                          "use window_control with action close on its window instead.")
     for p in targets:
         try:
             p.terminate()

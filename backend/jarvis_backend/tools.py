@@ -125,7 +125,9 @@ TOOLS: list[ToolSpec] = [
              label="Pressing \"{text}\""),
     ToolSpec("type_into", "Type into a field by its label, in a window (by title or app; default the frontmost app), e.g. label "
              "'Search', 'Email', 'To', 'Message'. Sets the value through Windows UI Automation where it can, else focuses the "
-             "field and types. submit=true presses Enter after. More reliable than clicking a field and using type_text.",
+             "field and types. submit=true presses Enter after. More reliable than clicking a field and using type_text. Each call "
+             "types into the field again, so put a whole entry in one call (in a calculator: '12*7=' once, then read_window), and "
+             "check a result you read back makes sense before you report it.",
              obj({"label": S, "text": S, "window": S, "index": I, "submit": B}, ["label", "text"]), agent_action="type_into",
              timeout=60, label="Typing into {label}"),
     ToolSpec("find_controls", "List the controls in a window whose visible name contains text (all named controls when text is "
@@ -356,7 +358,12 @@ def describe_call(spec: ToolSpec, args: dict[str, Any]) -> str:
         def __missing__(self, k: str) -> str:
             return ""
 
-    shown = {k: (" + ".join(v) if isinstance(v, list) else str(v)) for k, v in args.items()}
+    def show(v: Any) -> str:
+        if isinstance(v, list):  # a list of words reads as one; a list of objects (a workflow's steps) is only counted
+            return " + ".join(v) if all(isinstance(x, str) for x in v) else f"{len(v)} items"
+        return str(v)
+
+    shown = {k: show(v) for k, v in args.items()}
     shown = {k: v if len(v) <= 60 else v[:57].rstrip() + "..." for k, v in shown.items()}  # a step names things; it never dumps them
     label = (spec.label or spec.name).format_map(Safe(shown)).strip()
     return label or FALLBACK_LABELS.get(spec.name, spec.name.replace("_", " ").capitalize())

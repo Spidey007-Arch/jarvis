@@ -121,11 +121,17 @@ def _public(url: str) -> None:
         raise ResearchError(str(e)) from e
 
 
+HONEST_UA = "JARVIS/1.0 (personal assistant; https://github.com/Spidey007-Arch/jarvis)"
+HONEST_HOSTS = ("wikipedia.org", "wikimedia.org", "wiktionary.org", "wikidata.org", "wikivoyage.org", "wikiquote.org")
+
+
 async def _fetch_text(c: httpx.AsyncClient, url: str) -> str | None:
     """A page's text: HTML pages and PDFs (read locally), within a size limit; every redirect stays public."""
     try:
         _public(url)
-        async with c.stream("GET", url, timeout=15.0) as resp:
+        host = (httpx.URL(url).host or "").lower()
+        honest = {"User-Agent": HONEST_UA} if host.endswith(HONEST_HOSTS) else None  # their rules: say who is reading
+        async with c.stream("GET", url, timeout=15.0, headers=honest) as resp:
             _public(str(resp.url))
             if resp.status_code != 200:
                 return None

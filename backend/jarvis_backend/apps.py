@@ -43,6 +43,7 @@ REDIRECT_PORT = 53682
 REDIRECT = f"http://127.0.0.1:{REDIRECT_PORT}/"
 SIGN_IN_WAIT_S = 300
 MAX_CHARS = 12000
+SKIP_DIRS = {"node_modules", "venv", ".venv", "__pycache__", "dist", "build", "target", "site-packages"}  # never notes
 DEFAULT_FEEDS = ["https://feeds.bbci.co.uk/news/world/rss.xml", "https://www.theverge.com/rss/index.xml"]
 
 
@@ -378,7 +379,9 @@ class Apps:
         vault = Path(self.vault())
 
         def scan() -> list[dict[str, str]]:
-            notes = sorted((p for p in vault.rglob("*.md") if ".obsidian" not in p.parts), key=lambda p: p.stat().st_mtime, reverse=True)
+            notes = sorted((p for p in vault.rglob("*.md") if not SKIP_DIRS & set(p.relative_to(vault).parts[:-1])
+                            and not any(part.startswith(".") for part in p.relative_to(vault).parts[:-1])),
+                           key=lambda p: p.stat().st_mtime, reverse=True)
             out = []
             for p in notes:
                 try:

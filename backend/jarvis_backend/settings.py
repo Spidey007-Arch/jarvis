@@ -36,6 +36,7 @@ DEFAULTS: dict[str, Any] = {
     "voice_mode": "live",
     "instructions": "",  # Customize > Instructions: how the user wants JARVIS to behave, in their own words  # live: Gemini Live speech-to-speech; local: wake word + Whisper + Piper, offline
     "language": "en",  # en | hi: the interface, JARVIS's replies and the offline voice
+    "theme": "scifi",  # scifi | dark | light: the look around the core, on this PC (not synced)
     "calendars": [],  # calendars linked by their private address: {name}; the address itself is a secret (calendars.py)
     "calendar_outlook": False,  # also read and add events in classic Outlook on this PC
     "heartbeat": {},  # {enabled, every_min, checks: [...], quiet_from, quiet_to} (heartbeat.py)
@@ -48,7 +49,7 @@ DEFAULTS: dict[str, Any] = {
 }
 PROFILE_FIELDS = ("user_name", "address", "proactive_alerts", "voice_enabled", "voice_mode", "startup_briefing",
                   "full_control", "permissions", "presence_greetings", "followups", "onboarded", "instructions",
-                  "language", "calendars", "calendar_outlook", "heartbeat", "sync", "apps", "a2a_server")
+                  "language", "calendars", "calendar_outlook", "heartbeat", "sync", "apps", "a2a_server", "theme")
 PROVIDER_FIELDS = ("chat_model", "embed_model", "base_url")
 
 
