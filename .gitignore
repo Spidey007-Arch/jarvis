@@ -8,3 +8,6 @@ src-tauri/gen/
 *.log
 .env
 *.dat
+.dist/
+build/
+release/

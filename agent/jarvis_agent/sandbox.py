@@ -142,7 +142,7 @@ def run_sandboxed(args: dict[str, Any]) -> dict[str, Any]:
         import json
         import site
 
-        (box / "_paths.json").write_text(json.dumps([p for p in site.getsitepackages() if os.path.isdir(p)]), encoding="utf-8")
+        (box / "_paths.json").write_text(json.dumps([p for p in getattr(site, "getsitepackages", list)() if os.path.isdir(p)]), encoding="utf-8")
         env = {k: v for k, v in os.environ.items() if k.upper() in ("SYSTEMROOT", "WINDIR", "TEMP", "TMP", "PATH", "NUMBER_OF_PROCESSORS")}
         env.update(PYTHONIOENCODING="utf-8", PYTHONDONTWRITEBYTECODE="1", MPLBACKEND="Agg")
         # The real interpreter, not the venv's python.exe: that one is a launcher that starts a second process, which the

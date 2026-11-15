@@ -281,8 +281,15 @@ Found a security problem? Please report it privately; see [SECURITY.md](SECURITY
 
 ## Install and run
 
-There's no installer (.exe) yet, so for now JARVIS runs from its source code. It takes about 20–30 minutes the first
-time, most of it downloads. You only do steps 1–3 once.
+**The easy way:** download `JARVIS_<version>_x64-setup.exe` from the
+[Releases page](https://github.com/Spidey007-Arch/jarvis/releases) and run it. Nothing else is needed: no Python,
+Node or Rust. Prefer not to install anything? Take `JARVIS_<version>_portable.zip` instead, unzip it anywhere and run
+`JARVIS.exe`. Both keep your settings and memory in `%LOCALAPPDATA%\JARVIS`. (A browser is still needed for the
+shopping, Gmail and WhatsApp features: Edge comes with Windows; Brave or Chrome work too.)
+
+**From the source code** (to change JARVIS, or before a release is published) takes about 20–30 minutes the first
+time, most of it downloads. You only do steps 1–3 once. To build the installer and portable zip yourself, see
+[Building the installer](#building-the-installer).
 
 ### 1. Install the tools JARVIS needs
 
@@ -316,7 +323,8 @@ git --version; python --version; node --version; cargo --version
 Each should print a version number. If `python` opens the Microsoft Store instead, turn off the `python.exe`
 entries in **Settings → Apps → Advanced app settings → App execution aliases** and open a new PowerShell.
 
-You also need a browser for the window JARVIS drives (shopping, Gmail, WhatsApp, Maps): Microsoft Edge comes with
+You also need a browser for JARVIS to drive in the background (shopping, Gmail, WhatsApp, Maps); it stays hidden
+and shows up inside the JARVIS window only when you ask: Microsoft Edge comes with
 Windows; Brave or Chrome work too.
 
 ### 2. Download JARVIS
@@ -373,6 +381,18 @@ npx tauri dev
 ```
 
 Your settings, memory and conversations are kept: they live in `%LOCALAPPDATA%\JARVIS`, not in the `jarvis` folder.
+
+### Building the installer
+
+After steps 1–3, one command builds both release files into the `release` folder:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File setup\build-release.ps1
+```
+
+It packs the backend and the agent with PyInstaller (each becomes a folder with its own `.exe` and its own Python
+inside), checks them, builds the app with Tauri, and makes the installer (NSIS, installs for the current user, no
+admin prompt) and the portable zip. The first run takes 15–25 minutes; the files are about 300 MB unpacked.
 
 ### If something goes wrong
 
@@ -503,11 +523,12 @@ key safety, calendar, heartbeat, plugins, backup and sync…) and the agent (com
 - Always-running agents, workflows, and handing jobs to coding agents
 - Deep research across the web, your documents and your apps
 - Command line, Python SDK, MCP server, A2A, Docker and a documentation site
+- JARVIS's browser runs hidden and appears inside the app only when you ask
+- Windows installer and portable build: no Python, Node or Rust needed to run JARVIS
 
 ### Next
 | Item | What it means |
 |---|---|
-| **Installer** | A normal Windows installer (.exe) and a portable build: no Python, Node or Rust to install first |
 | **Auto-update** | Signed updates from GitHub releases, installed when you say so |
 | **Works with no API key at all** | A free local AI set up for you (Ollama), plus direct commands like "open Spotify", "volume 50" or "set a timer" that need no AI |
 | **Undo and checkpoints** | Roll back everything a task changed (files, settings, calendar) in one click |

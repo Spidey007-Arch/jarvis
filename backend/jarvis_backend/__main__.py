@@ -1,9 +1,13 @@
 import os
 import sys
 
-import uvicorn
+from jarvis_common import frozen
 
-from jarvis_common import logs
+frozen.act_as_python()  # packaged build asked to run a script or module: do that, not JARVIS
+
+import uvicorn  # noqa: E402
+
+from jarvis_common import logs  # noqa: E402
 from .main import create_app
 
 

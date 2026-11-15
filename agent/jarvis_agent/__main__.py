@@ -10,7 +10,11 @@ import platform
 import sys
 import time
 
-import psutil
+from jarvis_common import frozen
+
+frozen.act_as_python()  # packaged build asked to run a script (the sandbox): do that, not the agent
+
+import psutil  # noqa: E402
 import websockets
 from jarvis_common import logs
 

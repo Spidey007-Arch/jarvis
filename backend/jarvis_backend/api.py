@@ -21,6 +21,8 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 from . import briefing, gateway, permissions, public_apis, toolsearch
+from jarvis_common import frozen
+
 from .db import DB
 from .extraction import EXTRACT_SCHEMA, extract_prompt
 from .bridge import AgentBridge, AgentError, AgentUnavailable
@@ -2081,7 +2083,7 @@ def build_router(svc: Services, require_auth: Callable[..., None]) -> APIRouter:
 
     @r.get("/developer")
     async def developer() -> dict[str, Any]:
-        sdk = str(Path(__file__).resolve().parents[2] / "sdk")
+        sdk = str(frozen.bundle_root(__file__) / "sdk")
         return {"a2a_on": bool(svc.settings.get("a2a_server")), "a2a_key": bool(a2a.get_key(svc.settings)),
                 "a2a_url": "http://127.0.0.1:8765", "python": sys.executable, "sdk": sdk,
                 "mcp": {"command": sys.executable, "args": ["-m", "jarvis_sdk.mcp_server"], "env": {"PYTHONPATH": sdk}}}

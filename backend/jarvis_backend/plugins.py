@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Any
 
 import httpx
+from jarvis_common import frozen
 
 from .db import DB
 
@@ -42,7 +43,7 @@ CREATE TABLE IF NOT EXISTS plugins (
 """
 FORMAT = "jarvis-plugin"
 REPO_RAW = "https://raw.githubusercontent.com/Spidey007-Arch/jarvis/main/community/"
-LOCAL = Path(__file__).resolve().parents[2] / "community"
+LOCAL = frozen.bundle_root(__file__) / "community"
 CATALOG_CACHE_S = 3600
 MAX_BYTES = 200_000
 MAX_SKILLS = 20
