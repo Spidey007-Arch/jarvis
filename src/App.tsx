@@ -4,7 +4,7 @@ import type { Activity } from "./fx/activity";
 import { useTelemetry } from "./telemetry";
 import { setTheme } from "./theme";
 import { Connection, Overall, ShellStatus, getConnection, getStatus, insideShell, onStatus } from "./shell";
-import { Quota, VoiceEvent, getQuota, getSettings, getVoiceEvents, getVoiceSeq, startBriefing, stopSpeaking } from "./api";
+import { BROWSER_TOOLS, Quota, VoiceEvent, getQuota, getSettings, getVoiceEvents, getVoiceSeq, startBriefing, stopSpeaking, toggleBrowserPanel } from "./api";
 import TaskPanel from "./views/TaskPanel";
 import ModelPicker from "./views/ModelPicker";
 import Onboarding from "./views/Onboarding";
@@ -14,6 +14,7 @@ import MemoryView from "./views/MemoryView";
 import CustomizeView from "./views/CustomizeView";
 import SettingsView from "./views/SettingsView";
 import SystemPanel from "./views/SystemPanel";
+import BrowserPanel from "./views/BrowserPanel";
 import { setLang, t, useLang } from "./i18n";
 
 type Drawer = "history" | "memory" | "customize" | "settings" | "system" | null;
@@ -297,6 +298,7 @@ function VoiceLink({ conn, onState, onTurn }: { conn: Connection | null; onState
             setCaption(e.text);
             put("speaking");
           } else if (e.event === "live_tool") {
+            if (e.tool && BROWSER_TOOLS[e.tool]) toggleBrowserPanel(BROWSER_TOOLS[e.tool] === "show");
             const working = `Working on it… (${(e.tool ?? "").replace(/_/g, " ")})`;
             setCaption(working);
             subs.show(working);
@@ -361,6 +363,7 @@ export default function App() {
   const [status, setStatus] = useState<ShellStatus | null>(null);
   const [conn, setConn] = useState<Connection | null>(null);
   const [drawer, setDrawer] = useState<Drawer>(null);
+  const [browserOpen, setBrowserOpen] = useState(false);
   const [configured, setConfigured] = useState(false);
   const [address, setAddress] = useState("sir");
   const [activity, setActivity] = useState<Activity>("idle");
@@ -407,6 +410,12 @@ export default function App() {
   useEffect(() => {
     refreshSettings();
   }, [refreshSettings]);
+
+  useEffect(() => {
+    const onBrowser = (e: Event) => setBrowserOpen(Boolean((e as CustomEvent<boolean>).detail));
+    window.addEventListener("jarvis:browser", onBrowser);
+    return () => window.removeEventListener("jarvis:browser", onBrowser);
+  }, []);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -468,6 +477,9 @@ export default function App() {
             <svg viewBox="0 0 24 24">{ICONS[d]}</svg>
           </button>
         ))}
+        <button className={browserOpen ? "on" : ""} onClick={() => setBrowserOpen((o) => !o)} aria-label={t("Browser")} title={t("JARVIS's browser")}>
+          <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" /><path d="M3 12h18M12 3c2.5 2.6 3.8 5.6 3.8 9s-1.3 6.4-3.8 9c-2.5-2.6-3.8-5.6-3.8-9s1.3-6.4 3.8-9z" /></svg>
+        </button>
         <button
           className="rail-new"
           aria-label={t("New conversation")}
@@ -498,6 +510,8 @@ export default function App() {
           voice={voice}
         />
       </main>
+
+      {browserOpen && <BrowserPanel conn={conn} onClose={() => setBrowserOpen(false)} />}
 
       {drawer && <div className="scrim" onClick={() => setDrawer(null)} />}
       <aside className={`glass drawer ${drawer ? "open" : ""} ${drawer === "memory" ? "wide" : ""} ${drawer === "settings" || drawer === "customize" ? "xwide" : ""}`} aria-hidden={!drawer}>

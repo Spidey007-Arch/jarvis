@@ -557,3 +557,15 @@ export type DeveloperView = {
 export const getDeveloper = (c: Connection) => call<DeveloperView>(c, "/api/developer");
 export const setA2A = (c: Connection, enabled: boolean) =>
   call<{ on: boolean; key?: string }>(c, "/api/developer/a2a", { method: "POST", body: JSON.stringify({ enabled }) });
+
+// ---------- JARVIS's background browser (shown in the app's browser panel) ----------
+
+export type BrowserTab = { id: string; title: string; url: string; ws: string };
+export type BrowserTabs = { running: boolean; tabs: BrowserTab[] };
+export const getBrowserTabs = (c: Connection) => call<BrowserTabs>(c, "/api/browser");
+export const startBrowser = (c: Connection) => call<BrowserTabs>(c, "/api/browser/start", { method: "POST" });
+
+/** Opens or closes the in-app browser panel: JARVIS's show_browser / hide_browser tools, from chat or voice. */
+export const BROWSER_TOOLS: Record<string, "show" | "hide"> = { show_browser: "show", hide_browser: "hide" };
+export const toggleBrowserPanel = (open: boolean) =>
+  window.dispatchEvent(new CustomEvent("jarvis:browser", { detail: open }));

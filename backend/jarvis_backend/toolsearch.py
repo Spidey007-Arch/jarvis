@@ -43,6 +43,7 @@ SYNONYMS = {
     "coding": "hand_off_code coding_tools", "refactor": "hand_off_code", "bug": "hand_off_code",
     "mail": "gmail email inbox", "email": "gmail", "inbox": "gmail", "whatsapp": "whatsapp chats", "message": "whatsapp gmail",
     "chat": "whatsapp", "buy": "web_open web_click cart order", "order": "web_open cart", "cart": "web_open web_read",
+    "browser": "show_browser hide_browser", "show": "show_browser", "hide": "hide_browser",
     "amazon": "web_open", "flipkart": "web_open", "zomato": "web_open", "swiggy": "web_open", "food": "web_open",
     "weather": "find_apis call_api", "crypto": "call_api find_apis", "price": "call_api find_apis", "news": "find_apis web_research",
     "api": "find_apis call_api", "alarm": "set_alarm", "timer": "set_timer", "wake": "set_alarm", "remind": "set_reminder list_reminders",

@@ -1,5 +1,5 @@
 import { KeyboardEvent, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { ActionEvent, Message, answerConfirmation, forSpeech, getMessages, listenNow, speak, streamChat } from "../api";
+import { ActionEvent, BROWSER_TOOLS, Message, answerConfirmation, forSpeech, getMessages, listenNow, speak, streamChat, toggleBrowserPanel } from "../api";
 import { Activity, emitPulse, emitSend } from "../fx/activity";
 import { t } from "../i18n";
 import type { Connection } from "../shell";
@@ -244,6 +244,7 @@ export default function ChatView({
         },
         tool: (d) => {
           onActivity(d.status === "awaiting_confirmation" ? "idle" : "thinking");
+          if (d.status === "done" && BROWSER_TOOLS[d.tool]) toggleBrowserPanel(BROWSER_TOOLS[d.tool] === "show");
           setLines((l) =>
             l.map((x) => {
               if (x.id !== tempReply) return x;

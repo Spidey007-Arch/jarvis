@@ -67,12 +67,17 @@ TOOLS: list[ToolSpec] = [
     ToolSpec("read_webpage", "Read one web page or online PDF the user names or that came up in research, and get the passages "
              "answering question (or the start of the page). Use it to check a source or follow a link. Public internet only.",
              obj({"url": S, "question": S}, ["url"]), timeout=60, label="Reading {url}"),
-    # Shopping and food ordering run in JARVIS's own browser window (its own profile; the user signs in there once).
-    ToolSpec("web_open", "Open a page in JARVIS's shopping browser window, e.g. a store's search URL: https://www.amazon.in/s?k=..., "
+    # Shopping and food ordering run in JARVIS's own browser: hidden, in the background (its own profile).
+    ToolSpec("show_browser", "Show JARVIS's background browser inside the JARVIS app, so the user can watch it, sign in, link WhatsApp "
+             "or review and pay for a cart. Only when the user asks to see the browser (or agrees to when you offer).",
+             obj(), agent_action="web_show", timeout=30, label="Showing the browser"),
+    ToolSpec("hide_browser", "Hide JARVIS's browser panel again; work in it continues in the background.",
+             obj(), agent_action="web_hide", label="Hiding the browser"),
+    ToolSpec("web_open", "Open a page in JARVIS's background browser (hidden; the user does not see it unless they ask), e.g. a store's search URL: https://www.amazon.in/s?k=..., "
              "https://www.flipkart.com/search?q=..., https://www.swiggy.com/search?query=..., https://www.zomato.com, https://www.dominos.co.in. "
              "Use this (not open_url) when the user wants something bought or ordered.",
              obj({"url": S}, ["url"]), agent_action="web_open", timeout=45, label="Opening {url}"),
-    ToolSpec("web_read", "Read the shopping window's current page: title, some text, and numbered controls (links, buttons, inputs). "
+    ToolSpec("web_read", "Read the background browser's current page: title, some text, and numbered controls (links, buttons, inputs). "
              "Pass find to list only controls whose label contains it (e.g. 'add to cart'); offset pages through more controls.",
              obj({"find": S, "offset": I}), agent_action="web_read", timeout=30, label="Reading the page"),
     ToolSpec("web_click", "Click control n from the last web_read (numbers change after every read). Paying or placing the order is "
@@ -164,7 +169,7 @@ TOOLS: list[ToolSpec] = [
     ToolSpec("download_file", "Download a file from a direct link (PDF, document, image, video, audio, archive) into Downloads\\JARVIS and open it "
              "on screen with its default Windows app (open=false to only save it). Programs and scripts are refused by design.",
              obj({"url": S, "open": B}, ["url"]), agent_action="download_file", timeout=600, label="Downloading {url}"),
-    # Gmail and WhatsApp are read in JARVIS's browser window, where the user signs in / links once. Read-only.
+    # Gmail and WhatsApp are read in JARVIS's background browser, where the user signs in / links once. Read-only.
     ToolSpec("gmail_list", "List the user's newest emails as numbered rows (sender, subject, snippet, date, unread). query is Gmail search "
              "syntax; the default 'in:inbox category:primary' leaves out promotions and social. Examples: 'is:unread category:primary', "
              "'is:important newer_than:2d', 'from:amazon', 'has:attachment'. Use this whenever the user asks about their email.",

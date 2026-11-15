@@ -1,8 +1,10 @@
 """Drive a dedicated browser window over the Chrome DevTools Protocol, so JARVIS can shop and order food,
 and read the user's Gmail and WhatsApp (see mailchat.py).
 
-The window runs on its own profile in the JARVIS data folder: the user signs in to shops, Gmail and
-WhatsApp Web there once. Each job has its own tab (shop, gmail, whatsapp), so checking mail does not
+The browser runs headless (no window on the user's desktop) on its own profile in the JARVIS data folder.
+JARVIS works in it in the background; the JARVIS app shows it in its own in-app browser panel only when the
+user asks (see src/views/BrowserPanel.tsx), and that is where the user signs in to shops, Gmail and WhatsApp
+Web once. Each job has its own tab (shop, gmail, whatsapp), so checking mail does not
 reload WhatsApp or lose the cart.
 JARVIS can open pages, read them as text plus numbered controls, click and type. Paying stays with
 the user, and that is enforced here, not left to the model: controls that pay or place an order,
@@ -66,26 +68,119 @@ def _running() -> bool:
         return False
 
 
-def ensure_browser() -> None:
-    if _running():
-        return
-    exe = next((p for p in (os.path.expandvars(b) for b in _BROWSERS) if os.path.isfile(p)), None)
-    if not exe:
-        raise WebError("No Brave, Chrome or Edge installation was found for the shopping window.")
-    subprocess.Popen(
-        [exe, f"--remote-debugging-port={PORT}", "--remote-debugging-address=127.0.0.1", f"--user-data-dir={_profile()}",
-         "--no-first-run", "--no-default-browser-check",
-         # Gmail and WhatsApp load in background tabs; don't let the browser slow those to a crawl
-         "--disable-background-timer-throttling", "--disable-renderer-backgrounding", "--disable-backgrounding-occluded-windows",
-         "about:blank"],
-        creationflags=0x00000008,  # DETACHED_PROCESS: the window outlives the agent
-    )
+# Pages allowed to attach to the browser's DevTools socket: only the JARVIS app itself, whose browser panel
+# streams the hidden tabs and forwards the user's clicks and keys (Tauri on Windows, and the Vite dev server).
+APP_ORIGINS = "http://tauri.localhost,https://tauri.localhost,tauri://localhost,http://localhost:1420"
+_WINDOW = "1280,800"
+
+
+def _version() -> dict[str, Any]:
+    try:
+        return _get("/json/version", timeout=2.0)
+    except OSError:
+        return {}
+
+
+def _close_browser() -> None:
+    """Close whatever answers on PORT (e.g. a visible window left by an older JARVIS) and wait until it is gone."""
+    ws = _version().get("webSocketDebuggerUrl")
+    if ws:
+        try:
+            from websockets.sync.client import connect
+
+            with connect(ws, open_timeout=5) as c:
+                c.send(json.dumps({"id": 1, "method": "Browser.close"}))
+                try:
+                    c.recv(timeout=3)
+                except Exception:  # noqa: BLE001 - closing drops the socket
+                    pass
+        except Exception:  # noqa: BLE001
+            pass
+    deadline = time.time() + 10
+    while time.time() < deadline and _running():
+        time.sleep(0.3)
+    _TARGETS.clear()
+
+
+def _ua_cache() -> Path:
+    return _profile().parent / "browser-ua.txt"
+
+
+def _launch(exe: str, user_agent: str = "") -> None:
+    args = [exe, "--headless=new", f"--window-size={_WINDOW}",
+            f"--remote-debugging-port={PORT}", "--remote-debugging-address=127.0.0.1", f"--remote-allow-origins={APP_ORIGINS}",
+            f"--user-data-dir={_profile()}", "--no-first-run", "--no-default-browser-check",
+            # Gmail and WhatsApp load in background tabs; don't let the browser slow those to a crawl
+            "--disable-background-timer-throttling", "--disable-renderer-backgrounding", "--disable-backgrounding-occluded-windows"]
+    if user_agent:
+        args.append(f"--user-agent={user_agent}")
+    args.append("about:blank")
+    subprocess.Popen(args, creationflags=0x00000008 | 0x08000000)  # DETACHED_PROCESS | CREATE_NO_WINDOW: outlives the agent, no window
     deadline = time.time() + 20
     while time.time() < deadline:
         if _running():
             return
         time.sleep(0.4)
-    raise WebError("The shopping browser did not start within 20 seconds.")
+    raise WebError("JARVIS's background browser did not start within 20 seconds.")
+
+
+def ensure_browser() -> None:
+    """Start JARVIS's hidden browser if it is not running. A visible window from an older JARVIS (or one started
+    without the app's origin allowed) is closed and replaced, so nothing pops up on the user's desktop."""
+    v = _version()
+    if v:
+        if _ours(v):
+            return
+        _close_browser()
+    exe = next((p for p in (os.path.expandvars(b) for b in _BROWSERS) if os.path.isfile(p)), None)
+    if not exe:
+        raise WebError("No Brave, Chrome or Edge installation was found for JARVIS's browser.")
+    # Headless browsers announce "HeadlessChrome" in their user agent, and Gmail, WhatsApp and shops then refuse or
+    # degrade. Launch once to learn the real version, then relaunch with the ordinary user agent (cached per install).
+    stamp = f"{exe}|{os.path.getmtime(exe):.0f}"
+    ua = ""
+    try:
+        cached = _ua_cache().read_text(encoding="utf-8").split("\n", 1)
+        if cached[0] == stamp and len(cached) > 1:
+            ua = cached[1].strip()
+    except OSError:
+        pass
+    _launch(exe, ua)
+    if not ua:
+        real = (_version().get("User-Agent") or "").replace("HeadlessChrome", "Chrome")
+        if real:
+            _close_browser()
+            try:
+                _ua_cache().write_text(f"{stamp}\n{real}", encoding="utf-8")
+            except OSError:
+                pass
+            _launch(exe, real)
+
+
+def _ours(version: dict[str, Any]) -> bool:
+    """True when the browser on PORT was started by _launch: headless, with the app's origin allowed."""
+    try:
+        import psutil
+
+        for p in psutil.process_iter(["cmdline"]):
+            cmd = p.info.get("cmdline") or []
+            if f"--remote-debugging-port={PORT}" in cmd and not any(c.startswith("--type=") for c in cmd):  # the main process, not a renderer
+                return "--headless=new" in cmd and f"--remote-allow-origins={APP_ORIGINS}" in cmd
+    except Exception:  # noqa: BLE001 - psutil missing or access denied: fall back to what the browser says
+        pass
+    return str(version.get("Browser", "")).startswith("Headless")
+
+
+def show_info() -> dict[str, Any]:
+    """Start the hidden browser if needed and list its tabs, for the app's browser panel."""
+    ensure_browser()
+    pages = [t for t in _get("/json/list") if t.get("type") == "page"]
+    if not pages:
+        _page("shop")
+        pages = [t for t in _get("/json/list") if t.get("type") == "page"]
+    jobs = {v: k for k, v in _TARGETS.items()}
+    return {"shown": True, "tabs": [{"id": t.get("id"), "job": jobs.get(t.get("id"), ""), "title": t.get("title"), "url": t.get("url")}
+                                    for t in pages]}
 
 
 def _page(job: str = "shop") -> dict[str, Any]:
@@ -98,7 +193,7 @@ def _page(job: str = "shop") -> dict[str, Any]:
     t = _get("/json/new?about:blank", method="PUT")
     _TARGETS[job] = t.get("id")
     if not t.get("webSocketDebuggerUrl"):
-        raise WebError("The shopping browser did not open a tab for JARVIS.")
+        raise WebError("JARVIS's background browser did not open a tab.")
     return t
 
 
@@ -265,7 +360,7 @@ def open_page(url: str, job: str = "shop", front: bool = True) -> dict[str, Any]
 
 def read_page(find: str = "", offset: int = 0) -> dict[str, Any]:
     if not _running():
-        raise WebError("The shopping browser is not open; use web_open first.")
+        raise WebError("JARVIS's background browser is not running; use web_open first.")
     with _Tab() as t:
         return t.eval(_READ % (json.dumps(find or ""), max(0, int(offset)), 80))
 

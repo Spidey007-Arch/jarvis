@@ -417,6 +417,34 @@ def build_router(svc: Services, require_auth: Callable[..., None]) -> APIRouter:
         background.add(t)
         t.add_done_callback(background.discard)
 
+    # ---------------- JARVIS's background browser (the app's browser panel) ----------------
+
+    def _browser_tabs() -> list[dict[str, Any]]:
+        import urllib.request
+
+        with urllib.request.urlopen("http://127.0.0.1:9333/json/list", timeout=3) as resp:
+            rows = json.loads(resp.read().decode("utf-8"))
+        tabs = [{"id": t.get("id"), "title": t.get("title") or t.get("url") or "New tab", "url": t.get("url"),
+                 "ws": t.get("webSocketDebuggerUrl")} for t in rows if t.get("type") == "page" and t.get("webSocketDebuggerUrl")]
+        return [t for t in tabs if t["url"] != "about:blank"] or tabs[:1]  # blank tabs JARVIS has not used yet are noise
+
+    @r.get("/browser")
+    async def browser_tabs() -> dict[str, Any]:
+        """The hidden browser's tabs, so the panel can stream one. Not running: an empty list."""
+        try:
+            return {"running": True, "tabs": await asyncio.to_thread(_browser_tabs)}
+        except OSError:
+            return {"running": False, "tabs": []}
+
+    @r.post("/browser/start")
+    async def browser_start() -> dict[str, Any]:
+        """The user opened the panel themselves: start the hidden browser if it is not running yet."""
+        try:
+            await svc.bridge.call("web_show", {}, timeout=30)
+        except (AgentError, AgentUnavailable) as e:
+            raise HTTPException(503, str(e)) from e
+        return {"running": True, "tabs": await asyncio.to_thread(_browser_tabs)}
+
     # ---------------- settings & models ----------------
 
     @r.get("/settings")

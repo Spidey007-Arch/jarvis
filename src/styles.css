@@ -935,3 +935,40 @@ textarea.instructions { width: 100%; box-sizing: border-box; margin-top: 10px; l
   .gauges { display: none; }
   .grid3 { grid-template-columns: 1fr; }
 }
+
+/* ---------- JARVIS's browser, inside the app (views/BrowserPanel.tsx) ---------- */
+.browser-scrim {
+  position: fixed; inset: 0; z-index: 60; display: grid; place-items: center; padding: 56px 24px 24px calc(var(--rail-space) + 8px);
+  background: color-mix(in srgb, var(--bg0) 55%, transparent); backdrop-filter: blur(6px);
+}
+.browser-panel {
+  width: 100%; height: 100%; max-width: 1500px; display: flex; flex-direction: column; overflow: hidden;
+  border: 1px solid var(--line-2); border-radius: var(--r-lg); background: var(--bg1);
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.45);
+}
+.browser-bar { display: flex; align-items: center; gap: 8px; padding: 8px 8px 0 12px; }
+.browser-tabs { display: flex; gap: 4px; flex: 1; min-width: 0; overflow-x: auto; }
+.browser-tabs button {
+  max-width: 220px; padding: 7px 12px; border: 1px solid var(--line); border-bottom: none; border-radius: var(--r-sm) var(--r-sm) 0 0;
+  background: transparent; color: var(--text-2); font: inherit; font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer;
+}
+.browser-tabs button.on { background: color-mix(in srgb, var(--text) 7%, transparent); color: var(--text); border-color: var(--line-2); }
+.browser-bar .close { background: transparent; border: none; color: var(--text-2); font-size: 16px; padding: 6px 10px; cursor: pointer; border-radius: var(--r-sm); }
+.browser-bar .close:hover { color: var(--text); background: color-mix(in srgb, var(--text) 8%, transparent); }
+.browser-nav { display: flex; gap: 6px; align-items: center; padding: 8px 12px; border-top: 1px solid var(--line-2); border-bottom: 1px solid var(--line); }
+.browser-nav button {
+  width: 30px; height: 30px; border-radius: var(--r-sm); border: 1px solid var(--line); background: transparent; color: var(--text); font-size: 16px; cursor: pointer;
+}
+.browser-nav button:hover { border-color: var(--line-2); }
+.browser-nav form { flex: 1; }
+.browser-nav input {
+  width: 100%; height: 30px; padding: 0 12px; border-radius: 999px; border: 1px solid var(--line); background: color-mix(in srgb, var(--bg0) 60%, transparent);
+  color: var(--text); font: inherit; font-size: 13px; outline: none;
+}
+.browser-nav input:focus { border-color: var(--line-2); }
+.browser-view { position: relative; flex: 1; min-height: 0; display: grid; place-items: center; background: #fff; outline: none; overflow: hidden; }
+.browser-view img { max-width: 100%; max-height: 100%; object-fit: contain; user-select: none; cursor: default; display: block; }
+.browser-note {
+  position: absolute; inset: auto 16px 16px 16px; margin: 0; padding: 10px 14px; border-radius: var(--r-md);
+  background: var(--bg1); color: var(--text-2); font-size: 13px; border: 1px solid var(--line-2); text-align: center;
+}

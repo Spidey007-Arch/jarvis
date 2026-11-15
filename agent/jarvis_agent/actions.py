@@ -350,6 +350,18 @@ def web_open(args: dict[str, Any]) -> dict[str, Any]:
 
 
 @action
+def web_show(_: dict[str, Any]) -> dict[str, Any]:
+    """The app opens its browser panel on this tool's success; here the hidden browser is made sure to be running."""
+    return webdrive.show_info()
+
+
+@action
+def web_hide(_: dict[str, Any]) -> dict[str, Any]:
+    """The app closes its browser panel; the browser keeps working in the background."""
+    return {"hidden": True}
+
+
+@action
 def web_read(args: dict[str, Any]) -> dict[str, Any]:
     return webdrive.read_page(_str(args, "find", False), int(args.get("offset") or 0))
 

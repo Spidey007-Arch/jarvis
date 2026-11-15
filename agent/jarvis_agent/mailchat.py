@@ -1,6 +1,6 @@
-"""Read the user's Gmail and WhatsApp in JARVIS's browser window (see webdrive.py), read-only.
+"""Read the user's Gmail and WhatsApp in JARVIS's hidden background browser (see webdrive.py), read-only.
 
-The user signs in to Gmail and links WhatsApp Web (QR code) in that window once; JARVIS never types
+The user signs in to Gmail and links WhatsApp Web (QR code) once, in the app's browser panel; JARVIS never types
 passwords or codes. Gmail and WhatsApp each have their own tab, so WhatsApp Web is not reloaded for
 every question. What comes back is other people's words: the tools mark it as data, not instructions.
 Nothing here sends, deletes, archives or replies."""
@@ -117,8 +117,8 @@ def gmail_list(query: str = "", limit: int = 15) -> dict[str, Any]:
     state = _wait("gmail", _GMAIL_STATE, 25)
     if state == "signin":
         _front("gmail")
-        raise WebError("Gmail is not signed in to JARVIS's browser yet. I've brought the window up: the user signs in "
-                       "there once (JARVIS never types passwords), then ask again.")
+        raise WebError("Gmail is not signed in to JARVIS's browser yet. It runs hidden: offer to show it (show_browser) so the "
+                       "user can sign in there once (JARVIS never types passwords), then ask again.")
     if state == "empty":
         return {"query": q, "emails": [], "note": "No emails match."}
     if not state:
@@ -239,7 +239,7 @@ def _whatsapp_ready() -> None:
     state = _wait("whatsapp", _WA_STATE, 90)  # WhatsApp Web takes a while to sync on first load
     if state == "link":
         _front("whatsapp")
-        raise WebError("WhatsApp Web is not linked to JARVIS's browser yet. I've brought the window up: the user scans the "
+        raise WebError("WhatsApp Web is not linked to JARVIS's browser yet. It runs hidden: offer to show it (show_browser) so the user can scan the "
                        "QR code with their phone once (WhatsApp > Settings > Linked devices > Link a device), then ask again.")
     if state != "ready":
         raise WebError("WhatsApp Web did not finish loading in time; the connection may be slow. Try again.")
