@@ -46,7 +46,7 @@ class WebError(Exception):
 
 def _profile() -> Path:
     base = Path(os.environ.get("JARVIS_DATA_DIR") or Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "JARVIS")
-    p = base / "browser-profile"
+    p = base.resolve() / "browser-profile"  # the real folder, not a link to it: the browser is slow through a link
     p.mkdir(parents=True, exist_ok=True)
     return p
 
@@ -356,6 +356,120 @@ def open_page(url: str, job: str = "shop", front: bool = True) -> dict[str, Any]
         except WebError:
             pass  # the tab swapped processes while navigating; _settled reconnects
     return _settled(60, job)
+
+
+_RESULTS_JS = r"""(() => {
+  const bing = [...document.querySelectorAll('li.b_algo')].map(li => {
+    const a = li.querySelector('h2 a'); const p = li.querySelector('.b_caption p, p');
+    return a && { title: a.innerText.trim(), url: a.href, snippet: p ? p.innerText.trim() : '' };
+  });
+  const google = [...document.querySelectorAll('#search a h3')].map(h => {
+    const a = h.closest('a'); const box = h.closest('div[data-hveid], .g');
+    const s = box && box.querySelector('[data-sncf], .VwiC3b');
+    return a && { title: h.innerText.trim(), url: a.href, snippet: s ? s.innerText.trim() : '' };
+  });
+  return [...bing, ...google].filter(Boolean);
+})()"""
+
+
+def real_url(url: str) -> str:
+    """Bing wraps result links in a click tracker; the real address is inside, base64-encoded."""
+    m = re.search(r"[?&]u=a1([^&]+)", url)
+    if "bing.com/ck/a" in url and m:
+        import base64
+
+        s = m.group(1)
+        try:
+            return base64.urlsafe_b64decode(s + "=" * (-len(s) % 4)).decode("utf-8")
+        except (ValueError, UnicodeDecodeError):
+            return url
+    return url
+
+
+def _visit(url: str, js: str, timeout: float = 25.0) -> tuple[str, Any]:
+    """Load a page in a fresh hidden tab, run js on it once it is usable, and close the tab: (title, result).
+    A new tab for each look keeps one slow or stuck page from holding up the next, and nothing piles up."""
+    import urllib.parse
+
+    if not re.match(r"^https?://", url, re.I):
+        raise WebError(f"'{url}' is not a web address.")
+    ensure_browser()
+    target = _get("/json/new?" + urllib.parse.quote(url, safe=":/?&=%#+,;@~"), method="PUT")
+    job = f"visit-{target.get('id')}"
+    _TARGETS[job] = target.get("id")
+    deadline = time.time() + timeout
+    try:
+        while True:
+            try:
+                with _Tab(job) as t:
+                    # a new tab is a finished about:blank until the real page commits, so wait for that too
+                    state = t.send("Runtime.evaluate", {"expression": "location.href !== 'about:blank' && document.readyState !== 'loading'",
+                                                        "returnByValue": True}, timeout=5)
+                    ready = state.get("result", {}).get("value") is True
+                    late = time.time() >= deadline
+                    if ready or late:
+                        if ready and not late:
+                            time.sleep(1.2)  # pages fill in with scripts after they are usable
+                        title = t.send("Runtime.evaluate", {"expression": "document.title", "returnByValue": True}, timeout=5)
+                        out = t.send("Runtime.evaluate", {"expression": js, "returnByValue": True}, timeout=10)
+                        return title.get("result", {}).get("value") or "", out.get("result", {}).get("value")
+            except WebError:
+                if time.time() >= deadline:
+                    raise WebError(f"{url} did not load in JARVIS's browser within {int(timeout)} seconds.")
+            time.sleep(0.5)
+    finally:
+        _TARGETS.pop(job, None)
+        try:
+            _get(f"/json/close/{target.get('id')}")
+        except Exception:  # noqa: BLE001 - already gone
+            pass
+
+
+def show_page(url: str) -> dict[str, Any]:
+    """Put a page in JARVIS's browser for the user to look at, without waiting for it to load. The page replaces the
+    previous one JARVIS put there, so tabs never pile up."""
+    import urllib.parse
+
+    if not re.match(r"^https?://", url, re.I):
+        raise WebError(f"'{url}' is not a web address.")
+    ensure_browser()
+    old = _TARGETS.get("browse")
+    target = _get("/json/new?" + urllib.parse.quote(url, safe=":/?&=%#+,;@~"), method="PUT")
+    _TARGETS["browse"] = target.get("id")
+    if old:
+        try:
+            _get(f"/json/close/{old}")
+        except Exception:  # noqa: BLE001 - the user may have closed it already
+            pass
+    return {"url": url, "title": ""}
+
+
+def search(query: str, limit: int = 8) -> list[dict[str, str]]:
+    """Results from a search page loaded in JARVIS's hidden browser: Bing, then Google if Bing shows none."""
+    import urllib.parse
+
+    q = urllib.parse.quote_plus(query)
+    bing, google = f"https://www.bing.com/search?q={q}&setlang=en", f"https://www.google.com/search?q={q}&hl=en"
+    for url in (bing, google, bing):  # Bing again last: a browser that has only just started can miss the first look
+        try:
+            _title, rows = _visit(url, _RESULTS_JS)
+        except WebError:
+            continue
+        seen, out = set(), []
+        for r in rows or []:
+            link = real_url(r.get("url") or "")
+            if link.startswith("http") and "bing.com" not in link and "google." not in link and link not in seen:
+                seen.add(link)
+                out.append({"title": r.get("title") or "", "url": link, "snippet": r.get("snippet") or ""})
+        if out:
+            return out[:limit]
+    raise WebError("The search pages in JARVIS's browser showed no results (they may be asking for a check).")
+
+
+def page_text(url: str, limit: int = 40000) -> dict[str, Any]:
+    """The visible text of a page, loaded in JARVIS's hidden browser."""
+    title, text = _visit(url, "document.body ? document.body.innerText : ''")
+    return {"url": url, "title": title, "text": (text or "")[:limit]}
 
 
 def read_page(find: str = "", offset: int = 0) -> dict[str, Any]:

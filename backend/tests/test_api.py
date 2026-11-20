@@ -25,6 +25,7 @@ AUTH = {"Authorization": f"Bearer {TOKEN}"}
 class ApiTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
+        os.environ["JARVIS_DATA_DIR"] = _tmp.name  # other test files pick their own folder when they load: use ours
         cls.client = TestClient(create_app(port=0, token=TOKEN)).__enter__()
 
     @classmethod

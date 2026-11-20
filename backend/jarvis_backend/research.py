@@ -10,11 +10,12 @@ addresses)."""
 from __future__ import annotations
 
 import asyncio
+import base64
 import html
 import io
 import re
 import urllib.parse
-from typing import Any
+from typing import Any, Awaitable, Callable
 
 import httpx
 
@@ -195,9 +196,40 @@ def parse_news(feed: str, source: str = "") -> list[dict[str, str]]:
     return out
 
 
+def parse_bing(page: str) -> list[dict[str, str]]:
+    out = []
+    for block in page.split('<li class="b_algo"')[1:]:
+        block = block.split("</li>", 1)[0]
+        a = re.search(r'<h2[^>]*>\s*<a[^>]*href="([^"]+)"[^>]*>(.*?)</a>', block, re.S)
+        if not a:
+            continue
+        p = re.search(r"<p[^>]*>(.*?)</p>", block, re.S)
+        url = _bing_url(html.unescape(a.group(1)))
+        if url.startswith("http") and "bing.com" not in url:
+            out.append({"title": _clean(a.group(2)), "url": url, "snippet": _clean(p.group(1)) if p else ""})
+    return out
+
+
+def _bing_url(url: str) -> str:
+    """Bing wraps result links in a click tracker; the real address is inside, base64-encoded."""
+    m = re.search(r"[?&]u=a1([^&]+)", url)
+    if "bing.com/ck/a" in url and m:
+        s = m.group(1)
+        try:
+            return base64.urlsafe_b64decode(s + "=" * (-len(s) % 4)).decode("utf-8")
+        except (ValueError, UnicodeDecodeError):
+            return url
+    return url
+
+
+# Set by the router: run an action in JARVIS's own browser (search, read a page) when plain requests are refused.
+BROWSER: Callable[[str, dict[str, Any]], Awaitable[Any]] | None = None
+
+
 async def _search(c: httpx.AsyncClient, query: str, max_results: int) -> tuple[str, list[dict[str, str]]]:
     errors = []
-    engines = (("Yahoo", "GET", "https://search.yahoo.com/search", {"params": {"p": query}}, parse_yahoo),
+    engines = (("Bing", "GET", "https://www.bing.com/search", {"params": {"q": query, "setlang": "en"}}, parse_bing),
+               ("Yahoo", "GET", "https://search.yahoo.com/search", {"params": {"p": query}}, parse_yahoo),
                ("DuckDuckGo", "POST", "https://html.duckduckgo.com/html/", {"data": {"q": query}}, parse_ddg))
     for name, method, url, kw, parse in engines:
         try:
@@ -215,6 +247,14 @@ async def _search(c: httpx.AsyncClient, query: str, max_results: int) -> tuple[s
         if found:
             return name, found[:max_results]
         errors.append(f"{name}: nothing relevant")
+    if BROWSER:  # the engines refuse automated requests today: search the way a person would, in JARVIS's own browser
+        try:
+            found = relevant((await BROWSER("browser_search", {"query": query, "limit": max_results + 4})).get("results", []), query)
+            if found:
+                return "JARVIS's browser", found[:max_results]
+            errors.append("JARVIS's browser: nothing relevant")
+        except Exception as e:  # noqa: BLE001 - the agent may be away; say so with the rest
+            errors.append(f"JARVIS's browser: {e}")
     raise ResearchError("Web search found nothing relevant: " + "; ".join(errors) + ". Answer from what you know, saying it may "
                         "be out of date, or ask the user to rephrase; don't search again with the same words.")
 
@@ -238,6 +278,30 @@ async def news(c: httpx.AsyncClient, query: str, limit: int = 6) -> list[dict[st
     return out[:limit]
 
 
+async def _read_refused(results: list[dict[str, str]], texts: list[str | None]) -> list[str | None]:
+    """Pages that refused a plain request (or need scripts) are read in JARVIS's own browser instead."""
+    if not BROWSER or all(texts):
+        return texts
+
+    async def one(url: str) -> str | None:
+        try:
+            _public(url)
+            return page_text_plain((await BROWSER("browser_read", {"url": url})).get("text", ""))
+        except Exception:  # noqa: BLE001 - this source is skipped, the others still count
+            return None
+
+    redo = [i for i, t in enumerate(texts) if not t]
+    got = await asyncio.gather(*(one(results[i]["url"]) for i in redo))
+    for i, t in zip(redo, got):
+        texts[i] = t
+    return texts
+
+
+def page_text_plain(text: str, limit: int = 20000) -> str | None:
+    text = re.sub(r"\n\s*\n+", "\n\n", text).strip()
+    return text[:limit] or None
+
+
 async def web_research(query: str, max_results: int = 6, read_pages: int = 3) -> dict[str, Any]:
     async with httpx.AsyncClient(timeout=httpx.Timeout(20.0, connect=10.0), headers=HEADERS, follow_redirects=True) as c:
         searched, headlines = await asyncio.gather(_search(c, query, max_results), news(c, query), return_exceptions=True)
@@ -249,7 +313,8 @@ async def web_research(query: str, max_results: int = 6, read_pages: int = 3) ->
             engine, results, texts = "news only", [], []
         else:
             engine, results = searched
-            texts = await asyncio.gather(*(_fetch_text(c, x["url"]) for x in results[:read_pages]))
+            texts = list(await asyncio.gather(*(_fetch_text(c, x["url"]) for x in results[:read_pages])))
+            texts = await _read_refused(results[:read_pages], texts)
     sources = [{"url": r["url"], "title": r["title"], "passages": passages(t, query)} for r, t in zip(results, texts) if t]
     out: dict[str, Any] = {"query": query, "engine": engine, "results": results, "sources": sources,
                            "note": "This is enough to answer: answer now from these passages and headlines; don't search again "
@@ -264,6 +329,8 @@ async def read_webpage(url: str, question: str = "") -> dict[str, Any]:
     _public(url)
     async with httpx.AsyncClient(timeout=httpx.Timeout(20.0, connect=10.0), headers=HEADERS, follow_redirects=True) as c:
         text = await _fetch_text(c, url)
+    if not text:
+        text = (await _read_refused([{"url": url}], [None]))[0]
     if not text:
         raise ResearchError(f"I couldn't read {url} (not reachable, not a web page or PDF, or it blocks readers).")
     return {"url": url, "chars": len(text),

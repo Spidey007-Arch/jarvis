@@ -44,7 +44,8 @@ TOOLS: list[ToolSpec] = [
              obj({"query": S}, ["query"]), agent_action="find_apps", timeout=40, label="Looking up apps matching {query}"),
     ToolSpec("close_app", "Close a running application by its executable name, e.g. 'chrome', 'notepad', 'spotify'. Unsaved work in it may be lost.",
              obj({"name": S}, ["name"]), risk="confirm", agent_action="close_app", label="Close {name}"),
-    ToolSpec("open_url", "Open a web address in the default browser, or in a specific browser (chrome, edge, firefox, brave, opera).",
+    ToolSpec("open_url", "Open a web address in JARVIS's own browser, which stays hidden until the user clicks its button in JARVIS. "
+             "Only when the user names a browser (chrome, edge, firefox, brave, opera) pass browser to open it there instead.",
              obj({"url": S, "browser": S}, ["url"]), agent_action="open_url", label="Opening {url}"),
     ToolSpec("my_location", "Where this PC is right now: coordinates, the area's name, and whether it is exact (Windows location) "
              "or approximate (from the internet connection). Use it for anything 'near me', local weather or time, never the "
@@ -60,7 +61,9 @@ TOOLS: list[ToolSpec] = [
              "of each route. mode: driving (default), walking, transit, bicycling or two-wheeler.",
              obj({"destination": S, "origin": S, "mode": S}, ["destination"]), agent_action="maps_directions", timeout=90,
              label="Getting directions to {destination}"),
-    ToolSpec("web_search", "Open a search results page in the browser for the user to look at. Engines: google, bing, duckduckgo, youtube, github, wikipedia, amazon, maps.",
+    ToolSpec("web_search", "Put a search results page in JARVIS's own browser for the user to look at later (hidden until they click "
+             "its button). Only when they want to browse results themselves; for an answer use web_research. Engines: google, bing, "
+             "duckduckgo, youtube, github, wikipedia, amazon, maps. browser only when the user names one.",
              obj({"query": S, "engine": S, "browser": S}, ["query"]), agent_action="web_search", label="Searching for {query}"),
     ToolSpec("web_research", "Search the web yourself and read the top results to answer a factual or current-events question directly, with sources. Use this instead of web_search when the user wants an answer, not a browser tab.",
              obj({"query": S}, ["query"]), timeout=60, label="Researching {query}"),
@@ -68,8 +71,9 @@ TOOLS: list[ToolSpec] = [
              "answering question (or the start of the page). Use it to check a source or follow a link. Public internet only.",
              obj({"url": S, "question": S}, ["url"]), timeout=60, label="Reading {url}"),
     # Shopping and food ordering run in JARVIS's own browser: hidden, in the background (its own profile).
-    ToolSpec("show_browser", "Show JARVIS's background browser inside the JARVIS app, so the user can watch it, sign in, link WhatsApp "
-             "or review and pay for a cart. Only when the user asks to see the browser (or agrees to when you offer).",
+    ToolSpec("show_browser", "Make sure JARVIS's background browser is running and list its tabs. It does not open on screen: the user "
+             "opens it themselves with the browser button in JARVIS, so tell them to click it (to watch, sign in, link WhatsApp, or "
+             "review and pay for a cart).",
              obj(), agent_action="web_show", timeout=30, label="Showing the browser"),
     ToolSpec("hide_browser", "Hide JARVIS's browser panel again; work in it continues in the background.",
              obj(), agent_action="web_hide", label="Hiding the browser"),

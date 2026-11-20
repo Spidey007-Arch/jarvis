@@ -308,6 +308,16 @@ def _open_url(url: str, browser: str = "") -> str:
     return "default browser"
 
 
+IN_JARVIS = ("It is in JARVIS's own browser, which stays hidden: the user sees it by clicking the browser button in the JARVIS "
+             "window. Say so; never say a window opened on their desktop.")
+
+
+def _show_in_jarvis(url: str) -> dict[str, Any]:
+    """One reused tab in JARVIS's own browser, so repeated requests never pile up tabs anywhere."""
+    webdrive.show_page(url)
+    return {"opened": url, "in": "JARVIS's browser", "note": IN_JARVIS}
+
+
 @action
 def open_url(args: dict[str, Any]) -> dict[str, Any]:
     url = _str(args, "url")
@@ -316,8 +326,10 @@ def open_url(args: dict[str, Any]) -> dict[str, Any]:
             url = "https://" + url
         else:
             raise ActionError(f"'{url}' is not a web address.")
-    used = _open_url(url, _str(args, "browser", False))
-    return {"opened": url, "in": used}
+    browser = _str(args, "browser", False)
+    if not browser:
+        return _show_in_jarvis(url)
+    return {"opened": url, "in": _open_url(url, browser)}  # only when the user named a browser
 
 
 @action
@@ -327,8 +339,22 @@ def web_search(args: dict[str, Any]) -> dict[str, Any]:
     if engine not in _SEARCH:
         raise ActionError(f"Unknown search engine '{engine}'. Known: {', '.join(_SEARCH)}.")
     url = _SEARCH[engine].format(urllib.parse.quote_plus(query))
-    used = _open_url(url, _str(args, "browser", False))
-    return {"searched": query, "engine": engine, "url": url, "in": used}
+    browser = _str(args, "browser", False)
+    if not browser:
+        return {"searched": query, "engine": engine, **_show_in_jarvis(url)}
+    return {"searched": query, "engine": engine, "url": url, "in": _open_url(url, browser)}
+
+
+@action
+def browser_search(args: dict[str, Any]) -> dict[str, Any]:
+    """Search the web in JARVIS's hidden browser, as a person would, when search engines refuse automated requests."""
+    return {"results": webdrive.search(_str(args, "query"), int(args.get("limit") or 8))}
+
+
+@action
+def browser_read(args: dict[str, Any]) -> dict[str, Any]:
+    """A page's text, read in JARVIS's hidden browser (for sites that refuse plain requests or need scripts)."""
+    return webdrive.page_text(_str(args, "url"))
 
 
 # ======================= shopping browser =======================
@@ -351,8 +377,9 @@ def web_open(args: dict[str, Any]) -> dict[str, Any]:
 
 @action
 def web_show(_: dict[str, Any]) -> dict[str, Any]:
-    """The app opens its browser panel on this tool's success; here the hidden browser is made sure to be running."""
-    return webdrive.show_info()
+    """Make sure the hidden browser is running. The app's panel opens only when the user clicks its button."""
+    return {**webdrive.show_info(), "shown": False,
+            "note": "The browser is ready. It opens only when the user clicks the browser button in JARVIS: tell them to click it."}
 
 
 @action

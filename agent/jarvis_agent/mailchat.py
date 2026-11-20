@@ -117,7 +117,7 @@ def gmail_list(query: str = "", limit: int = 15) -> dict[str, Any]:
     state = _wait("gmail", _GMAIL_STATE, 25)
     if state == "signin":
         _front("gmail")
-        raise WebError("Gmail is not signed in to JARVIS's browser yet. It runs hidden: offer to show it (show_browser) so the "
+        raise WebError("Gmail is not signed in to JARVIS's browser yet. It runs hidden: tell the user to click the browser button in JARVIS so the "
                        "user can sign in there once (JARVIS never types passwords), then ask again.")
     if state == "empty":
         return {"query": q, "emails": [], "note": "No emails match."}
@@ -239,7 +239,7 @@ def _whatsapp_ready() -> None:
     state = _wait("whatsapp", _WA_STATE, 90)  # WhatsApp Web takes a while to sync on first load
     if state == "link":
         _front("whatsapp")
-        raise WebError("WhatsApp Web is not linked to JARVIS's browser yet. It runs hidden: offer to show it (show_browser) so the user can scan the "
+        raise WebError("WhatsApp Web is not linked to JARVIS's browser yet. It runs hidden: tell the user to click the browser button in JARVIS so the user can scan the "
                        "QR code with their phone once (WhatsApp > Settings > Linked devices > Link a device), then ask again.")
     if state != "ready":
         raise WebError("WhatsApp Web did not finish loading in time; the connection may be slow. Try again.")

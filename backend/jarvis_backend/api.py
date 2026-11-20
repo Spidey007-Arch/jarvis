@@ -31,6 +31,7 @@ from .providers.base import DYNAMIC_MARK, ToolCall
 from .monitor import Monitor
 from .reminders import ReminderError, Reminders
 from .research import ResearchError, read_webpage, web_research
+from . import research as research_mod
 from .live import LiveError, LiveVoice
 from .connectors import ConnectorError
 from .automations import AutomationError
@@ -686,6 +687,11 @@ def build_router(svc: Services, require_auth: Callable[..., None]) -> APIRouter:
         if not (0 <= x <= 1000 and 0 <= y <= 1000):
             raise ToolFailure("The vision model gave a position off the screen; try again.")
         return {"x": x / 1000, "y": y / 1000, "label": str(spot.get("label") or "")[:80], "kind": spot.get("kind")}
+
+    async def _in_browser(action: str, args: dict[str, Any]) -> Any:
+        return await svc.bridge.call(action, args, timeout=90)
+
+    research_mod.BROWSER = _in_browser  # web search and reading fall back to JARVIS's own browser
 
     async def _run_tool(spec: ToolSpec, args: dict[str, Any]) -> Any:
         if spec.risk in ("connector", "connector_read"):

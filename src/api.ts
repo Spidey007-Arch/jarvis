@@ -566,6 +566,7 @@ export const getBrowserTabs = (c: Connection) => call<BrowserTabs>(c, "/api/brow
 export const startBrowser = (c: Connection) => call<BrowserTabs>(c, "/api/browser/start", { method: "POST" });
 
 /** Opens or closes the in-app browser panel: JARVIS's show_browser / hide_browser tools, from chat or voice. */
-export const BROWSER_TOOLS: Record<string, "show" | "hide"> = { show_browser: "show", hide_browser: "hide" };
+// The panel opens only from its button; JARVIS can close it when asked.
+export const BROWSER_TOOLS: Record<string, "show" | "hide"> = { hide_browser: "hide" };
 export const toggleBrowserPanel = (open: boolean) =>
   window.dispatchEvent(new CustomEvent("jarvis:browser", { detail: open }));
